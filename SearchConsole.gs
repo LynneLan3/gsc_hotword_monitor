@@ -1,0 +1,294 @@
+/**
+ * Search Console API 与 Sitemap / URL Inspection
+ */
+
+/**
+ * 列出当前账号可访问的全部 property
+ * @return {Array<string>} siteUrl 列表
+ */
+function listGscSites() {
+  var data = gscFetch(GSC_API_BASE + '/sites');
+  var entries = (data && data.siteEntry) || [];
+  return entries.map(function (e) {
+    return e.siteUrl;
+  });
+}
+
+/**
+ * Search Analytics query
+ * @param {string} siteUrl Property URL
+ * @param {Object} body 请求体
+ * @return {Object}
+ */
+function searchAnalyticsQuery(siteUrl, body) {
+  var encoded = encodeURIComponent(siteUrl);
+  var url = GSC_API_BASE + '/sites/' + encoded + '/searchAnalytics/query';
+  return gscFetch(url, { method: 'post', payload: body });
+}
+
+/**
+ * 在最近 lookbackDays 天内找出最新有数据的日期
+ * @return {string} yyyy-MM-dd 或 ''
+ */
+function findLatestGscDataDate(siteUrl, lookbackDays) {
+  lookbackDays = lookbackDays || LOOKBACK_DAYS_FOR_LATEST;
+  var endDate = todayStr_();
+  var startDate = daysAgoStr_(lookbackDays - 1);
+
+  var result = searchAnalyticsQuery(siteUrl, {
+    startDate: startDate,
+    endDate: endDate,
+    dimensions: ['date'],
+    rowLimit: lookbackDays + 5
+  });
+
+  var rows = (result && result.rows) || [];
+  if (!rows.length) return '';
+
+  var latest = '';
+  for (var i = 0; i < rows.length; i++) {
+    var d = rows[i].keys && rows[i].keys[0];
+    if (d && d > latest) latest = d;
+  }
+  return latest;
+}
+
+/**
+ * 网站总体指标（无 dimension）
+ */
+function fetchSiteTotals(siteUrl, dataDate) {
+  var result = searchAnalyticsQuery(siteUrl, {
+    startDate: dataDate,
+    endDate: dataDate,
+    rowLimit: 1
+  });
+  var rows = (result && result.rows) || [];
+  if (!rows.length) {
+    return { clicks: 0, impressions: 0, ctr: 0, position: 0 };
+  }
+  var r = rows[0];
+  return {
+    clicks: r.clicks || 0,
+    impressions: r.impressions || 0,
+    ctr: r.ctr || 0,
+    position: r.position || 0
+  };
+}
+
+/**
+ * Query 明细（finalized，用于 GSC日数据 TopQueries / ReturnedQueryCount）
+ */
+function fetchQueries(siteUrl, dataDate, rowLimit) {
+  rowLimit = rowLimit || QUERY_ROW_LIMIT;
+  var result = searchAnalyticsQuery(siteUrl, {
+    startDate: dataDate,
+    endDate: dataDate,
+    dimensions: ['query'],
+    rowLimit: rowLimit
+  });
+  return (result && result.rows) || [];
+}
+
+/**
+ * Fresh Query 明细（含 preliminary 数据，用于 Query明细 / PAGE_OPPORTUNITIES）
+ * @param {string} siteUrl
+ * @param {string} dataDate yyyy-MM-dd
+ * @param {number=} rowLimit
+ * @return {Array}
+ */
+function fetchFreshQueries(siteUrl, dataDate, rowLimit) {
+  rowLimit = rowLimit || QUERY_ROW_LIMIT;
+  var result = searchAnalyticsQuery(siteUrl, {
+    startDate: dataDate,
+    endDate: dataDate,
+    dimensions: ['query'],
+    dataState: 'all',
+    rowLimit: rowLimit
+  });
+  return (result && result.rows) || [];
+}
+
+/**
+ * 近 N 天逐日拉取 Fresh Query（避免多日合并超出 rowLimit）
+ * @return {Array<{dataDate:string, rows:Array}>}
+ */
+function fetchFreshQueriesForRange(siteUrl, startDate, endDate, rowLimit) {
+  var out = [];
+  var dates = listDatesInclusive_(startDate, endDate);
+  for (var i = 0; i < dates.length; i++) {
+    out.push({
+      dataDate: dates[i],
+      rows: fetchFreshQueries(siteUrl, dates[i], rowLimit)
+    });
+  }
+  return out;
+}
+
+/**
+ * Page 明细
+ */
+function fetchPages(siteUrl, dataDate, rowLimit) {
+  rowLimit = rowLimit || QUERY_ROW_LIMIT;
+  var result = searchAnalyticsQuery(siteUrl, {
+    startDate: dataDate,
+    endDate: dataDate,
+    dimensions: ['page'],
+    rowLimit: rowLimit
+  });
+  return (result && result.rows) || [];
+}
+
+/**
+ * 找出 Day0 ~ endDate 之间最早 impressions > 0 的日期
+ */
+function findFirstImpressionDate(siteUrl, day0, endDate) {
+  if (!day0 || !endDate) return '';
+  var result = searchAnalyticsQuery(siteUrl, {
+    startDate: day0,
+    endDate: endDate,
+    dimensions: ['date'],
+    rowLimit: 25000
+  });
+  var rows = (result && result.rows) || [];
+  var earliest = '';
+  for (var i = 0; i < rows.length; i++) {
+    var impressions = rows[i].impressions || 0;
+    if (impressions <= 0) continue;
+    var d = rows[i].keys && rows[i].keys[0];
+    if (!d) continue;
+    if (!earliest || d < earliest) earliest = d;
+  }
+  return earliest;
+}
+
+/**
+ * 回填用：获取一段日期范围内按日汇总
+ */
+function fetchDateRows(siteUrl, startDate, endDate) {
+  var result = searchAnalyticsQuery(siteUrl, {
+    startDate: startDate,
+    endDate: endDate,
+    dimensions: ['date'],
+    rowLimit: 100
+  });
+  return (result && result.rows) || [];
+}
+
+/**
+ * 拉取并解析 sitemap，支持 urlset 与简单 sitemapindex
+ * @return {string[]} 去重后的 URL 列表
+ */
+function fetchSitemapUrls(sitemapUrl) {
+  var xmlText = httpGet_(sitemapUrl);
+  return parseSitemapXml_(xmlText, 0);
+}
+
+function parseSitemapXml_(xmlText, depth) {
+  depth = depth || 0;
+  if (depth > 2) return []; // 防止过深嵌套
+
+  var doc;
+  try {
+    doc = XmlService.parse(xmlText);
+  } catch (e) {
+    throw new Error('Sitemap XML 解析失败: ' + e.message);
+  }
+
+  var root = doc.getRootElement();
+  var rootName = root.getName();
+  var urls = [];
+
+  if (rootName === 'sitemapindex') {
+    var sitemaps = root.getChildren('sitemap', root.getNamespace());
+    for (var i = 0; i < sitemaps.length; i++) {
+      var locEl = sitemaps[i].getChild('loc', root.getNamespace());
+      if (!locEl) continue;
+      var childUrl = locEl.getText().trim();
+      if (!childUrl) continue;
+      try {
+        var childXml = httpGet_(childUrl);
+        var childUrls = parseSitemapXml_(childXml, depth + 1);
+        urls = urls.concat(childUrls);
+      } catch (err) {
+        writeLog_('WARN', '', '子 sitemap 失败: ' + childUrl + ' — ' + err.message);
+      }
+    }
+  } else if (rootName === 'urlset') {
+    var urlEls = root.getChildren('url', root.getNamespace());
+    for (var j = 0; j < urlEls.length; j++) {
+      var loc = urlEls[j].getChild('loc', root.getNamespace());
+      if (loc) {
+        var u = loc.getText().trim();
+        if (u) urls.push(u);
+      }
+    }
+  } else {
+    // 兜底：用正则抓 loc
+    var matches = String(xmlText).match(/<loc>\s*([^<]+)\s*<\/loc>/gi) || [];
+    for (var k = 0; k < matches.length; k++) {
+      var m = matches[k].replace(/<\/?loc>/gi, '').trim();
+      if (m) urls.push(m);
+    }
+  }
+
+  return uniqueStrings_(urls);
+}
+
+function uniqueStrings_(arr) {
+  var seen = {};
+  var out = [];
+  for (var i = 0; i < arr.length; i++) {
+    var v = String(arr[i] || '').trim();
+    if (!v || seen[v]) continue;
+    seen[v] = true;
+    out.push(v);
+  }
+  return out;
+}
+
+/**
+ * URL Inspection
+ * @return {Object} { ok, data|error }
+ */
+function inspectUrl(inspectionUrl, siteUrl) {
+  try {
+    var data = gscFetch(URL_INSPECTION_API, {
+      method: 'post',
+      payload: {
+        inspectionUrl: inspectionUrl,
+        siteUrl: siteUrl,
+        languageCode: 'en-US'
+      }
+    });
+    return { ok: true, data: data };
+  } catch (e) {
+    return { ok: false, error: e.message };
+  }
+}
+
+function extractIndexStatus_(inspectionResponse) {
+  var empty = {
+    verdict: '',
+    coverageState: '',
+    robotsTxtState: '',
+    indexingState: '',
+    lastCrawlTime: '',
+    pageFetchState: '',
+    googleCanonical: '',
+    userCanonical: '',
+    crawledAs: ''
+  };
+  if (!inspectionResponse || !inspectionResponse.inspectionResult) return empty;
+  var status = inspectionResponse.inspectionResult.indexStatusResult || {};
+  return {
+    verdict: status.verdict || '',
+    coverageState: status.coverageState || '',
+    robotsTxtState: status.robotsTxtState || '',
+    indexingState: status.indexingState || '',
+    lastCrawlTime: status.lastCrawlTime || '',
+    pageFetchState: status.pageFetchState || '',
+    googleCanonical: status.googleCanonical || '',
+    userCanonical: status.userCanonical || '',
+    crawledAs: status.crawledAs || ''
+  };
+}
