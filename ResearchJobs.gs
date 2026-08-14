@@ -7,6 +7,91 @@
  */
 
 /**
+ * Web App GET：hotword-engine 只读拉取待处理任务。
+ * 不写 Sheet、不改任务状态、不执行 Research。
+ * 例：?action=pendingResearchJobs
+ */
+function doGet(e) {
+  var action = '';
+  if (e && e.parameter && e.parameter.action) {
+    action = String(e.parameter.action).trim();
+  }
+  if (action === 'pendingResearchJobs') {
+    return jsonOutput_({ jobs: loadPendingResearchJobs_() });
+  }
+  return jsonOutput_({ error: 'unknown_action', jobs: [] });
+}
+
+function jsonOutput_(obj) {
+  return ContentService.createTextOutput(JSON.stringify(obj)).setMimeType(
+    ContentService.MimeType.JSON
+  );
+}
+
+/**
+ * 只读「研究任务」中 PENDING / 待处理 行。不 ensure、不写日志、不改单元格。
+ * @return {Array<Object>}
+ */
+function loadPendingResearchJobs_() {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  if (!ss) return [];
+  var sheet = ss.getSheetByName(SHEET_NAMES.RESEARCH_JOBS);
+  if (!sheet || sheet.getLastRow() < 2) return [];
+
+  var lastCol = Math.max(sheet.getLastColumn(), 1);
+  var header = sheet.getRange(1, 1, 1, lastCol).getValues()[0];
+  var col = headerIndexMap_(header);
+  var rows = sheet.getRange(2, 1, sheet.getLastRow() - 1, lastCol).getValues();
+  var jobs = [];
+  for (var i = 0; i < rows.length; i++) {
+    if (!isResearchJobPending_(String(cell_(rows[i], col, '任务状态') || '').trim())) {
+      continue;
+    }
+    var job = researchJobRowToApi_(rows[i], col);
+    if (job && job.job_id) jobs.push(job);
+  }
+  return jobs;
+}
+
+function isResearchJobPending_(status) {
+  var s = String(status || '').trim();
+  if (!s) return false;
+  if (s === RESEARCH_JOB_STATUS.PENDING) return true;
+  if (s === RESEARCH_JOB_STATUS_LABELS.PENDING) return true;
+  return enumFromLabel_(RESEARCH_JOB_STATUS_LABELS, s) === RESEARCH_JOB_STATUS.PENDING;
+}
+
+function researchJobRowToApi_(row, col) {
+  var created = cell_(row, col, '创建时间');
+  var createdAt = '';
+  if (Object.prototype.toString.call(created) === '[object Date]' && !isNaN(created.getTime())) {
+    createdAt = toIso8601_(created);
+  } else {
+    createdAt = String(created || '').trim();
+  }
+  var related = [];
+  var relatedRaw = String(cell_(row, col, '关联搜索词') || '').trim();
+  if (relatedRaw) {
+    var parts = relatedRaw.split('|');
+    for (var i = 0; i < parts.length; i++) {
+      var q = String(parts[i] || '').trim();
+      if (q) related.push(q);
+    }
+  }
+  return {
+    job_id: String(cell_(row, col, '任务ID') || '').trim(),
+    game: String(cell_(row, col, '游戏') || cell_(row, col, '站点') || '').trim(),
+    topic: String(cell_(row, col, '搜索词 / topic') || '').trim(),
+    existing_page: String(cell_(row, col, '页面路径') || '').trim(),
+    opportunity_level: enumFromLabel_(OPPORTUNITY_LEVEL_LABELS, String(cell_(row, col, '机会等级') || '').trim()),
+    recommended_action: enumFromLabel_(OPPORTUNITY_ACTION_LABELS, String(cell_(row, col, '建议动作') || '').trim()),
+    source_query: String(cell_(row, col, 'source_query') || '').trim(),
+    related_queries: related,
+    created_at: createdAt
+  };
+}
+
+/**
  * 独立入口：从当前「内容机会」筛选高优先级研究项，写入「研究任务」。
  * 幂等：同一聚合键已有 Job 时不重复创建。
  * @return {Object} { created, skipped, mortal }
@@ -686,6 +771,14 @@ function debugResearchJobsSelfCheck() {
   assert(sheetRow[7] === '研究并扩充现有页面', 'action display zh');
   assert(sheetRow[9] === '待处理', 'PENDING display 待处理');
   assert(sheetRow[10] === job.related_queries, '关联搜索词 column');
+
+  var apiJob = researchJobRowToApi_(sheetRow, headerIndexMap_(RESEARCH_JOB_HEADERS));
+  assert(apiJob.opportunity_level === 'HIGH', 'API level enum HIGH');
+  assert(apiJob.recommended_action === 'RESEARCH_EXPAND_EXISTING', 'API action enum');
+  assert(apiJob.related_queries.length === 8, 'API related_queries array');
+  assert(isResearchJobPending_('待处理') === true, '待处理 is PENDING');
+  assert(isResearchJobPending_('PENDING') === true, 'PENDING enum');
+  assert(isResearchJobPending_('DONE') === false, 'DONE not pending');
 
   var msg;
   if (fails.length) {
