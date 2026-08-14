@@ -74,6 +74,7 @@
 | `Config.gs` | `Config` |
 | `SearchConsole.gs` | `SearchConsole` |
 | `SheetManager.gs` | `SheetManager` |
+| `DecisionEngine.gs` | `DecisionEngine` |
 | `Utils.gs` | `Utils` |
 
 注意：
@@ -129,6 +130,9 @@
 - Query页面明细
 - URL索引
 - 运行日志
+- 规则配置
+- 站点状态
+- 今日行动
 
 **Query页面明细**：记录 GSC Fresh Query 与实际 Landing Page 的联合维度数据。字段为 `DataDate / Site / Query / PageURL / PagePath / Clicks / Impressions / CTR / AveragePosition`。用于判断某个 Query 当前由哪个页面获得曝光（`dataState=all`，近 `FRESH_QUERY_DAYS` 天）。
 
@@ -198,6 +202,8 @@ https://xxx.vercel.app/
 | GSC日数据 | 按「站点 + 日期」写入/更新 |
 | Query明细 | 最多每站每天 1000 条 query |
 | URL索引 | sitemap 里每个 URL 一行检查结果 |
+| 站点状态 | 每个启用站 1 行最新决策指标（不追加历史） |
+| 今日行动 | 仅写入需要人工处理的站；`WAIT` / `NO_ACTION` 不会出现 |
 | 运行日志 | INFO / WARN / ERROR |
 
 注意：Search Console Performance 数据通常有延迟，脚本会自动在最近 10 天里找「最新有数据的日期」，**不要假设昨天一定有数据**。
@@ -277,6 +283,11 @@ https://xxx.vercel.app/
 
 这些状态只是提醒，**不会自动决定建站/扩页/淘汰**。
 
+采集完成后，脚本会再跑一层 Decision Engine，把建议写到「站点状态」和「今日行动」。  
+「今日行动」的 `Status` 可标 `TODO` / `DONE` / `SKIP`；重新运行不会把已标记的 `DONE` / `SKIP` 改回 `TODO`，人工备注也会保留。阈值在「规则配置」里改，不必改代码。
+
+Decision Engine **不会**买域名、改 DNS、操作 Vercel，也不会再请求 GSC API。只读已写入的 Sheet。若要单独重跑决策：菜单 **热词站监控 → 运行决策引擎**。
+
 ---
 
 ## 安全说明
@@ -293,9 +304,10 @@ https://xxx.vercel.app/
 | 文件 | 用途 |
 |---|---|
 | `Code.gs` | 菜单、setup、每日运行、回填、Trigger、权限测试 |
-| `Config.gs` | 站点默认配置与表头常量（含 Query页面明细） |
+| `Config.gs` | 站点默认配置与表头常量（含 Query页面明细、决策规则/Guide Intent） |
 | `SearchConsole.gs` | Search Analytics / Sitemap / URL Inspection |
 | `SheetManager.gs` | 建表、读写、按唯一键更新 |
+| `DecisionEngine.gs` | 站点状态评分与今日行动（不请求 GSC API） |
 | `Utils.gs` | `gscFetch`、日期、重试、日志 |
 | `appsscript.json` | V8、时区、OAuth scopes |
 | `README.md` | 本说明 |
@@ -306,7 +318,7 @@ https://xxx.vercel.app/
 
 1. 启用 Search Console API  
 2. 新建 Google Sheet → 打开 Apps Script  
-3. 粘贴 5 个 `.gs` + 替换 `appsscript.json`  
+3. 粘贴 6 个 `.gs` + 替换 `appsscript.json`  
 4. 运行 `setup`  
 5. 运行 `testGscAccess`，确认 `7/7`  
 6. （可选）在「站点配置」填 Day0  

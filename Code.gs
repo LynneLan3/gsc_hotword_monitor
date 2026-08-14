@@ -7,6 +7,7 @@ function onOpen() {
     .createMenu('热词站监控')
     .addItem('初始化表格', 'setup')
     .addItem('立即运行一次', 'runDaily')
+    .addItem('运行决策引擎', 'runDecisionEngine')
     .addItem('运行URL索引批次', 'runIndexAuditBatch')
     .addItem('回填最近14天GSC数据', 'backfill14Days')
     .addSeparator()
@@ -34,6 +35,7 @@ function sortMonitoringSheetsNewestFirst() {
  * 每日主流程：逐站执行 Performance / 快照，单站失败不影响其他站。
  * 不做全量 URL Inspection（由 runIndexAuditBatch 分批负责）。
  * IndexedURLCount 使用「URL索引」历史最新 Verdict 去重统计。
+ * GSC 采集与排序全部成功后，再运行 Decision Engine；决策失败不回滚已采集数据。
  */
 function runDaily() {
   setupSheets(); // 确保表存在，不覆盖已有数据
@@ -42,27 +44,32 @@ function runDaily() {
   writeLog_('INFO', '', 'runDaily 开始，站点数量=' + sites.length);
 
   if (!sites.length) {
-    writeLog_('INFO', '', 'runDaily 结束：无启用站点');
-    sortMonitoringSheetsNewestFirst_();
-    return;
-  }
-
-  for (var i = 0; i < sites.length; i++) {
-    try {
-      processSiteDaily_(sites[i], runDate);
-    } catch (e) {
-      writeLog_('ERROR', sites[i].name, e.message);
-      appendSnapshotRow_([
-        runDate, '', sites[i].name, sites[i].propertyUrl, '',
-        '', '', '', '', '', '', '', '', '',
-        '', '', '', '🔴 需要检查', e.message
-      ]);
+    writeLog_('INFO', '', 'runDaily 采集结束：无启用站点');
+  } else {
+    for (var i = 0; i < sites.length; i++) {
+      try {
+        processSiteDaily_(sites[i], runDate);
+      } catch (e) {
+        writeLog_('ERROR', sites[i].name, e.message);
+        appendSnapshotRow_([
+          runDate, '', sites[i].name, sites[i].propertyUrl, '',
+          '', '', '', '', '', '', '', '', '',
+          '', '', '', '🔴 需要检查', e.message
+        ]);
+      }
     }
+    writeLog_('INFO', '', 'runDaily 采集结束');
   }
 
-  writeLog_('INFO', '', 'runDaily 结束');
-  // 全部写入（含结束日志）完成后再排序，保证最新日志在顶部
+  // 全部 GSC 写入完成后再排序，再跑决策；决策失败不得回滚已采集数据
   sortMonitoringSheetsNewestFirst_();
+  try {
+    runDecisionEngine();
+  } catch (e) {
+    writeLog_('ERROR', '', 'Decision Engine 失败: ' + e.message);
+    Logger.log('DECISION_ENGINE_FAILED | ' + e.message);
+  }
+  sortSheetsNewestFirst_([SHEET_NAMES.LOG]);
 }
 
 /**

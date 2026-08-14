@@ -1,0 +1,15 @@
+# Ignore everything, then allow Apps Script source only
+**/**
+
+!appsscript.json
+!**/*.gs
+
+.git/**
+.gitignore
+README.md
+node_modules/**
+**/.DS_Store
+*.log
+tmp/**
+.clasp.json
+.claspignore

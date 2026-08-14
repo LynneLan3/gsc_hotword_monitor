@@ -60,6 +60,21 @@ function applyColumnWidths_(sheet, name) {
     };
   } else if (name === SHEET_NAMES.LOG) {
     widths = { 1: 160, 2: 70, 3: 160, 4: 480 };
+  } else if (name === SHEET_NAMES.RULES) {
+    widths = { 1: 240, 2: 90, 3: 420 };
+  } else if (name === SHEET_NAMES.SITE_STATUS) {
+    widths = {
+      1: 100, 2: 180, 3: 110, 4: 50, 5: 120,
+      6: 90, 7: 110, 8: 110, 9: 140, 10: 130,
+      11: 90, 12: 110, 13: 140, 14: 120, 15: 120,
+      16: 120, 17: 80, 18: 100, 19: 90, 20: 110,
+      21: 110, 22: 80, 23: 100, 24: 120, 25: 150, 26: 70, 27: 360
+    };
+  } else if (name === SHEET_NAMES.TODAY_ACTIONS) {
+    widths = {
+      1: 100, 2: 70, 3: 180, 4: 120, 5: 150,
+      6: 100, 7: 360, 8: 80, 9: 180
+    };
   }
 
   Object.keys(widths).forEach(function (col) {
@@ -94,6 +109,13 @@ function applyNumberFormats_(sheet, name) {
     sheet.getRange('A:A').setNumberFormat('yyyy-mm-dd');
   } else if (name === SHEET_NAMES.LOG) {
     sheet.getRange('A:A').setNumberFormat('yyyy-mm-dd hh:mm:ss');
+  } else if (name === SHEET_NAMES.SITE_STATUS) {
+    sheet.getRange('A:A').setNumberFormat('yyyy-mm-dd');
+    sheet.getRange('C:C').setNumberFormat('yyyy-mm-dd');
+    sheet.getRange('F:F').setNumberFormat('0.00%');
+    sheet.getRange('K:K').setNumberFormat('0.00');
+  } else if (name === SHEET_NAMES.TODAY_ACTIONS) {
+    sheet.getRange('A:A').setNumberFormat('yyyy-mm-dd');
   }
 }
 
@@ -136,7 +158,10 @@ function setupSheets() {
         SHEET_NAMES.QUERIES,
         SHEET_NAMES.QUERY_PAGES,
         SHEET_NAMES.URL_INDEX,
-        SHEET_NAMES.LOG
+        SHEET_NAMES.LOG,
+        SHEET_NAMES.RULES,
+        SHEET_NAMES.SITE_STATUS,
+        SHEET_NAMES.TODAY_ACTIONS
       ])
   );
 
@@ -147,8 +172,13 @@ function setupSheets() {
   ensureSheet_(SHEET_NAMES.QUERY_PAGES, QUERY_PAGE_HEADERS);
   ensureSheet_(SHEET_NAMES.URL_INDEX, URL_INDEX_HEADERS);
   ensureSheet_(SHEET_NAMES.LOG, LOG_HEADERS);
+  ensureSheet_(SHEET_NAMES.RULES, RULE_HEADERS);
+  ensureSheet_(SHEET_NAMES.SITE_STATUS, SITE_STATUS_HEADERS);
+  ensureSheet_(SHEET_NAMES.TODAY_ACTIONS, TODAY_ACTION_HEADERS);
 
   seedSitesIfEmpty_();
+  seedMissingDecisionRules_();
+  applyTodayActionValidation_();
 
   writeLog_('INFO', '', 'setup 完成：工作表已就绪');
 }
