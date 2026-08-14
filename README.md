@@ -288,18 +288,19 @@ https://xxx.vercel.app/
 
 Decision Engine **不会**买域名、改 DNS、操作 Vercel，也不会再请求 GSC API。只读已写入的 Sheet。若要单独重跑决策：菜单 **热词站监控 → 运行决策引擎**。
 
-### 7）内容机会引擎（M0，独立入口）
+### 7）内容机会引擎（M0）
 
 `runContentOpportunityEngine` 只读「Query页面明细」，按确定性规则写入「内容机会」。
 
-- **不**接入 `runDaily`（需人工菜单单独运行）
+- 已接入 `runDaily`：GSC 采集与 Decision Engine 之后自动运行；失败不回滚已采集数据
+- 仍可单独重跑：菜单 **热词站监控 → 运行内容机会引擎**
 - **不**请求 GSC / 外部 API / LLM
 - 每个 Site 只用该站最新有效 `DataDate` 的 Query
 - 无 Query 的站点：跳过，不报错，不造假数据
 - 幂等：每次运行重建当前机会快照（按最新 DataDate），不会对同一 `DataDate + Site + normalized Query` 无限追加
-- Opportunity 的 `RecommendedAction`（如 `RESEARCH_EXPAND_EXISTING`）与 Decision Engine 的站点动作相互独立
+- Opportunity 的建议动作与 Decision Engine 的站点动作相互独立
 
-菜单：**热词站监控 → 运行内容机会引擎**。本地规则自检可运行 `debugOpportunityEngineSelfCheck`（不写 Sheet）。
+本地规则自检可运行 `debugOpportunityEngineSelfCheck`（不写 Sheet）。
 
 ---
 

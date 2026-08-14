@@ -36,7 +36,8 @@ function sortMonitoringSheetsNewestFirst() {
  * 每日主流程：逐站执行 Performance / 快照，单站失败不影响其他站。
  * 不做全量 URL Inspection（由 runIndexAuditBatch 分批负责）。
  * IndexedURLCount 使用「URL索引」历史最新 Verdict 去重统计。
- * GSC 采集与排序全部成功后，再运行 Decision Engine；决策失败不回滚已采集数据。
+ * GSC 采集与排序全部成功后，再运行 Decision Engine 与 Content Opportunity Engine；
+ * 决策/机会引擎失败不回滚已采集数据。
  */
 function runDaily() {
   setupSheets(); // 确保表存在，不覆盖已有数据
@@ -62,13 +63,19 @@ function runDaily() {
     writeLog_('INFO', '', 'runDaily 采集结束');
   }
 
-  // 全部 GSC 写入完成后再排序，再跑决策；决策失败不得回滚已采集数据
+  // 全部 GSC 写入完成后再排序，再跑决策与内容机会；失败不得回滚已采集数据
   sortMonitoringSheetsNewestFirst_();
   try {
     runDecisionEngine();
   } catch (e) {
     writeLog_('ERROR', '', 'Decision Engine 失败: ' + e.message);
     Logger.log('DECISION_ENGINE_FAILED | ' + e.message);
+  }
+  try {
+    runContentOpportunityEngine();
+  } catch (e) {
+    writeLog_('ERROR', '', 'Content Opportunity Engine 失败: ' + e.message);
+    Logger.log('OPPORTUNITY_ENGINE_FAILED | ' + e.message);
   }
   sortSheetsNewestFirst_([SHEET_NAMES.LOG]);
 }
