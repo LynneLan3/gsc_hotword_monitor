@@ -14,7 +14,8 @@ var SHEET_NAMES = {
   RULES: '规则配置',
   SITE_STATUS: '站点状态',
   TODAY_ACTIONS: '今日行动',
-  OPPORTUNITIES: '内容机会'
+  OPPORTUNITIES: '内容机会',
+  RESEARCH_JOBS: '研究任务'
 };
 
 var SITE_HEADERS = ['站点名称', 'Property URL', 'Sitemap URL', 'Day0', 'Enabled'];
@@ -76,7 +77,8 @@ var OPPORTUNITY_HEADERS = [
   '搜索意图', '意图明确度',
   '机会等级', '建议动作', '推荐理由',
   '首次出现日期', '出现天数', '是否新搜索词',
-  '研究状态', '备注'
+  '研究状态', '备注',
+  '研究任务ID', '研究请求时间'
 ];
 
 /** Opportunity Engine 独立动作（勿与 Decision Engine RecommendedAction 混用） */
@@ -176,6 +178,47 @@ var OPPORTUNITY_ACTION_LABELS = {
   RESEARCH_NEW_CONTENT: '研究新内容',
   WATCH: '继续观察',
   IGNORE_BRAND: '忽略品牌词'
+};
+
+/**
+ * Research Job 出口：内容机会 → 标准 Job 记录。
+ * 内部 enum 英文；Sheet 显示层中文。不抓取外部源、不调用 hotword-engine。
+ */
+var RESEARCH_JOB_HEADERS = [
+  '任务ID', '创建时间', '站点', '游戏',
+  '搜索词 / topic', '页面路径',
+  '机会等级', '建议动作', 'source_query', '任务状态',
+  '关联搜索词'
+];
+
+var RESEARCH_JOB_STATUS = {
+  PENDING: 'PENDING'
+};
+
+var RESEARCH_JOB_STATUS_LABELS = {
+  PENDING: '待处理'
+};
+
+/** 内容机会「研究状态」显示层（创建 Job 后回写） */
+var RESEARCH_STATUS_LABELS = {
+  TODO: '待研究'
+};
+
+/** 允许从内容机会创建 Research Job 的建议动作（内部 enum） */
+var RESEARCH_JOB_ELIGIBLE_ACTIONS = {
+  RESEARCH_EXPAND_EXISTING: true,
+  RESEARCH_NEW_CONTENT: true
+};
+
+/** job_id 前缀；未知游戏回退为站点名 slug */
+var RESEARCH_GAME_SLUGS = {
+  'Mortal Shell II': 'ms2',
+  'Approximately Up': 'au',
+  'Leafy Corner': 'leafy',
+  'BeastLink': 'beastlink',
+  'Sovereign Tower': 'sovtower',
+  'Grain Rot': 'grainrot',
+  'Agefield High: Rock the School': 'agefield'
 };
 
 /**

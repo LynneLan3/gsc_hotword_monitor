@@ -57,6 +57,17 @@ function runContentOpportunityEngine() {
     summaries.push(site.name + '→' + siteCount + '@' + latestDate);
   }
 
+  var preservedOps = loadOpportunityResearchOps_();
+  for (var r = 0; r < outRows.length; r++) {
+    var siteName = String(outRows[r][2] || '').trim();
+    var query = String(outRows[r][4] || '').trim();
+    var ops = preservedOps[researchOpportunityKey_(siteName, query)] || {};
+    outRows[r][19] = ops.researchStatus || '';
+    outRows[r][20] = ops.note || '';
+    outRows[r][21] = ops.researchJobId || '';
+    outRows[r][22] = ops.researchRequestedAt || '';
+  }
+
   replaceSheetDataRows_(SHEET_NAMES.OPPORTUNITIES, OPPORTUNITY_HEADERS, outRows);
   writeLog_(
     'INFO',
@@ -68,6 +79,8 @@ function runContentOpportunityEngine() {
 function ensureOpportunitySheets_() {
   ensureSheet_(SHEET_NAMES.OPPORTUNITIES, OPPORTUNITY_HEADERS);
   ensureOpportunityHeader_();
+  var sheet = getSpreadsheet_().getSheetByName(SHEET_NAMES.OPPORTUNITIES);
+  if (sheet) ensureOpportunityResearchColumns_(sheet);
 }
 
 /** 已有「内容机会」时把表头换成中文，不碰其它 Sheet、不改数据行。 */
@@ -492,8 +505,38 @@ function opportunityRow_(generatedAt, site, dataDate, raw, decision, hist) {
     decision.seenDays || hist.seenDays || 1,
     decision.isNewQuery ? '是' : '否',
     '',
+    '',
+    '',
     ''
   ];
+}
+
+/**
+ * 读取现有「内容机会」运营字段，供快照重建时保留研究任务回写。
+ * key = Site + '||' + normalized Query
+ */
+function loadOpportunityResearchOps_() {
+  var map = {};
+  var sheet = getSpreadsheet_().getSheetByName(SHEET_NAMES.OPPORTUNITIES);
+  if (!sheet || sheet.getLastRow() < 2) return map;
+  var lastCol = Math.max(sheet.getLastColumn(), OPPORTUNITY_HEADERS.length);
+  var header = sheet.getRange(1, 1, 1, lastCol).getValues()[0];
+  var col = headerIndexMap_(header);
+  var rows = sheet.getRange(2, 1, sheet.getLastRow() - 1, lastCol).getValues();
+  for (var i = 0; i < rows.length; i++) {
+    var site = String(cell_(rows[i], col, '站点') || '').trim();
+    var query = String(cell_(rows[i], col, '搜索词') || '').trim();
+    if (!site || !query) continue;
+    map[researchOpportunityKey_(site, query)] = {
+      researchStatus: String(cell_(rows[i], col, '研究状态') || '').trim(),
+      note: cell_(rows[i], col, '备注') === null || cell_(rows[i], col, '备注') === undefined
+        ? ''
+        : String(cell_(rows[i], col, '备注')),
+      researchJobId: String(cell_(rows[i], col, '研究任务ID') || '').trim(),
+      researchRequestedAt: cell_(rows[i], col, '研究请求时间') || ''
+    };
+  }
+  return map;
 }
 
 /**

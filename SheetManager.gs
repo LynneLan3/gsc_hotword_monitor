@@ -80,7 +80,13 @@ function applyColumnWidths_(sheet, name) {
       1: 150, 2: 100, 3: 160, 4: 260, 5: 240,
       6: 280, 7: 220, 8: 70, 9: 100, 10: 70,
       11: 110, 12: 120, 13: 120, 14: 90, 15: 180,
-      16: 360, 17: 110, 18: 80, 19: 90, 20: 110, 21: 160
+      16: 360, 17: 110, 18: 80, 19: 90, 20: 110, 21: 160,
+      22: 220, 23: 160
+    };
+  } else if (name === SHEET_NAMES.RESEARCH_JOBS) {
+    widths = {
+      1: 260, 2: 160, 3: 160, 4: 160,
+      5: 280, 6: 240, 7: 90, 8: 180, 9: 280, 10: 90, 11: 420
     };
   }
 
@@ -129,6 +135,9 @@ function applyNumberFormats_(sheet, name) {
     sheet.getRange('J:J').setNumberFormat('0.00%');
     sheet.getRange('K:K').setNumberFormat('0.0');
     sheet.getRange('Q:Q').setNumberFormat('yyyy-mm-dd');
+    sheet.getRange('W:W').setNumberFormat('yyyy-mm-dd hh:mm:ss');
+  } else if (name === SHEET_NAMES.RESEARCH_JOBS) {
+    sheet.getRange('B:B').setNumberFormat('yyyy-mm-dd hh:mm:ss');
   }
 }
 
@@ -175,7 +184,8 @@ function setupSheets() {
         SHEET_NAMES.RULES,
         SHEET_NAMES.SITE_STATUS,
         SHEET_NAMES.TODAY_ACTIONS,
-        SHEET_NAMES.OPPORTUNITIES
+        SHEET_NAMES.OPPORTUNITIES,
+        SHEET_NAMES.RESEARCH_JOBS
       ])
   );
 
@@ -190,6 +200,7 @@ function setupSheets() {
   ensureSheet_(SHEET_NAMES.SITE_STATUS, SITE_STATUS_HEADERS);
   ensureSheet_(SHEET_NAMES.TODAY_ACTIONS, TODAY_ACTION_HEADERS);
   ensureSheet_(SHEET_NAMES.OPPORTUNITIES, OPPORTUNITY_HEADERS);
+  ensureSheet_(SHEET_NAMES.RESEARCH_JOBS, RESEARCH_JOB_HEADERS);
 
   seedSitesIfEmpty_();
   seedMissingDecisionRules_();
