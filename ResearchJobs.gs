@@ -10,6 +10,8 @@
  * Web App GET：hotword-engine 只读拉取待处理任务。
  * 不写 Sheet、不改任务状态、不执行 Research。
  * 例：?action=pendingResearchJobs
+ *
+ * 一次性：?action=initResearchWriteToken — 仅当 Script Property 未设置时生成并返回 token。
  */
 function doGet(e) {
   var action = '';
@@ -19,13 +21,216 @@ function doGet(e) {
   if (action === 'pendingResearchJobs') {
     return jsonOutput_({ jobs: loadPendingResearchJobs_() });
   }
+  if (action === 'initResearchWriteToken') {
+    return jsonOutput_(initResearchWriteToken_());
+  }
+  if (action === 'researchJobRow') {
+    var jobId = e && e.parameter ? String(e.parameter.job_id || '').trim() : '';
+    return jsonOutput_(readResearchJobDisplay_(jobId));
+  }
   return jsonOutput_({ error: 'unknown_action', jobs: [] });
+}
+
+/**
+ * Web App POST：hotword-engine 回写研究结果。
+ * 需携带 token（JSON body.token 或 query ?token=）；按 job_id 更新「研究任务」单行。
+ * 不修改「内容机会」、不新建任务、不执行 Research。
+ */
+function doPost(e) {
+  try {
+    var body = parsePostJson_(e);
+    if (!body) {
+      return jsonOutput_({ ok: false, error: 'invalid_json' });
+    }
+    if (!checkResearchWriteToken_(e, body)) {
+      return jsonOutput_({ ok: false, error: 'unauthorized' });
+    }
+    return jsonOutput_(writeResearchJobResult_(body));
+  } catch (err) {
+    return jsonOutput_({
+      ok: false,
+      error: String((err && err.message) || err || 'unknown_error')
+    });
+  }
 }
 
 function jsonOutput_(obj) {
   return ContentService.createTextOutput(JSON.stringify(obj)).setMimeType(
     ContentService.MimeType.JSON
   );
+}
+
+function parsePostJson_(e) {
+  if (!e || !e.postData || e.postData.contents == null) return null;
+  try {
+    return JSON.parse(e.postData.contents);
+  } catch (err) {
+    return null;
+  }
+}
+
+function checkResearchWriteToken_(e, body) {
+  var expected = PropertiesService.getScriptProperties().getProperty(
+    RESEARCH_JOB_WRITE_TOKEN_PROP
+  );
+  if (!expected) return false;
+  var provided = '';
+  if (body && body.token != null) provided = String(body.token).trim();
+  if (!provided && e && e.parameter && e.parameter.token != null) {
+    provided = String(e.parameter.token).trim();
+  }
+  return provided !== '' && provided === expected;
+}
+
+/** 仅当未配置时生成 token，不进仓库。 */
+function initResearchWriteToken_() {
+  var props = PropertiesService.getScriptProperties();
+  var existing = props.getProperty(RESEARCH_JOB_WRITE_TOKEN_PROP);
+  if (existing) {
+    return { ok: false, error: 'already_configured' };
+  }
+  var token = Utilities.getUuid().replace(/-/g, '');
+  props.setProperty(RESEARCH_JOB_WRITE_TOKEN_PROP, token);
+  return { ok: true, token: token };
+}
+
+/**
+ * 按 job_id 回写研究任务结果。不存在则 error，不新增行。
+ * @param {Object} body
+ * @return {Object}
+ */
+function writeResearchJobResult_(body) {
+  var jobId = String((body && body.job_id) || '').trim();
+  if (!jobId) return { ok: false, error: 'missing_job_id' };
+
+  var statusEnum = String((body && body.status) || '').trim();
+  if (
+    statusEnum !== RESEARCH_JOB_STATUS.REVIEW &&
+    statusEnum !== RESEARCH_JOB_STATUS.FAILED
+  ) {
+    return { ok: false, error: 'invalid_status' };
+  }
+
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  if (!ss) return { ok: false, error: 'no_spreadsheet' };
+  var sheet = ss.getSheetByName(SHEET_NAMES.RESEARCH_JOBS);
+  if (!sheet) return { ok: false, error: 'sheet_missing' };
+
+  ensureResearchJobResultColumns_(sheet);
+  SpreadsheetApp.flush();
+
+  var lastCol = Math.max(sheet.getLastColumn(), RESEARCH_JOB_HEADERS.length);
+  var header = sheet.getRange(1, 1, 1, lastCol).getValues()[0];
+  var col = headerIndexMap_(header);
+  if (col['任务ID'] === undefined) return { ok: false, error: 'missing_job_id_column' };
+
+  var found = findResearchJobRowById_(sheet, col, jobId);
+  if (!found) return { ok: false, error: 'job_not_found', job_id: jobId };
+
+  var completedAt = new Date();
+  var statusLabel = opportunityLabel_(RESEARCH_JOB_STATUS_LABELS, statusEnum);
+  var recEnum = '';
+  var recLabel = '';
+  var evidenceCount = '';
+  var resultPath = '';
+  var errorMsg = '';
+
+  if (statusEnum === RESEARCH_JOB_STATUS.FAILED) {
+    errorMsg = String((body && body.error) || '').trim();
+  } else {
+    recEnum = String((body && body.recommendation) || '').trim();
+    if (recEnum && !RESEARCH_RESULT_RECOMMENDATION_LABELS[recEnum]) {
+      return { ok: false, error: 'invalid_recommendation' };
+    }
+    recLabel = recEnum
+      ? opportunityLabel_(RESEARCH_RESULT_RECOMMENDATION_LABELS, recEnum)
+      : '';
+    if (body && body.evidence_count != null && body.evidence_count !== '') {
+      evidenceCount = Number(body.evidence_count);
+      if (isNaN(evidenceCount)) return { ok: false, error: 'invalid_evidence_count' };
+    }
+    resultPath = String((body && body.result_path) || '').trim();
+  }
+
+  setCellIf_(sheet, found.sheetRow, col, '任务状态', statusLabel);
+  setCellIf_(sheet, found.sheetRow, col, '研究结果', recLabel);
+  setCellIf_(sheet, found.sheetRow, col, '证据数量', evidenceCount);
+  setCellIf_(sheet, found.sheetRow, col, '结果路径', resultPath);
+  setCellIf_(sheet, found.sheetRow, col, '完成时间', completedAt);
+  setCellIf_(sheet, found.sheetRow, col, '错误信息', errorMsg);
+  SpreadsheetApp.flush();
+
+  return {
+    ok: true,
+    job_id: jobId,
+    status: statusEnum,
+    recommendation: recEnum || null,
+    evidence_count: evidenceCount === '' ? null : evidenceCount,
+    result_path: resultPath || null,
+    completed_at: toIso8601_(completedAt),
+    display: {
+      任务状态: statusLabel,
+      研究结果: recLabel,
+      证据数量: evidenceCount === '' ? '' : evidenceCount,
+      结果路径: resultPath,
+      完成时间: toIso8601_(completedAt),
+      错误信息: errorMsg
+    }
+  };
+}
+
+function setCellIf_(sheet, sheetRow, col, name, value) {
+  if (col[name] === undefined) return;
+  sheet.getRange(sheetRow, col[name] + 1).setValue(value);
+}
+
+function findResearchJobRowById_(sheet, col, jobId) {
+  if (!sheet || sheet.getLastRow() < 2) return null;
+  var idCol = col['任务ID'];
+  if (idCol === undefined) return null;
+  var n = sheet.getLastRow() - 1;
+  var values = sheet.getRange(2, idCol + 1, n, 1).getValues();
+  for (var i = 0; i < values.length; i++) {
+    if (String(values[i][0] || '').trim() === jobId) {
+      return { sheetRow: i + 2 };
+    }
+  }
+  return null;
+}
+
+/** 只读回读某 job 的显示层字段（验证用）。 */
+function readResearchJobDisplay_(jobId) {
+  jobId = String(jobId || '').trim();
+  if (!jobId) return { ok: false, error: 'missing_job_id' };
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  if (!ss) return { ok: false, error: 'no_spreadsheet' };
+  var sheet = ss.getSheetByName(SHEET_NAMES.RESEARCH_JOBS);
+  if (!sheet || sheet.getLastRow() < 2) return { ok: false, error: 'sheet_empty' };
+  var lastCol = Math.max(sheet.getLastColumn(), 1);
+  var header = sheet.getRange(1, 1, 1, lastCol).getValues()[0];
+  var col = headerIndexMap_(header);
+  var found = findResearchJobRowById_(sheet, col, jobId);
+  if (!found) return { ok: false, error: 'job_not_found', job_id: jobId };
+  var row = sheet.getRange(found.sheetRow, 1, 1, lastCol).getValues()[0];
+  var completed = cell_(row, col, '完成时间');
+  var completedAt = '';
+  if (Object.prototype.toString.call(completed) === '[object Date]' && !isNaN(completed.getTime())) {
+    completedAt = toIso8601_(completed);
+  } else {
+    completedAt = String(completed || '').trim();
+  }
+  return {
+    ok: true,
+    job_id: jobId,
+    display: {
+      任务状态: String(cell_(row, col, '任务状态') || '').trim(),
+      研究结果: String(cell_(row, col, '研究结果') || '').trim(),
+      证据数量: cell_(row, col, '证据数量'),
+      结果路径: String(cell_(row, col, '结果路径') || '').trim(),
+      完成时间: completedAt,
+      错误信息: String(cell_(row, col, '错误信息') || '').trim()
+    }
+  };
 }
 
 /**
@@ -256,15 +461,33 @@ function ensureResearchJobSheets_() {
 function ensureResearchJobHeader_() {
   var sheet = getSpreadsheet_().getSheetByName(SHEET_NAMES.RESEARCH_JOBS);
   if (!sheet) return;
-  var lastCol = Math.max(sheet.getLastColumn(), RESEARCH_JOB_HEADERS.length);
+  ensureResearchJobResultColumns_(sheet);
+}
+
+/**
+ * 仅追加「研究任务」缺失列；不重复、不改已有数据行。
+ */
+function ensureResearchJobResultColumns_(sheet) {
+  if (!sheet) return;
+  var lastCol = Math.max(sheet.getLastColumn(), 1);
   var header = sheet.getRange(1, 1, 1, lastCol).getValues()[0];
-  var actual = [];
-  for (var i = 0; i < RESEARCH_JOB_HEADERS.length; i++) {
-    actual.push(String(header[i] || '').trim());
+  var have = {};
+  for (var i = 0; i < header.length; i++) {
+    var name = String(header[i] || '').trim();
+    if (name) have[name] = true;
   }
-  if (actual.join('|') === RESEARCH_JOB_HEADERS.join('|')) return;
-  sheet.getRange(1, 1, 1, RESEARCH_JOB_HEADERS.length).setValues([RESEARCH_JOB_HEADERS]);
-  sheet.getRange(1, 1, 1, RESEARCH_JOB_HEADERS.length).setFontWeight('bold');
+  var toAdd = [];
+  for (var n = 0; n < RESEARCH_JOB_HEADERS.length; n++) {
+    if (!have[RESEARCH_JOB_HEADERS[n]]) toAdd.push(RESEARCH_JOB_HEADERS[n]);
+  }
+  if (!toAdd.length) return;
+
+  var startCol = lastCol + 1;
+  if (String(header[header.length - 1] || '').trim() === '') {
+    startCol = lastCol;
+  }
+  sheet.getRange(1, startCol, 1, toAdd.length).setValues([toAdd]);
+  sheet.getRange(1, startCol, 1, toAdd.length).setFontWeight('bold');
 }
 
 /**
@@ -616,7 +839,12 @@ function researchJobSheetRow_(job, site, createdAt) {
     opportunityLabel_(OPPORTUNITY_ACTION_LABELS, job.recommended_action),
     job.source_query,
     opportunityLabel_(RESEARCH_JOB_STATUS_LABELS, RESEARCH_JOB_STATUS.PENDING),
-    job.related_queries || ''
+    job.related_queries || '',
+    '',
+    '',
+    '',
+    '',
+    ''
   ];
 }
 
@@ -771,6 +999,17 @@ function debugResearchJobsSelfCheck() {
   assert(sheetRow[7] === '研究并扩充现有页面', 'action display zh');
   assert(sheetRow[9] === '待处理', 'PENDING display 待处理');
   assert(sheetRow[10] === job.related_queries, '关联搜索词 column');
+  assert(sheetRow.length === RESEARCH_JOB_HEADERS.length, 'sheet row matches headers');
+  assert(sheetRow[11] === '', '研究结果 empty on create');
+  assert(
+    opportunityLabel_(RESEARCH_JOB_STATUS_LABELS, 'REVIEW') === '待审核',
+    'REVIEW → 待审核'
+  );
+  assert(
+    opportunityLabel_(RESEARCH_RESULT_RECOMMENDATION_LABELS, 'EXPAND_EXISTING') ===
+      '扩充现有页面',
+    'EXPAND_EXISTING → 扩充现有页面'
+  );
 
   var apiJob = researchJobRowToApi_(sheetRow, headerIndexMap_(RESEARCH_JOB_HEADERS));
   assert(apiJob.opportunity_level === 'HIGH', 'API level enum HIGH');

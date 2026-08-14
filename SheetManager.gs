@@ -86,7 +86,8 @@ function applyColumnWidths_(sheet, name) {
   } else if (name === SHEET_NAMES.RESEARCH_JOBS) {
     widths = {
       1: 260, 2: 160, 3: 160, 4: 160,
-      5: 280, 6: 240, 7: 90, 8: 180, 9: 280, 10: 90, 11: 420
+      5: 280, 6: 240, 7: 90, 8: 180, 9: 280, 10: 90, 11: 420,
+      12: 140, 13: 90, 14: 360, 15: 160, 16: 280
     };
   }
 
@@ -138,6 +139,7 @@ function applyNumberFormats_(sheet, name) {
     sheet.getRange('W:W').setNumberFormat('yyyy-mm-dd hh:mm:ss');
   } else if (name === SHEET_NAMES.RESEARCH_JOBS) {
     sheet.getRange('B:B').setNumberFormat('yyyy-mm-dd hh:mm:ss');
+    sheet.getRange('O:O').setNumberFormat('yyyy-mm-dd hh:mm:ss');
   }
 }
 

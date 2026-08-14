@@ -188,16 +188,37 @@ var RESEARCH_JOB_HEADERS = [
   '任务ID', '创建时间', '站点', '游戏',
   '搜索词 / topic', '页面路径',
   '机会等级', '建议动作', 'source_query', '任务状态',
-  '关联搜索词'
+  '关联搜索词',
+  '研究结果', '证据数量', '结果路径', '完成时间', '错误信息'
 ];
 
 var RESEARCH_JOB_STATUS = {
-  PENDING: 'PENDING'
+  PENDING: 'PENDING',
+  REVIEW: 'REVIEW',
+  FAILED: 'FAILED'
 };
 
 var RESEARCH_JOB_STATUS_LABELS = {
-  PENDING: '待处理'
+  PENDING: '待处理',
+  REVIEW: '待审核',
+  FAILED: '失败'
 };
+
+/** hotword-engine 回写的研究结果建议（与内容机会「建议动作」不同） */
+var RESEARCH_RESULT_RECOMMENDATIONS = {
+  EXPAND_EXISTING: 'EXPAND_EXISTING',
+  NEW_CONTENT: 'NEW_CONTENT',
+  WATCH: 'WATCH'
+};
+
+var RESEARCH_RESULT_RECOMMENDATION_LABELS = {
+  EXPAND_EXISTING: '扩充现有页面',
+  NEW_CONTENT: '新内容',
+  WATCH: '继续观察'
+};
+
+/** Script Properties key；值不进仓库 */
+var RESEARCH_JOB_WRITE_TOKEN_PROP = 'RESEARCH_JOB_WRITE_TOKEN';
 
 /** 内容机会「研究状态」显示层（创建 Job 后回写） */
 var RESEARCH_STATUS_LABELS = {
