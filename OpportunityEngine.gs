@@ -67,6 +67,22 @@ function runContentOpportunityEngine() {
 
 function ensureOpportunitySheets_() {
   ensureSheet_(SHEET_NAMES.OPPORTUNITIES, OPPORTUNITY_HEADERS);
+  ensureOpportunityHeader_();
+}
+
+/** 已有「内容机会」时把表头换成中文，不碰其它 Sheet、不改数据行。 */
+function ensureOpportunityHeader_() {
+  var sheet = getSpreadsheet_().getSheetByName(SHEET_NAMES.OPPORTUNITIES);
+  if (!sheet) return;
+  var lastCol = Math.max(sheet.getLastColumn(), OPPORTUNITY_HEADERS.length);
+  var header = sheet.getRange(1, 1, 1, lastCol).getValues()[0];
+  var actual = [];
+  for (var i = 0; i < OPPORTUNITY_HEADERS.length; i++) {
+    actual.push(String(header[i] || '').trim());
+  }
+  if (actual.join('|') === OPPORTUNITY_HEADERS.join('|')) return;
+  sheet.getRange(1, 1, 1, OPPORTUNITY_HEADERS.length).setValues([OPPORTUNITY_HEADERS]);
+  sheet.getRange(1, 1, 1, OPPORTUNITY_HEADERS.length).setFontWeight('bold');
 }
 
 /**
@@ -384,66 +400,73 @@ function isOpportunityRelatedGuidePage_(query, pagePath, site) {
   return overlap >= 1;
 }
 
+function opportunityLabel_(map, key) {
+  if (map && map[key]) return map[key];
+  return String(key || '');
+}
+
 function buildOpportunityReason_(raw, intent, specificity, level, action) {
   var impressions = Number(raw.impressions || 0);
   var clicks = Number(raw.clicks || 0);
   var position = Number(raw.position || 0);
-  var posText = position ? String(Math.round(position * 10) / 10) : 'n/a';
+  var posText = position ? String(Math.round(position * 10) / 10) : '未知';
   var path = resolveOpportunityPagePath_(raw.pageUrl, raw.pagePath) || '/';
+  var intentLabel = opportunityLabel_(OPPORTUNITY_INTENT_LABELS, intent);
 
   if (action === OPPORTUNITY_ACTIONS.IGNORE_BRAND) {
     return (
-      'Brand-only query with ' +
+      '该搜索词为品牌词，有 ' +
       impressions +
-      ' impressions; keep watching brand demand without social research priority.'
+      ' 次展现；品牌需求可观察，暂不作为内容研究优先项。'
     );
   }
 
   if (action === OPPORTUNITY_ACTIONS.RESEARCH_EXPAND_EXISTING) {
     return (
-      'Specific ' +
-      intent.toLowerCase().replace(/_/g, ' ') +
-      ' query with ' +
+      '该' +
+      intentLabel +
+      '搜索词有 ' +
       impressions +
-      ' impressions and avg position ' +
+      ' 次展现，平均排名 ' +
       posText +
-      ' already ranking on a matching page (' +
+      '，当前已由 ' +
       path +
-      ').'
+      ' 承接，建议进一步研究并扩充现有页面。'
     );
   }
 
   if (action === OPPORTUNITY_ACTIONS.RESEARCH_NEW_CONTENT) {
     return (
-      intent.replace(/_/g, ' ') +
-      '-oriented query is receiving ' +
+      '该' +
+      intentLabel +
+      '搜索词有 ' +
       impressions +
-      ' impressions on the game hub (' +
+      ' 次展现，平均排名 ' +
+      posText +
+      '，当前落在游戏首页/Hub（' +
       path +
-      ') and may deserve deeper content research.'
+      '），建议进一步研究新内容。'
     );
   }
 
   if (specificity === OPPORTUNITY_SPECIFICITY.AMBIGUOUS) {
     return (
-      'Ambiguous query with weak or unclear intent (' +
+      '该搜索词意图不够明确，有 ' +
       impressions +
-      ' impressions, position ' +
+      ' 次展现、平均排名 ' +
       posText +
-      '); watch before researching.'
+      '，建议继续观察。'
     );
   }
 
   return (
-    'Low-confidence opportunity (' +
-    level +
-    ') with ' +
+    '该搜索词信号较弱（' +
     impressions +
-    ' impressions / ' +
+    ' 次展现 / ' +
     clicks +
-    ' clicks at position ' +
+    ' 次点击，排名 ' +
     posText +
-    '; watch for stronger repeat signals.'
+    '），建议继续观察。'
   );
 }
 
@@ -460,14 +483,14 @@ function opportunityRow_(generatedAt, site, dataDate, raw, decision, hist) {
     raw.impressions || 0,
     raw.ctr || 0,
     raw.position || 0,
-    decision.intent,
-    decision.specificity,
-    decision.level,
-    decision.action,
+    opportunityLabel_(OPPORTUNITY_INTENT_LABELS, decision.intent),
+    opportunityLabel_(OPPORTUNITY_SPECIFICITY_LABELS, decision.specificity),
+    opportunityLabel_(OPPORTUNITY_LEVEL_LABELS, decision.level),
+    opportunityLabel_(OPPORTUNITY_ACTION_LABELS, decision.action),
     decision.reason,
     decision.firstSeenDate || hist.firstSeenDate || dataDate,
     decision.seenDays || hist.seenDays || 1,
-    decision.isNewQuery ? true : false,
+    decision.isNewQuery ? '是' : '否',
     '',
     ''
   ];
@@ -712,6 +735,71 @@ function debugOpportunityEngineSelfCheck() {
     ) === OPPORTUNITY_LEVELS.MEDIUM,
     '1 imp / 29 → MEDIUM'
   );
+
+  // Display-layer Chinese mapping (does not change enum decisions)
+  assert(opportunityLabel_(OPPORTUNITY_INTENT_LABELS, 'PLATFORM') === '平台', 'intent 平台');
+  assert(opportunityLabel_(OPPORTUNITY_SPECIFICITY_LABELS, 'SPECIFIC_INTENT') === '明确意图', 'specificity');
+  assert(opportunityLabel_(OPPORTUNITY_LEVEL_LABELS, 'HIGH') === '高', 'level 高');
+  assert(
+    opportunityLabel_(OPPORTUNITY_ACTION_LABELS, 'RESEARCH_EXPAND_EXISTING') ===
+      '研究并扩充现有页面',
+    'action expand'
+  );
+  assert(
+    opportunityLabel_(OPPORTUNITY_ACTION_LABELS, 'RESEARCH_NEW_CONTENT') === '研究新内容',
+    'action new'
+  );
+  assert(opportunityLabel_(OPPORTUNITY_ACTION_LABELS, 'WATCH') === '继续观察', 'action watch');
+  assert(opportunityLabel_(OPPORTUNITY_ACTION_LABELS, 'IGNORE_BRAND') === '忽略品牌词', 'action ignore');
+  var zhReason = buildOpportunityReason_(
+    {
+      pageUrl: 'https://approximately-up.vercel.app/approximately-up/console/',
+      pagePath: '/approximately-up/console/',
+      clicks: 0,
+      impressions: 5,
+      position: 6.4
+    },
+    OPPORTUNITY_INTENT.PLATFORM,
+    OPPORTUNITY_SPECIFICITY.SPECIFIC_INTENT,
+    OPPORTUNITY_LEVELS.HIGH,
+    OPPORTUNITY_ACTIONS.RESEARCH_EXPAND_EXISTING
+  );
+  assert(
+    zhReason.indexOf('该平台搜索词有 5 次展现') >= 0 &&
+      zhReason.indexOf('平均排名 6.4') >= 0 &&
+      zhReason.indexOf('/approximately-up/console/') >= 0 &&
+      zhReason.indexOf('研究并扩充现有页面') >= 0,
+    'Chinese reason for expand'
+  );
+  var zhRow = opportunityRow_(
+    new Date(),
+    { name: 'Approximately Up', propertyUrl: 'https://approximately-up.vercel.app/' },
+    '2026-08-12',
+    {
+      query: 'approximately up ps5',
+      pageUrl: 'https://approximately-up.vercel.app/approximately-up/console/',
+      pagePath: '/approximately-up/console/',
+      clicks: 0,
+      impressions: 5,
+      ctr: 0,
+      position: 6.4
+    },
+    {
+      intent: 'PLATFORM',
+      specificity: 'SPECIFIC_INTENT',
+      level: 'HIGH',
+      action: 'RESEARCH_EXPAND_EXISTING',
+      reason: zhReason,
+      firstSeenDate: '2026-08-12',
+      seenDays: 1,
+      isNewQuery: true
+    },
+    { firstSeenDate: '2026-08-12', seenDays: 1 }
+  );
+  assert(zhRow[11] === '平台' && zhRow[12] === '明确意图' && zhRow[13] === '高', 'row labels');
+  assert(zhRow[14] === '研究并扩充现有页面', 'row action zh');
+  assert(zhRow[18] === '是', 'isNew 是');
+  assert(zhRow[4] === 'approximately up ps5', 'raw query unchanged');
 
   // Normalization
   assert(

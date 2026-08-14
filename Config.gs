@@ -66,17 +66,17 @@ var TODAY_ACTION_EXCLUDED = {
 };
 
 /**
- * Content Opportunity Engine M0：内容机会表头。
- * RecommendedAction 取值独立于 Decision Engine（见 OPPORTUNITY_ACTIONS）。
+ * Content Opportunity Engine M0：内容机会表头（用户可见中文）。
+ * 内部判断仍用 OPPORTUNITY_* 英文 enum。
  */
 var OPPORTUNITY_HEADERS = [
-  'GeneratedAt', 'DataDate', 'Site', 'PropertyURL',
-  'Query', 'PageURL', 'PagePath',
-  'Clicks', 'Impressions', 'CTR', 'AveragePosition',
-  'Intent', 'Specificity',
-  'OpportunityLevel', 'RecommendedAction', 'OpportunityReason',
-  'FirstSeenDate', 'SeenDays', 'IsNewQuery',
-  'ResearchStatus', 'Notes'
+  '生成时间', '数据日期', '站点', '站点URL',
+  '搜索词', '页面URL', '页面路径',
+  '点击', '展现', 'CTR', '平均排名',
+  '搜索意图', '意图明确度',
+  '机会等级', '建议动作', '推荐理由',
+  '首次出现日期', '出现天数', '是否新搜索词',
+  '研究状态', '备注'
 ];
 
 /** Opportunity Engine 独立动作（勿与 Decision Engine RecommendedAction 混用） */
@@ -137,6 +137,45 @@ var OPPORTUNITY_INTENT = {
   BUG_FIX: 'BUG_FIX',
   DOWNLOAD: 'DOWNLOAD',
   OTHER: 'OTHER'
+};
+
+/** 内容机会 Sheet 显示层：内部英文 enum → 中文，不参与判断 */
+var OPPORTUNITY_INTENT_LABELS = {
+  BRAND: '品牌词',
+  GUIDE: '攻略',
+  GAMEPLAY: '游戏玩法',
+  PLATFORM: '平台',
+  RELEASE: '发售',
+  SYSTEM_REQUIREMENTS: '系统配置',
+  MISSION: '任务',
+  ITEM: '道具',
+  CHARACTER: '角色',
+  LOCATION: '地点',
+  BOSS: 'Boss',
+  SAVE_PROGRESS: '存档进度',
+  REWARD: '奖励',
+  BUG_FIX: 'Bug修复',
+  DOWNLOAD: '下载',
+  OTHER: '其他'
+};
+
+var OPPORTUNITY_SPECIFICITY_LABELS = {
+  BRAND_ONLY: '仅品牌',
+  SPECIFIC_INTENT: '明确意图',
+  AMBIGUOUS: '模糊意图'
+};
+
+var OPPORTUNITY_LEVEL_LABELS = {
+  HIGH: '高',
+  MEDIUM: '中',
+  WATCH: '观察'
+};
+
+var OPPORTUNITY_ACTION_LABELS = {
+  RESEARCH_EXPAND_EXISTING: '研究并扩充现有页面',
+  RESEARCH_NEW_CONTENT: '研究新内容',
+  WATCH: '继续观察',
+  IGNORE_BRAND: '忽略品牌词'
 };
 
 /**
