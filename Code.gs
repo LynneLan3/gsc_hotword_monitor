@@ -22,6 +22,15 @@ function setup() {
 }
 
 /**
+ * 一次性：把监控历史表重排为「最新在前」。
+ * 不调 GSC、不写新数据、不改 Status / Trigger / Filter。
+ */
+function sortMonitoringSheetsNewestFirst() {
+  sortMonitoringSheetsNewestFirst_();
+  Logger.log('sortMonitoringSheetsNewestFirst done');
+}
+
+/**
  * 每日主流程：逐站执行 Performance / 快照，单站失败不影响其他站。
  * 不做全量 URL Inspection（由 runIndexAuditBatch 分批负责）。
  * IndexedURLCount 使用「URL索引」历史最新 Verdict 去重统计。
@@ -34,6 +43,7 @@ function runDaily() {
 
   if (!sites.length) {
     writeLog_('INFO', '', 'runDaily 结束：无启用站点');
+    sortMonitoringSheetsNewestFirst_();
     return;
   }
 
@@ -51,6 +61,8 @@ function runDaily() {
   }
 
   writeLog_('INFO', '', 'runDaily 结束');
+  // 全部写入（含结束日志）完成后再排序，保证最新日志在顶部
+  sortMonitoringSheetsNewestFirst_();
 }
 
 /**
@@ -66,6 +78,7 @@ function runIndexAuditBatch() {
 
   if (!total) {
     writeLog_('INFO', '', 'runIndexAuditBatch 结束：无启用站点');
+    sortSheetsNewestFirst_([SHEET_NAMES.URL_INDEX, SHEET_NAMES.LOG]);
     return;
   }
 
@@ -74,6 +87,7 @@ function runIndexAuditBatch() {
 
   if (cursor >= total) {
     writeLog_('INFO', '', '今日URL索引轮询已全部完成 ' + total + '/' + total);
+    sortSheetsNewestFirst_([SHEET_NAMES.URL_INDEX, SHEET_NAMES.LOG]);
     return;
   }
 
@@ -96,6 +110,7 @@ function runIndexAuditBatch() {
     } catch (e) {
       writeLog_('ERROR', site.name, 'URL索引批次失败（未推进cursor）: ' + e.message);
       // 成功完成一个站后才推进 cursor；失败则下次同站重试
+      sortSheetsNewestFirst_([SHEET_NAMES.URL_INDEX, SHEET_NAMES.LOG]);
       return;
     }
   }
@@ -105,6 +120,7 @@ function runIndexAuditBatch() {
   } else {
     writeLog_('INFO', '', 'runIndexAuditBatch 结束，今日进度 ' + cursor + '/' + total);
   }
+  sortSheetsNewestFirst_([SHEET_NAMES.URL_INDEX, SHEET_NAMES.LOG]);
 }
 
 function ensureIndexAuditDay_(today) {
@@ -266,6 +282,13 @@ function processSiteDaily_(site, runDate) {
     errors.push('FreshQueries: ' + e.message);
   }
 
+  // 4c) Fresh Query×Page → Query页面明细（增强层；失败不阻断主流程 / Status）
+  try {
+    syncFreshQueryPageDetails_(siteName, propertyUrl, runDate);
+  } catch (e) {
+    writeLog_('WARN', siteName, 'QUERY_PAGE_FAILED | ' + e.message);
+  }
+
   // 5) FirstImpressionDate
   var firstImpression = getKnownFirstImpressionDate_(siteName);
   if (!firstImpression && site.day0 && latestDate && site.day0 <= latestDate) {
@@ -352,6 +375,47 @@ function syncFreshQueryDetails_(siteName, propertyUrl, runDate) {
   );
 }
 
+/**
+ * 写入/更新近 FRESH_QUERY_DAYS 天的 Fresh Query×Page（upsert：DataDate+Site+Query+PageURL）。
+ * 0 rows 为正常状态（该日暂无联合维度数据），不记 ERROR。
+ * 使用 QUERY_ROW_LIMIT=1000：Query×Page 行数可能多于 Query 单维，小站阶段够用，不保证长期完整。
+ */
+function syncFreshQueryPageDetails_(siteName, propertyUrl, runDate) {
+  var range = getFreshQueryDateRange_(runDate);
+  var dates = listDatesInclusive_(range.startDate, range.endDate);
+  var written = 0;
+
+  for (var di = 0; di < dates.length; di++) {
+    var dataDate = dates[di];
+    var rows = fetchFreshQueryPages(propertyUrl, dataDate, QUERY_ROW_LIMIT);
+    // Rows=0：正常结束该日，不写错误
+    for (var qi = 0; qi < rows.length; qi++) {
+      var qr = rows[qi];
+      if (!qr || !qr.query || !qr.page) continue;
+      upsertQueryPageRow_([
+        dataDate,
+        siteName,
+        qr.query,
+        qr.page,
+        pagePathFromUrl_(qr.page),
+        qr.clicks || 0,
+        qr.impressions || 0,
+        qr.ctr || 0,
+        qr.position || 0
+      ]);
+      written++;
+    }
+  }
+
+  writeLog_(
+    'INFO',
+    siteName,
+    'Fresh Query页面明细 upsert ' + written + ' 条（' +
+      range.startDate + '~' + range.endDate +
+      ', dataState=all, rowLimit=' + QUERY_ROW_LIMIT + '）'
+  );
+}
+
 function computeNewQueries_(siteName, latestDate, queryRows) {
   var prevDate = getPreviousDataDate_(siteName, latestDate);
   if (!prevDate) return '';
@@ -407,6 +471,7 @@ function backfill14Days() {
   }
 
   writeLog_('INFO', '', 'backfill14Days 结束');
+  sortMonitoringSheetsNewestFirst_();
   SpreadsheetApp.getUi().alert('回填完成。请查看「GSC日数据」和「Query明细」。');
 }
 
@@ -551,6 +616,90 @@ function removeDailyTrigger() {
   SpreadsheetApp.getUi().alert(
     '已删除：runDaily×' + removedDaily + '，runIndexAuditBatch×' + removedAudit
   );
+}
+
+/**
+ * Phase 1 探测：只读拉取 Leafy Corner 近 FRESH_QUERY_DAYS 天的 Fresh Query×Page。
+ * 不写 Sheet、不调 runDaily、不做 URL Inspection。
+ * 结果仅 Logger.log，请在 Apps Script「执行记录」中查看。
+ */
+function debugLeafyCornerQueryPages() {
+  var sites = getEnabledSites();
+  var site = null;
+  for (var i = 0; i < sites.length; i++) {
+    if (sites[i].name === 'Leafy Corner') {
+      site = sites[i];
+      break;
+    }
+  }
+  if (!site) {
+    throw new Error('Leafy Corner not found in enabled sites');
+  }
+
+  var range = getFreshQueryDateRange_(todayStr_());
+  var dates = listDatesInclusive_(range.startDate, range.endDate);
+  var logLimit = 50;
+
+  Logger.log(
+    'QUERY_PAGE_DEBUG start Site=' +
+      site.name +
+      ' PropertyURL=' +
+      site.propertyUrl +
+      ' FreshRange=' +
+      range.startDate +
+      '~' +
+      range.endDate +
+      ' days=' +
+      dates.length
+  );
+
+  for (var d = 0; d < dates.length; d++) {
+    var dataDate = dates[d];
+    var rows = fetchFreshQueryPages(site.propertyUrl, dataDate, QUERY_ROW_LIMIT);
+    var sorted = rows.slice().sort(function (a, b) {
+      var impDiff = (b.impressions || 0) - (a.impressions || 0);
+      if (impDiff !== 0) return impDiff;
+      var clickDiff = (b.clicks || 0) - (a.clicks || 0);
+      if (clickDiff !== 0) return clickDiff;
+      return (a.position || 0) - (b.position || 0);
+    });
+
+    var logged = Math.min(logLimit, sorted.length);
+    Logger.log(
+      'QUERY_PAGE_DEBUG Site=' +
+        site.name +
+        ' DataDate=' +
+        dataDate +
+        ' Rows=' +
+        rows.length +
+        ' Logged=' +
+        logged
+    );
+
+    for (var r = 0; r < logged; r++) {
+      var row = sorted[r];
+      Logger.log(
+        'QUERY_PAGE_ROW | ' +
+          dataDate +
+          ' | ' +
+          site.name +
+          ' | ' +
+          row.query +
+          ' | ' +
+          row.page +
+          ' | clicks=' +
+          row.clicks +
+          ' | impressions=' +
+          row.impressions +
+          ' | ctr=' +
+          row.ctr +
+          ' | position=' +
+          row.position
+      );
+    }
+  }
+
+  Logger.log('QUERY_PAGE_DEBUG end Site=' + site.name);
 }
 
 /**

@@ -48,6 +48,11 @@ function applyColumnWidths_(sheet, name) {
     widths = {
       1: 100, 2: 180, 3: 260, 4: 70, 5: 100, 6: 70, 7: 110
     };
+  } else if (name === SHEET_NAMES.QUERY_PAGES) {
+    widths = {
+      1: 100, 2: 180, 3: 220, 4: 320, 5: 220,
+      6: 70, 7: 100, 8: 70, 9: 110
+    };
   } else if (name === SHEET_NAMES.URL_INDEX) {
     widths = {
       1: 100, 2: 160, 3: 320, 4: 80, 5: 140, 6: 120,
@@ -81,6 +86,10 @@ function applyNumberFormats_(sheet, name) {
     sheet.getRange('A:A').setNumberFormat('yyyy-mm-dd');
     sheet.getRange('F:F').setNumberFormat('0.00%');
     sheet.getRange('G:G').setNumberFormat('0.0');
+  } else if (name === SHEET_NAMES.QUERY_PAGES) {
+    sheet.getRange('A:A').setNumberFormat('yyyy-mm-dd');
+    sheet.getRange('H:H').setNumberFormat('0.00%');
+    sheet.getRange('I:I').setNumberFormat('0.0');
   } else if (name === SHEET_NAMES.URL_INDEX) {
     sheet.getRange('A:A').setNumberFormat('yyyy-mm-dd');
   } else if (name === SHEET_NAMES.LOG) {
@@ -125,6 +134,7 @@ function setupSheets() {
         SHEET_NAMES.SNAPSHOT,
         SHEET_NAMES.DAILY,
         SHEET_NAMES.QUERIES,
+        SHEET_NAMES.QUERY_PAGES,
         SHEET_NAMES.URL_INDEX,
         SHEET_NAMES.LOG
       ])
@@ -134,6 +144,7 @@ function setupSheets() {
   ensureSheet_(SHEET_NAMES.SNAPSHOT, SNAPSHOT_HEADERS);
   ensureSheet_(SHEET_NAMES.DAILY, DAILY_HEADERS);
   ensureSheet_(SHEET_NAMES.QUERIES, QUERY_HEADERS);
+  ensureSheet_(SHEET_NAMES.QUERY_PAGES, QUERY_PAGE_HEADERS);
   ensureSheet_(SHEET_NAMES.URL_INDEX, URL_INDEX_HEADERS);
   ensureSheet_(SHEET_NAMES.LOG, LOG_HEADERS);
 
@@ -235,6 +246,21 @@ function upsertDailyRow_(row) {
 function upsertQueryRow_(row) {
   return upsertRow_(SHEET_NAMES.QUERIES, QUERY_HEADERS, row, function (r) {
     return normalizeKeyDate_(r[0]) + '||' + String(r[1] || '') + '||' + String(r[2] || '');
+  });
+}
+
+/** 唯一键：DataDate + Site + Query + PageURL */
+function upsertQueryPageRow_(row) {
+  return upsertRow_(SHEET_NAMES.QUERY_PAGES, QUERY_PAGE_HEADERS, row, function (r) {
+    return (
+      normalizeKeyDate_(r[0]) +
+      '||' +
+      String(r[1] || '') +
+      '||' +
+      String(r[2] || '') +
+      '||' +
+      String(r[3] || '')
+    );
   });
 }
 
@@ -372,4 +398,125 @@ function getSavedQueriesForDate_(siteName, dataDate) {
     if (q) map[q] = true;
   }
   return map;
+}
+
+/**
+ * 按 Header 名对数据行排序（不含第 1 行 Header；不删 Filter、不改 cell 值）。
+ * sortSpecs: [{ header: 'DataDate', ascending: false }, ...]
+ * Primary header 缺失 → throw；secondary 缺失 → 跳过。
+ */
+function sortSheetByHeaders_(sheetName, sortSpecs) {
+  var sheet = getSpreadsheet_().getSheetByName(sheetName);
+  if (!sheet) return;
+
+  var lastRow = sheet.getLastRow();
+  if (lastRow < 2) return;
+
+  var lastCol = sheet.getLastColumn();
+  if (lastCol < 1) return;
+
+  if (!sortSpecs || !sortSpecs.length) return;
+
+  var headerRow = sheet.getRange(1, 1, 1, lastCol).getValues()[0];
+  var colByHeader = {};
+  for (var h = 0; h < headerRow.length; h++) {
+    var name = String(headerRow[h] || '').trim();
+    if (name) colByHeader[name] = h + 1;
+  }
+
+  var primaryName = sortSpecs[0].header;
+  if (!colByHeader[primaryName]) {
+    throw new Error('SORT primary header missing: ' + primaryName + ' on ' + sheetName);
+  }
+
+  var keys = [];
+  for (var i = 0; i < sortSpecs.length; i++) {
+    var spec = sortSpecs[i];
+    var col = colByHeader[spec.header];
+    if (!col) {
+      if (i === 0) {
+        throw new Error('SORT primary header missing: ' + spec.header + ' on ' + sheetName);
+      }
+      continue;
+    }
+    keys.push({
+      column: col,
+      ascending: !!spec.ascending
+    });
+  }
+
+  if (!keys.length) return;
+  sheet.getRange(2, 1, lastRow, lastCol).sort(keys);
+}
+
+/** 监控历史表「最新在前」的默认排序规格（不含站点配置等人工表） */
+function getMonitoringSortSpecs_() {
+  var specs = {};
+  specs[SHEET_NAMES.SNAPSHOT] = [
+    { header: 'RunDate', ascending: false },
+    { header: 'Site', ascending: true }
+  ];
+  specs[SHEET_NAMES.DAILY] = [
+    { header: 'DataDate', ascending: false },
+    { header: 'Site', ascending: true }
+  ];
+  specs[SHEET_NAMES.QUERIES] = [
+    { header: 'DataDate', ascending: false },
+    { header: 'Site', ascending: true },
+    { header: 'Impressions', ascending: false },
+    { header: 'AveragePosition', ascending: true }
+  ];
+  specs[SHEET_NAMES.QUERY_PAGES] = [
+    { header: 'DataDate', ascending: false },
+    { header: 'Site', ascending: true },
+    { header: 'Impressions', ascending: false },
+    { header: 'AveragePosition', ascending: true }
+  ];
+  specs[SHEET_NAMES.URL_INDEX] = [
+    { header: 'RunDate', ascending: false },
+    { header: 'Site', ascending: true }
+  ];
+  specs[SHEET_NAMES.LOG] = [
+    { header: 'Timestamp', ascending: false }
+  ];
+  return specs;
+}
+
+/**
+ * 对指定监控 Sheet（或全部监控历史表）按「最新在前」排序一次。
+ * 单表失败只 Logger，不 throw，不影响数据采集 Status。
+ * @param {Array<string>=} sheetNames 省略则排序全部监控历史表
+ */
+function sortSheetsNewestFirst_(sheetNames) {
+  var allSpecs = getMonitoringSortSpecs_();
+  var names = sheetNames && sheetNames.length
+    ? sheetNames
+    : [
+        SHEET_NAMES.SNAPSHOT,
+        SHEET_NAMES.DAILY,
+        SHEET_NAMES.QUERIES,
+        SHEET_NAMES.QUERY_PAGES,
+        SHEET_NAMES.URL_INDEX,
+        SHEET_NAMES.LOG
+      ];
+
+  for (var i = 0; i < names.length; i++) {
+    var name = names[i];
+    var specs = allSpecs[name];
+    if (!specs) {
+      Logger.log('SORT_SKIP | ' + name + ' | not a monitoring history sheet');
+      continue;
+    }
+    try {
+      sortSheetByHeaders_(name, specs);
+      Logger.log('SORT_OK | ' + name);
+    } catch (e) {
+      Logger.log('SORT_FAILED | ' + name + ' | ' + e.message);
+    }
+  }
+}
+
+/** 全部监控历史表最新在前（内部） */
+function sortMonitoringSheetsNewestFirst_() {
+  sortSheetsNewestFirst_();
 }

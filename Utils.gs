@@ -233,6 +233,23 @@ function ensureTrailingSlash_(url) {
   return url.charAt(url.length - 1) === '/' ? url : url + '/';
 }
 
+/**
+ * 从完整 PageURL 解析 pathname（不依赖 PropertyURL 字符串替换）。
+ * 解析失败时 fallback 为原始 PageURL，不丢弃数据行。
+ * @param {string} pageUrl
+ * @return {string}
+ */
+function pagePathFromUrl_(pageUrl) {
+  var raw = String(pageUrl || '').trim();
+  if (!raw) return '';
+  try {
+    var u = new URL(raw);
+    return u.pathname || '/';
+  } catch (e) {
+    return raw;
+  }
+}
+
 function defaultSitemapUrl_(propertyUrl) {
   return ensureTrailingSlash_(propertyUrl) + 'sitemap.xml';
 }

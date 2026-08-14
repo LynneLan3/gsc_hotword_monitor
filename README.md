@@ -126,8 +126,11 @@
 - 每日快照
 - GSC日数据
 - Query明细
+- Query页面明细
 - URL索引
 - 运行日志
+
+**Query页面明细**：记录 GSC Fresh Query 与实际 Landing Page 的联合维度数据。字段为 `DataDate / Site / Query / PageURL / PagePath / Clicks / Impressions / CTR / AveragePosition`。用于判断某个 Query 当前由哪个页面获得曝光（`dataState=all`，近 `FRESH_QUERY_DAYS` 天）。
 
 「站点配置」会预填 7 个站。`Enabled` 默认勾选。`Day0` 先是空的。
 
@@ -290,7 +293,7 @@ https://xxx.vercel.app/
 | 文件 | 用途 |
 |---|---|
 | `Code.gs` | 菜单、setup、每日运行、回填、Trigger、权限测试 |
-| `Config.gs` | 7 站默认配置与表头常量 |
+| `Config.gs` | 站点默认配置与表头常量（含 Query页面明细） |
 | `SearchConsole.gs` | Search Analytics / Sitemap / URL Inspection |
 | `SheetManager.gs` | 建表、读写、按唯一键更新 |
 | `Utils.gs` | `gscFetch`、日期、重试、日志 |

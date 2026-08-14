@@ -8,6 +8,7 @@ var SHEET_NAMES = {
   SNAPSHOT: '每日快照',
   DAILY: 'GSC日数据',
   QUERIES: 'Query明细',
+  QUERY_PAGES: 'Query页面明细',
   URL_INDEX: 'URL索引',
   LOG: '运行日志'
 };
@@ -26,6 +27,11 @@ var DAILY_HEADERS = [
 ];
 var QUERY_HEADERS = [
   'DataDate', 'Site', 'Query', 'Clicks', 'Impressions', 'CTR', 'AveragePosition'
+];
+/** Fresh Query×Page 联合维度；rowLimit 仍用 QUERY_ROW_LIMIT（小站够用，不保证长期完整） */
+var QUERY_PAGE_HEADERS = [
+  'DataDate', 'Site', 'Query', 'PageURL', 'PagePath',
+  'Clicks', 'Impressions', 'CTR', 'AveragePosition'
 ];
 var URL_INDEX_HEADERS = [
   'RunDate', 'Site', 'URL', 'Verdict', 'CoverageState', 'RobotsTxtState',

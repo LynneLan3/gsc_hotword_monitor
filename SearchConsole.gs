@@ -139,6 +139,72 @@ function fetchPages(siteUrl, dataDate, rowLimit) {
 }
 
 /**
+ * 将 Search Analytics query+page 行标准化。
+ * 约定 keys[0]=query, keys[1]=page；缺键则跳过，不造假值。
+ * @param {Array=} rows
+ * @return {Array<{query:string,page:string,clicks:number,impressions:number,ctr:number,position:number}>}
+ */
+function normalizeQueryPageRows_(rows) {
+  var out = [];
+  if (!rows || !rows.length) return out;
+
+  for (var i = 0; i < rows.length; i++) {
+    var r = rows[i];
+    var keys = r && r.keys;
+    if (!keys || keys.length < 2) continue;
+    var query = keys[0];
+    var page = keys[1];
+    if (!query || !page) continue;
+    out.push({
+      query: String(query),
+      page: String(page),
+      clicks: r.clicks || 0,
+      impressions: r.impressions || 0,
+      ctr: r.ctr || 0,
+      position: r.position || 0
+    });
+  }
+  return out;
+}
+
+/**
+ * Query × Page（finalized，与 fetchQueries / fetchPages 同口径）
+ * @param {string} siteUrl
+ * @param {string} dataDate yyyy-MM-dd
+ * @param {number=} rowLimit
+ * @return {Array<{query:string,page:string,clicks:number,impressions:number,ctr:number,position:number}>}
+ */
+function fetchQueryPages(siteUrl, dataDate, rowLimit) {
+  rowLimit = rowLimit || QUERY_ROW_LIMIT;
+  var result = searchAnalyticsQuery(siteUrl, {
+    startDate: dataDate,
+    endDate: dataDate,
+    dimensions: ['query', 'page'],
+    rowLimit: rowLimit
+  });
+  return normalizeQueryPageRows_((result && result.rows) || []);
+}
+
+/**
+ * Fresh Query × Page（dataState=all，与 fetchFreshQueries / Query明细同口径）
+ * @param {string} siteUrl
+ * @param {string} dataDate yyyy-MM-dd
+ * @param {number=} rowLimit
+ * @return {Array<{query:string,page:string,clicks:number,impressions:number,ctr:number,position:number}>}
+ */
+function fetchFreshQueryPages(siteUrl, dataDate, rowLimit) {
+  rowLimit = rowLimit || QUERY_ROW_LIMIT;
+  var result = searchAnalyticsQuery(siteUrl, {
+    startDate: dataDate,
+    endDate: dataDate,
+    dimensions: ['query', 'page'],
+    dataState: 'all',
+    rowLimit: rowLimit
+  });
+  return normalizeQueryPageRows_((result && result.rows) || []);
+}
+
+/**
  * 找出 Day0 ~ endDate 之间最早 impressions > 0 的日期
  */
 function findFirstImpressionDate(siteUrl, day0, endDate) {
