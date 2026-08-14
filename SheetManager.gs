@@ -75,6 +75,13 @@ function applyColumnWidths_(sheet, name) {
       1: 100, 2: 70, 3: 180, 4: 120, 5: 150,
       6: 100, 7: 360, 8: 80, 9: 180
     };
+  } else if (name === SHEET_NAMES.OPPORTUNITIES) {
+    widths = {
+      1: 150, 2: 100, 3: 160, 4: 260, 5: 240,
+      6: 280, 7: 220, 8: 70, 9: 100, 10: 70,
+      11: 110, 12: 120, 13: 120, 14: 90, 15: 180,
+      16: 360, 17: 110, 18: 80, 19: 90, 20: 110, 21: 160
+    };
   }
 
   Object.keys(widths).forEach(function (col) {
@@ -116,6 +123,12 @@ function applyNumberFormats_(sheet, name) {
     sheet.getRange('K:K').setNumberFormat('0.00');
   } else if (name === SHEET_NAMES.TODAY_ACTIONS) {
     sheet.getRange('A:A').setNumberFormat('yyyy-mm-dd');
+  } else if (name === SHEET_NAMES.OPPORTUNITIES) {
+    sheet.getRange('A:A').setNumberFormat('yyyy-mm-dd hh:mm:ss');
+    sheet.getRange('B:B').setNumberFormat('yyyy-mm-dd');
+    sheet.getRange('J:J').setNumberFormat('0.00%');
+    sheet.getRange('K:K').setNumberFormat('0.0');
+    sheet.getRange('Q:Q').setNumberFormat('yyyy-mm-dd');
   }
 }
 
@@ -161,7 +174,8 @@ function setupSheets() {
         SHEET_NAMES.LOG,
         SHEET_NAMES.RULES,
         SHEET_NAMES.SITE_STATUS,
-        SHEET_NAMES.TODAY_ACTIONS
+        SHEET_NAMES.TODAY_ACTIONS,
+        SHEET_NAMES.OPPORTUNITIES
       ])
   );
 
@@ -175,6 +189,7 @@ function setupSheets() {
   ensureSheet_(SHEET_NAMES.RULES, RULE_HEADERS);
   ensureSheet_(SHEET_NAMES.SITE_STATUS, SITE_STATUS_HEADERS);
   ensureSheet_(SHEET_NAMES.TODAY_ACTIONS, TODAY_ACTION_HEADERS);
+  ensureSheet_(SHEET_NAMES.OPPORTUNITIES, OPPORTUNITY_HEADERS);
 
   seedSitesIfEmpty_();
   seedMissingDecisionRules_();

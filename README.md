@@ -288,6 +288,19 @@ https://xxx.vercel.app/
 
 Decision Engine **不会**买域名、改 DNS、操作 Vercel，也不会再请求 GSC API。只读已写入的 Sheet。若要单独重跑决策：菜单 **热词站监控 → 运行决策引擎**。
 
+### 7）内容机会引擎（M0，独立入口）
+
+`runContentOpportunityEngine` 只读「Query页面明细」，按确定性规则写入「内容机会」。
+
+- **不**接入 `runDaily`（需人工菜单单独运行）
+- **不**请求 GSC / 外部 API / LLM
+- 每个 Site 只用该站最新有效 `DataDate` 的 Query
+- 无 Query 的站点：跳过，不报错，不造假数据
+- 幂等：每次运行重建当前机会快照（按最新 DataDate），不会对同一 `DataDate + Site + normalized Query` 无限追加
+- Opportunity 的 `RecommendedAction`（如 `RESEARCH_EXPAND_EXISTING`）与 Decision Engine 的站点动作相互独立
+
+菜单：**热词站监控 → 运行内容机会引擎**。本地规则自检可运行 `debugOpportunityEngineSelfCheck`（不写 Sheet）。
+
 ---
 
 ## 安全说明
@@ -304,10 +317,11 @@ Decision Engine **不会**买域名、改 DNS、操作 Vercel，也不会再请�
 | 文件 | 用途 |
 |---|---|
 | `Code.gs` | 菜单、setup、每日运行、回填、Trigger、权限测试 |
-| `Config.gs` | 站点默认配置与表头常量（含 Query页面明细、决策规则/Guide Intent） |
+| `Config.gs` | 站点默认配置与表头常量（含 Query页面明细、决策规则/Guide Intent、Opportunity 常量） |
 | `SearchConsole.gs` | Search Analytics / Sitemap / URL Inspection |
 | `SheetManager.gs` | 建表、读写、按唯一键更新 |
 | `DecisionEngine.gs` | 站点状态评分与今日行动（不请求 GSC API） |
+| `OpportunityEngine.gs` | 内容机会 M0：Query→Intent/Level/Action（不请求外部 API） |
 | `Utils.gs` | `gscFetch`、日期、重试、日志 |
 | `appsscript.json` | V8、时区、OAuth scopes |
 | `README.md` | 本说明 |
@@ -318,7 +332,7 @@ Decision Engine **不会**买域名、改 DNS、操作 Vercel，也不会再请�
 
 1. 启用 Search Console API  
 2. 新建 Google Sheet → 打开 Apps Script  
-3. 粘贴 6 个 `.gs` + 替换 `appsscript.json`  
+3. 粘贴 7 个 `.gs` + 替换 `appsscript.json`
 4. 运行 `setup`  
 5. 运行 `testGscAccess`，确认 `7/7`  
 6. （可选）在「站点配置」填 Day0  

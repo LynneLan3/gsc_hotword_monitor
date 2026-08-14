@@ -13,7 +13,8 @@ var SHEET_NAMES = {
   LOG: '运行日志',
   RULES: '规则配置',
   SITE_STATUS: '站点状态',
-  TODAY_ACTIONS: '今日行动'
+  TODAY_ACTIONS: '今日行动',
+  OPPORTUNITIES: '内容机会'
 };
 
 var SITE_HEADERS = ['站点名称', 'Property URL', 'Sitemap URL', 'Day0', 'Enabled'];
@@ -62,6 +63,108 @@ var TODAY_ACTION_STATUSES = ['TODO', 'DONE', 'SKIP'];
 var TODAY_ACTION_EXCLUDED = {
   NO_ACTION: true,
   WAIT: true
+};
+
+/**
+ * Content Opportunity Engine M0：内容机会表头。
+ * RecommendedAction 取值独立于 Decision Engine（见 OPPORTUNITY_ACTIONS）。
+ */
+var OPPORTUNITY_HEADERS = [
+  'GeneratedAt', 'DataDate', 'Site', 'PropertyURL',
+  'Query', 'PageURL', 'PagePath',
+  'Clicks', 'Impressions', 'CTR', 'AveragePosition',
+  'Intent', 'Specificity',
+  'OpportunityLevel', 'RecommendedAction', 'OpportunityReason',
+  'FirstSeenDate', 'SeenDays', 'IsNewQuery',
+  'ResearchStatus', 'Notes'
+];
+
+/** Opportunity Engine 独立动作（勿与 Decision Engine RecommendedAction 混用） */
+var OPPORTUNITY_ACTIONS = {
+  RESEARCH_EXPAND_EXISTING: 'RESEARCH_EXPAND_EXISTING',
+  RESEARCH_NEW_CONTENT: 'RESEARCH_NEW_CONTENT',
+  WATCH: 'WATCH',
+  IGNORE_BRAND: 'IGNORE_BRAND'
+};
+
+var OPPORTUNITY_LEVELS = {
+  HIGH: 'HIGH',
+  MEDIUM: 'MEDIUM',
+  WATCH: 'WATCH'
+};
+
+var OPPORTUNITY_SPECIFICITY = {
+  BRAND_ONLY: 'BRAND_ONLY',
+  SPECIFIC_INTENT: 'SPECIFIC_INTENT',
+  AMBIGUOUS: 'AMBIGUOUS'
+};
+
+/**
+ * Intent 规则：按数组顺序优先匹配（更具体的意图放前面）。
+ * 纯品牌词在 classify 时单独返回 BRAND，不依赖本表。
+ */
+var OPPORTUNITY_INTENT_RULES = [
+  { intent: 'PLATFORM', terms: ['steam deck', 'ps5', 'xbox', 'nintendo switch', 'switch', 'mobile', 'android', 'ios', 'pc', 'console'] },
+  { intent: 'SYSTEM_REQUIREMENTS', terms: ['system requirements', 'sys req', 'requirements', 'specs'] },
+  { intent: 'SAVE_PROGRESS', terms: ['carry over', 'carryover', 'save file', 'save', 'progress'] },
+  { intent: 'REWARD', terms: ['rewards', 'reward', 'bonus'] },
+  { intent: 'MISSION', terms: ['first mission', 'missions', 'mission', 'quests', 'quest'] },
+  { intent: 'GUIDE', terms: ['walkthrough', 'tutorial', 'guide', 'wiki', 'how to'] },
+  { intent: 'GAMEPLAY', terms: ['gameplay'] },
+  { intent: 'RELEASE', terms: ['release date', 'release', 'launch date', 'launch', 'coming out'] },
+  { intent: 'DOWNLOAD', terms: ['download', 'downloads'] },
+  { intent: 'BUG_FIX', terms: ['bug fix', 'bugs', 'bug', 'crash', 'crashes', 'error', 'fix'] },
+  { intent: 'BOSS', terms: ['bosses', 'boss'] },
+  { intent: 'ITEM', terms: ['weapons', 'weapon', 'items', 'item'] },
+  { intent: 'CHARACTER', terms: ['characters', 'character'] },
+  { intent: 'LOCATION', terms: ['locations', 'location', 'maps', 'map'] }
+];
+
+var OPPORTUNITY_INTENT = {
+  BRAND: 'BRAND',
+  GUIDE: 'GUIDE',
+  GAMEPLAY: 'GAMEPLAY',
+  PLATFORM: 'PLATFORM',
+  RELEASE: 'RELEASE',
+  SYSTEM_REQUIREMENTS: 'SYSTEM_REQUIREMENTS',
+  MISSION: 'MISSION',
+  ITEM: 'ITEM',
+  CHARACTER: 'CHARACTER',
+  LOCATION: 'LOCATION',
+  BOSS: 'BOSS',
+  SAVE_PROGRESS: 'SAVE_PROGRESS',
+  REWARD: 'REWARD',
+  BUG_FIX: 'BUG_FIX',
+  DOWNLOAD: 'DOWNLOAD',
+  OTHER: 'OTHER'
+};
+
+/**
+ * Opportunity Level 阈值（集中配置，禁止散落 magic numbers）。
+ * position 使用 GSC AveragePosition（越小越好）。
+ */
+var OPPORTUNITY_THRESHOLDS = {
+  HIGH_MIN_CLICKS: 1,
+  HIGH_MIN_IMPRESSIONS: 3,
+  HIGH_POS_MIN: 4,
+  HIGH_POS_MAX: 30,
+  MEDIUM_MIN_IMPRESSIONS: 1,
+  WATCH_POS_FAR: 40,
+  REPEAT_SEEN_DAYS_BOOST: 2
+};
+
+/** 视为游戏 Hub / 泛承接的单段 path slug（不含 /） */
+var OPPORTUNITY_HUB_SLUGS = {
+  '': true,
+  index: true,
+  home: true,
+  hub: true,
+  guides: true,
+  guide: true,
+  wiki: true,
+  browse: true,
+  category: true,
+  categories: true
 };
 
 /**
