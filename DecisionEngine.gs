@@ -25,9 +25,11 @@ function runDecisionEngine() {
   var queryPageBySite = loadQueryPageRowsBySite_();
   var snapshotBySite = loadLatestSnapshotBySite_();
   var actionHistory = loadTodayActionHistory_();
+  var contentUpdateRows = loadContentUpdateRows_();
 
   var statusRows = [];
   var actionRows = [];
+  var historyRows = [];
   var summaries = [];
 
   for (var i = 0; i < sites.length; i++) {
@@ -58,9 +60,36 @@ function runDecisionEngine() {
       reason = reason + '；' + formatActionCooldownReason_(decision.action, cooldown);
     }
 
+    var contentCooldown = null;
+    if (decision.action === 'CONTENT_OPTIMIZE') {
+      contentCooldown = findContentUpdateCooldownFromRows_(
+        contentUpdateRows,
+        site.name,
+        '',
+        runDate,
+        rules
+      );
+      if (contentCooldown) {
+        reason =
+          reason + '；' + formatContentUpdateCooldownReason_(contentCooldown);
+        decision = {
+          action: 'WAIT',
+          stage: decision.stage,
+          priority: 'P3',
+          fastTrack: !!decision.fastTrack
+        };
+      }
+    }
+
     statusRows.push(siteStatusRow_(runDate, site.name, metrics, scores, decision, reason));
 
     if (shouldWriteTodayAction_(decision.action, cooldown)) {
+      var decisionId = buildDecisionId_(
+        runDate,
+        site.name,
+        decision.action,
+        DECISION_RULE_VERSION
+      );
       actionRows.push({
         date: runDate,
         priority: decision.priority,
@@ -70,8 +99,22 @@ function runDecisionEngine() {
         domainScore: scores.domainScore,
         reason: reason,
         status: 'TODO',
-        note: ''
+        note: '',
+        decisionId: decisionId
       });
+      historyRows.push(
+        buildDecisionHistoryRow_(
+          runDate,
+          site.name,
+          metrics,
+          scores,
+          decision,
+          reason,
+          DECISION_RULE_VERSION,
+          nowRecordedAt_(),
+          decisionId
+        )
+      );
     }
 
     summaries.push(site.name + '→' + decision.action + '(' + decision.priority + ')');
@@ -79,6 +122,7 @@ function runDecisionEngine() {
 
   replaceSheetDataRows_(SHEET_NAMES.SITE_STATUS, SITE_STATUS_HEADERS, statusRows);
   refreshTodayActions_(runDate, actionRows);
+  appendDecisionHistoryRows_(historyRows);
   applyTodayActionValidation_();
 
   writeLog_('INFO', '', 'runDecisionEngine 结束 ' + summaries.join(' | '));
@@ -90,7 +134,26 @@ function ensureDecisionSheets_() {
   ensureSheet_(SHEET_NAMES.SITE_STATUS, SITE_STATUS_HEADERS);
   ensureSiteStatusHeader_();
   ensureSheet_(SHEET_NAMES.TODAY_ACTIONS, TODAY_ACTION_HEADERS);
+  ensureTodayActionHeader_();
+  ensureSheet_(SHEET_NAMES.CONTENT_UPDATES, CONTENT_UPDATE_HEADERS);
+  ensureContentUpdateHeader_();
+  ensureSheet_(SHEET_NAMES.DECISION_HISTORY, DECISION_HISTORY_HEADERS);
   applyTodayActionValidation_();
+}
+
+/** 已有「今日行动」时补齐 DecisionID 表头，不碰旧行业务值。 */
+function ensureTodayActionHeader_() {
+  var sheet = getSpreadsheet_().getSheetByName(SHEET_NAMES.TODAY_ACTIONS);
+  if (!sheet) return;
+  var lastCol = Math.max(sheet.getLastColumn(), TODAY_ACTION_HEADERS.length);
+  var header = sheet.getRange(1, 1, 1, lastCol).getValues()[0];
+  var actual = [];
+  for (var i = 0; i < TODAY_ACTION_HEADERS.length; i++) {
+    actual.push(String(header[i] || '').trim());
+  }
+  if (actual.join('|') === TODAY_ACTION_HEADERS.join('|')) return;
+  sheet.getRange(1, 1, 1, TODAY_ACTION_HEADERS.length).setValues([TODAY_ACTION_HEADERS]);
+  sheet.getRange(1, 1, 1, TODAY_ACTION_HEADERS.length).setFontWeight('bold');
 }
 
 /** 已有「站点状态」时补齐 DecisionDataDate 表头，不碰 GSC 历史表。 */
@@ -750,6 +813,142 @@ function shouldWriteTodayAction_(action, cooldown) {
 }
 
 /**
+ * 稳定 DecisionID：同 RunDate + Site + RecommendedAction + RuleVersion 唯一。
+ * 不含随机分量，重复运行可幂等去重。
+ */
+function buildDecisionId_(runDate, siteName, recommendedAction, ruleVersion) {
+  return [
+    String(runDate || '').trim(),
+    String(siteName || '').trim(),
+    String(recommendedAction || '').trim(),
+    String(ruleVersion || '').trim()
+  ].join('|');
+}
+
+function nowRecordedAt_() {
+  return Utilities.formatDate(
+    new Date(),
+    Session.getScriptTimeZone(),
+    'yyyy-MM-dd HH:mm:ss'
+  );
+}
+
+/**
+ * 用与当前 Recommendation 同一份 metrics / scores / decision / reason 冻结 Snapshot。
+ * @return {Array}
+ */
+function buildDecisionHistoryRow_(
+  runDate,
+  siteName,
+  metrics,
+  scores,
+  decision,
+  reason,
+  ruleVersion,
+  recordedAt,
+  decisionId
+) {
+  ruleVersion = ruleVersion || DECISION_RULE_VERSION;
+  var action = decision && decision.action ? decision.action : '';
+  var id = String(decisionId || '').trim();
+  if (!id) id = buildDecisionId_(runDate, siteName, action, ruleVersion);
+  return [
+    id,
+    runDate,
+    metrics.decisionDataDate || '',
+    siteName,
+    ruleVersion,
+    metrics.day === '' || metrics.day === null || metrics.day === undefined ? '' : metrics.day,
+    metrics.indexedCount === '' || metrics.indexedCount === null || metrics.indexedCount === undefined
+      ? ''
+      : metrics.indexedCount,
+    metrics.indexRate === '' || metrics.indexRate === null || metrics.indexRate === undefined
+      ? ''
+      : metrics.indexRate,
+    metrics.impressions24h,
+    metrics.impressions7d,
+    metrics.previous3d,
+    metrics.latest3d,
+    metrics.hasGrowth ? metrics.growth3d : '',
+    metrics.queryCount7d,
+    metrics.guideQueryCount7d,
+    metrics.top50QueryCount,
+    metrics.top30QueryCount,
+    metrics.top20QueryCount,
+    metrics.clicks7d,
+    metrics.intentCategoryCount === undefined || metrics.intentCategoryCount === null
+      ? 0
+      : metrics.intentCategoryCount,
+    scores.tractionScore,
+    scores.queryScore,
+    scores.momentumScore,
+    scores.expansionScore,
+    scores.riskScore,
+    scores.domainScore,
+    decision.stage,
+    decision.action,
+    decision.priority,
+    reason,
+    '',
+    '',
+    recordedAt || ''
+  ];
+}
+
+/**
+ * 纯函数：按 DecisionID 去重，只返回尚未存在的 Snapshot 行。
+ * @param {Object} existingIdSet DecisionID -> true
+ * @param {Array<Array>} candidateRows
+ * @return {Array<Array>}
+ */
+function selectDecisionHistoryAppends_(existingIdSet, candidateRows) {
+  var out = [];
+  var seen = {};
+  var keys = existingIdSet || {};
+  var rows = candidateRows || [];
+  for (var i = 0; i < rows.length; i++) {
+    var row = rows[i];
+    if (!row || !row.length) continue;
+    var id = String(row[0] || '').trim();
+    if (!id) continue;
+    if (keys[id] || seen[id]) continue;
+    seen[id] = true;
+    out.push(row);
+  }
+  return out;
+}
+
+function loadDecisionHistoryIdSet_() {
+  var sheet = getSpreadsheet_().getSheetByName(SHEET_NAMES.DECISION_HISTORY);
+  var set = {};
+  if (!sheet || sheet.getLastRow() < 2) return set;
+  var ids = sheet.getRange(2, 1, sheet.getLastRow() - 1, 1).getValues();
+  for (var i = 0; i < ids.length; i++) {
+    var id = String(ids[i][0] || '').trim();
+    if (id) set[id] = true;
+  }
+  return set;
+}
+
+/**
+ * Append-only 写入决策历史；同 DecisionID 不重复。
+ * 不改站点状态 / 今日行动主流程结果。
+ */
+function appendDecisionHistoryRows_(candidateRows) {
+  if (!candidateRows || !candidateRows.length) return 0;
+  ensureSheet_(SHEET_NAMES.DECISION_HISTORY, DECISION_HISTORY_HEADERS);
+  var existing = loadDecisionHistoryIdSet_();
+  var toAppend = selectDecisionHistoryAppends_(existing, candidateRows);
+  if (!toAppend.length) return 0;
+  var sheet = getSpreadsheet_().getSheetByName(SHEET_NAMES.DECISION_HISTORY);
+  var start = sheet.getLastRow() + 1;
+  sheet
+    .getRange(start, 1, toAppend.length, DECISION_HISTORY_HEADERS.length)
+    .setValues(toAppend);
+  return toAppend.length;
+}
+
+/**
  * 同 Site + RecommendedAction 最近一次 DONE/SKIP 若距 RunDate 不足冷却天数，则压制今日行动。
  * TODO 不冷却。CHECK_INDEX / DOMAIN_UPGRADE / ARCHIVE 不冷却。
  */
@@ -803,8 +1002,165 @@ function daysBetweenStr_(fromDate, toDate) {
   return Math.floor((b.getTime() - a.getTime()) / (24 * 60 * 60 * 1000));
 }
 
+/**
+ * 追加一条内容更新记录。页面路径为空 = 整站更新。
+ * 更新时间默认今天（yyyy-MM-dd），不写具体小时。
+ * 兼容入口：不绑 DecisionID；实际改站绑定请用 recordContentIntervention。
+ * @param {string} site
+ * @param {string=} pagePath
+ * @param {string=} source
+ * @param {string=} note
+ * @return {{updateDate:string, site:string, pagePath:string, source:string, note:string, updateType:string, decisionId:string, warning:string}}
+ */
+function recordContentUpdate(site, pagePath, source, note) {
+  return recordContentInterventionAt_(todayStr_(), site, pagePath, source, note, '', '');
+}
+
+/**
+ * @param {string} updateDate yyyy-MM-dd
+ * @param {string} site
+ * @param {string=} pagePath
+ * @param {string=} source
+ * @param {string=} note
+ * @return {{updateDate:string, site:string, pagePath:string, source:string, note:string, updateType:string, decisionId:string, warning:string}}
+ */
+function recordContentUpdateAt_(updateDate, site, pagePath, source, note) {
+  return recordContentInterventionAt_(updateDate, site, pagePath, source, note, '', '');
+}
+
+/**
+ * 查询某站点 / 页面最近一次内容更新。
+ * 页面路径为空：只匹配整站更新记录（页面路径为空）。
+ * 页面路径非空：整站更新或同规范化路径的页面更新均可命中。
+ * @param {string} site
+ * @param {string=} pagePath
+ * @return {{updateDate:string, site:string, pagePath:string, source:string, note:string}|null}
+ */
+function getLatestContentUpdate(site, pagePath) {
+  return getLatestContentUpdate_(site, pagePath, loadContentUpdateRows_());
+}
+
+/**
+ * 查询 cooldown 是否仍有效（相对 asOfDate，默认今天）。
+ * @param {string} site
+ * @param {string=} pagePath
+ * @param {string=} asOfDate
+ * @param {Object=} rules
+ * @return {{active:boolean, latest:Object|null, cooldown:Object|null}}
+ */
+function getContentUpdateCooldownStatus(site, pagePath, asOfDate, rules) {
+  var when = normalizeKeyDate_(asOfDate) || todayStr_();
+  var resolvedRules = rules || getDecisionRules_();
+  var cooldown = findContentUpdateCooldown_(site, pagePath, when, resolvedRules);
+  var latest = getLatestContentUpdate_(site, pagePath, loadContentUpdateRows_());
+  return {
+    active: !!cooldown,
+    latest: latest,
+    cooldown: cooldown
+  };
+}
+
+function loadContentUpdateRows_() {
+  var sheet = getSpreadsheet_().getSheetByName(SHEET_NAMES.CONTENT_UPDATES);
+  if (!sheet || sheet.getLastRow() < 2) return [];
+  return sheet
+    .getRange(2, 1, sheet.getLastRow() - 1, CONTENT_UPDATE_HEADERS.length)
+    .getValues();
+}
+
+function getLatestContentUpdate_(site, pagePath, rows) {
+  var siteName = String(site || '').trim();
+  if (!siteName) return null;
+  var latest = null;
+  var list = rows || [];
+  for (var i = 0; i < list.length; i++) {
+    var row = list[i];
+    if (String(row[1] || '').trim() !== siteName) continue;
+    if (!contentUpdateRecordMatches_(row[2], pagePath)) continue;
+    var date = normalizeKeyDate_(row[0]);
+    if (!date) continue;
+    if (!latest || date > latest.updateDate) {
+      latest = {
+        updateDate: date,
+        site: siteName,
+        pagePath: String(row[2] || '').trim(),
+        source: String(row[3] || '').trim(),
+        note: String(row[4] || '').trim(),
+        updateType: String(row[5] || '').trim(),
+        decisionId: String(row[6] || '').trim()
+      };
+    }
+  }
+  return latest;
+}
+
+/**
+ * 内容更新记录匹配：
+ * - 记录页面路径为空 → 整站 cooldown，匹配任意查询路径
+ * - 记录有页面路径 → 只匹配相同规范化路径
+ */
+function contentUpdateRecordMatches_(recordPagePath, queryPagePath) {
+  var rec = String(recordPagePath || '').trim();
+  if (!rec) return true;
+  var query = String(queryPagePath || '').trim();
+  if (!query) return false;
+  return normalizeOpportunityPath_(rec) === normalizeOpportunityPath_(query);
+}
+
+/**
+ * 同站点（及可选页面）最近内容更新若距 asOfDate 不足冷却天数，则返回冷却信息。
+ * @return {{updateDate:string, untilDate:string, days:number, pagePath:string}|null}
+ */
+function findContentUpdateCooldown_(site, pagePath, asOfDate, rules) {
+  var cooldownDays = Number(rules && rules.CONTENT_UPDATE_COOLDOWN_DAYS);
+  if (isNaN(cooldownDays) || cooldownDays <= 0) cooldownDays = 3;
+
+  var latest = getLatestContentUpdate_(site, pagePath, loadContentUpdateRows_());
+  if (!latest) return null;
+
+  var elapsed = daysBetweenStr_(latest.updateDate, asOfDate);
+  if (elapsed === null || elapsed < 0) return null;
+  if (elapsed >= cooldownDays) return null;
+  return {
+    updateDate: latest.updateDate,
+    untilDate: addDaysStr_(latest.updateDate, cooldownDays),
+    days: cooldownDays,
+    pagePath: latest.pagePath
+  };
+}
+
+/**
+ * 纯逻辑版：供自测传入内存 rows，不读 Sheet。
+ */
+function findContentUpdateCooldownFromRows_(rows, site, pagePath, asOfDate, rules) {
+  var cooldownDays = Number(rules && rules.CONTENT_UPDATE_COOLDOWN_DAYS);
+  if (isNaN(cooldownDays) || cooldownDays <= 0) cooldownDays = 3;
+  var latest = getLatestContentUpdate_(site, pagePath, rows);
+  if (!latest) return null;
+  var elapsed = daysBetweenStr_(latest.updateDate, asOfDate);
+  if (elapsed === null || elapsed < 0) return null;
+  if (elapsed >= cooldownDays) return null;
+  return {
+    updateDate: latest.updateDate,
+    untilDate: addDaysStr_(latest.updateDate, cooldownDays),
+    days: cooldownDays,
+    pagePath: latest.pagePath
+  };
+}
+
+function formatContentUpdateCooldownReason_(cooldown) {
+  return (
+    '该站于 ' +
+    cooldown.updateDate +
+    ' 完成内容更新，当前处于 ' +
+    cooldown.days +
+    ' 天观察期；原始建议为内容优化，先等待新 GSC 数据验证效果。'
+  );
+}
+
 function refreshTodayActions_(runDate, actionRows) {
   var sheet = ensureSheet_(SHEET_NAMES.TODAY_ACTIONS, TODAY_ACTION_HEADERS);
+  ensureTodayActionHeader_();
   var existing = [];
   if (sheet.getLastRow() >= 2) {
     existing = sheet.getRange(2, 1, sheet.getLastRow() - 1, TODAY_ACTION_HEADERS.length).getValues();
@@ -815,7 +1171,7 @@ function refreshTodayActions_(runDate, actionRows) {
 
 /**
  * 刷新今日行动：保留历史行；同一 Date+Site+RecommendedAction 若已是 DONE/SKIP，
- * 不恢复成 TODO，并保留人工备注。当天过期 TODO 会被新建议替换掉。
+ * 不恢复成 TODO，并保留人工备注与 DecisionID。当天过期 TODO 会被新建议替换掉。
  */
 function mergeTodayActionRows_(runDate, existing, actionRows) {
   var preserved = [];
@@ -823,7 +1179,7 @@ function mergeTodayActionRows_(runDate, existing, actionRows) {
   var todoNotes = {};
 
   for (var i = 0; i < existing.length; i++) {
-    var row = existing[i];
+    var row = padTodayActionRow_(existing[i]);
     var date = normalizeKeyDate_(row[0]);
     var site = String(row[2] || '').trim();
     var action = String(row[4] || '').trim();
@@ -849,17 +1205,20 @@ function mergeTodayActionRows_(runDate, existing, actionRows) {
     if (TODAY_ACTION_EXCLUDED[item.recommendedAction]) continue;
     var itemKey = todayActionKey_(item.date, item.site, item.recommendedAction);
     if (protectedKeys[itemKey]) continue;
-    preserved.push([
-      item.date,
-      item.priority,
-      item.site,
-      item.lifecycleStage,
-      item.recommendedAction,
-      item.domainScore,
-      item.reason,
-      'TODO',
-      todoNotes[itemKey] || item.note || ''
-    ]);
+    preserved.push(
+      padTodayActionRow_([
+        item.date,
+        item.priority,
+        item.site,
+        item.lifecycleStage,
+        item.recommendedAction,
+        item.domainScore,
+        item.reason,
+        'TODO',
+        todoNotes[itemKey] || item.note || '',
+        item.decisionId || ''
+      ])
+    );
   }
 
   preserved.sort(function (left, right) {
@@ -870,6 +1229,15 @@ function mergeTodayActionRows_(runDate, existing, actionRows) {
     return String(left[2] || '').localeCompare(String(right[2] || ''));
   });
   return preserved;
+}
+
+function padTodayActionRow_(row) {
+  var out = [];
+  var src = row || [];
+  for (var i = 0; i < TODAY_ACTION_HEADERS.length; i++) {
+    out.push(src[i] === undefined || src[i] === null ? '' : src[i]);
+  }
+  return out;
 }
 
 function todayActionKey_(date, site, action) {
@@ -1376,6 +1744,87 @@ function debugDecisionEngineSelfCheck() {
     rules
   );
   assert(!todoCooldown, 'TODO 不产生 cooldown');
+
+  // --- Content Update Cooldown ---
+  var agefieldRows = [
+    ['2026-08-14', 'Agefield High: Rock the School', '', '社媒研究', '根据最新社媒玩家信息完成内容更新']
+  ];
+  var agefieldRaw = decideRecommendedAction_(
+    case1,
+    computeDomainScores_(case1, rules),
+    rules
+  );
+  assert(agefieldRaw.action === 'CONTENT_OPTIMIZE' && agefieldRaw.priority === 'P2', 'Agefield 原始应为 CONTENT_OPTIMIZE(P2)');
+  var agefieldCd = findContentUpdateCooldownFromRows_(
+    agefieldRows,
+    'Agefield High: Rock the School',
+    '',
+    '2026-08-15',
+    rules
+  );
+  assert(!!agefieldCd, 'Agefield 内容更新冷却应命中');
+  var agefieldReason =
+    'score reason' + '；' + formatContentUpdateCooldownReason_(agefieldCd);
+  assert(agefieldReason.indexOf('观察期') >= 0, 'Agefield Reason 应含观察期');
+  assert(agefieldReason.indexOf('2026-08-14') >= 0, 'Agefield Reason 应含更新日');
+  assert(agefieldReason.indexOf('score reason') >= 0, 'Agefield 不得删除原评分 Reason');
+  var agefieldFinal = {
+    action: 'WAIT',
+    stage: agefieldRaw.stage,
+    priority: 'P3',
+    fastTrack: !!agefieldRaw.fastTrack
+  };
+  assert(agefieldFinal.action === 'WAIT' && agefieldFinal.priority === 'P3', 'Agefield 最终应为 WAIT(P3)');
+  assert(
+    shouldWriteTodayAction_(agefieldFinal.action, null) === false,
+    'Agefield WAIT 不进入今日行动'
+  );
+
+  var agefieldExpired = findContentUpdateCooldownFromRows_(
+    agefieldRows,
+    'Agefield High: Rock the School',
+    '',
+    '2026-08-17',
+    rules
+  );
+  assert(!agefieldExpired, '冷却满 3 天后应解除，恢复原始 Decision Engine 判断');
+
+  var ms2Rows = [
+    ['2026-08-14', 'Mortal Shell II', '', '社媒研究', '根据最新社媒玩家信息完成内容更新']
+  ];
+  var ms2SiteCd = findContentUpdateCooldownFromRows_(
+    ms2Rows,
+    'Mortal Shell II',
+    '/mortal-shell-ii/beta-progress-carry-over/',
+    '2026-08-15',
+    rules
+  );
+  assert(!!ms2SiteCd, '整站更新应对任意页面路径生效（Research Job 跳过）');
+  var ms2PageOnly = findContentUpdateCooldownFromRows_(
+    [['2026-08-14', 'Mortal Shell II', '/mortal-shell-ii/guides/weapons/', 'x', 'y']],
+    'Mortal Shell II',
+    '/mortal-shell-ii/beta-progress-carry-over/',
+    '2026-08-15',
+    rules
+  );
+  assert(!ms2PageOnly, '不同页面路径不得误伤');
+  var ms2SiteQuery = findContentUpdateCooldownFromRows_(
+    [['2026-08-14', 'Mortal Shell II', '/mortal-shell-ii/guides/weapons/', 'x', 'y']],
+    'Mortal Shell II',
+    '',
+    '2026-08-15',
+    rules
+  );
+  assert(!ms2SiteQuery, '页面级更新不得当作整站 Decision Engine 冷却');
+
+  assert(
+    contentUpdateRecordMatches_('', '/any/path') === true,
+    '空页面路径记录 = 整站匹配'
+  );
+  assert(
+    contentUpdateRecordMatches_('/a/', '/a') === true,
+    '同规范化路径应匹配'
+  );
 
   var runDate = '2026-08-14';
   var merged = mergeTodayActionRows_(

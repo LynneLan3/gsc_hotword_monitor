@@ -99,7 +99,7 @@ function applyColumnWidths_(sheet, name) {
     };
   } else if (name === SHEET_NAMES.CONTENT_UPDATES) {
     widths = {
-      1: 110, 2: 220, 3: 240, 4: 120, 5: 360
+      1: 110, 2: 220, 3: 240, 4: 120, 5: 360, 6: 140, 7: 280
     };
   } else if (name === SHEET_NAMES.DEVELOPMENT_TASKS) {
     widths = {
@@ -170,6 +170,230 @@ function applyNumberFormats_(sheet, name) {
 }
 
 /**
+ * 产品经理可读的「使用说明」正文（中文；不解释代码）。
+ * @return {Array<string>}
+ */
+function getUsageGuideLines_() {
+  return [
+    '【每天只从「今日行动」开始】',
+    '',
+    '这张表是热词站 GSC 每日监控的工作台。打开后先看「今日行动」，不要从后台数据表开始翻。',
+    '',
+    '—— 当前工作流 ——',
+    'GSC 数据 → Decision Engine → 今日行动 → 内容机会 → 研究任务 → 研究审核 → 人工决定是否修改内容 → 后续继续观察 GSC',
+    '',
+    '—— 每日 SOP（很短） ——',
+    '1. 看「今日行动」',
+    '2. 只有 RecommendedAction 是 CONTENT_OPTIMIZE / CONTENT_EXPAND 时，才进入「内容机会」',
+    '3. 只有存在 Research 待审核时，才进入「研究任务」/「研究审核」',
+    '4. 出现异常（收录、任务失败）才看「URL索引」/「运行日志」',
+    '5. 今日行动为空或都是等待类结论时，不要机械改网站',
+    '',
+    '—— 各 Sheet 职责 ——',
+    '今日行动：每天主要入口；只列出需要人处理的站点与建议动作',
+    '指标说明：数据字典；说明指标来自 Google、系统计算，还是热词站实验规则',
+    '每日快照：快速看站点健康、曝光/点击概况与异常 Status',
+    '内容机会：把真实 GSC Query 转成可执行的内容机会（不是随便想话题）',
+    '研究任务：需要外部 Research 的任务队列',
+    '研究审核：Human Gate，人工核对证据后再决定是否批准开发/继续观察/无需处理',
+    '站点状态：解释 Decision Engine 为什么给出当前判断（分数、阶段、理由）',
+    '决策历史：保存系统当时的规则版本、输入指标和推荐动作，用于后续回测；日常无需查看',
+    '决策结果：在 Decision 后的 D7 / D14 / D30，用已有 GSC 历史记录后续搜索表现，用于以后回测规则；表示“推荐机会后来的表现”，不等于证明某次人工修改造成了增长；日常无需查看',
+    '规则配置：系统自己的判断阈值；不是 Google 官方标准，也不要当 SEO 真理',
+    'GSC日数据：底层历史汇总，日常不用先看',
+    'Query明细：真实 GSC Query 明细，日常不用先看',
+    'Query页面明细：Query × Landing Page，用于核对「词落到了哪个页」',
+    'URL索引：收录异常诊断，有索引问题时再看',
+    '运行日志：自动任务故障诊断，脚本报错时再看',
+    'PAGE_OPPORTUNITIES：旧版/实验层，不是当前正式入口（Tab 已隐藏，数据保留）',
+    '',
+    '—— 其他后台表（一般不用当日常入口） ——',
+    '站点配置：站点开关、Property / Sitemap、Day0',
+    '开发任务：审核批准后的开发队列',
+    '内容更新记录：只有网站实际发生页面修改时才记录。它与 HumanDecision=DONE 不同——DONE 只表示任务被处理；「内容更新记录」才代表实际网站 intervention。若由某个系统 Decision 触发，新记录使用 DecisionID 与「决策历史」关联；旧历史记录可能没有 DecisionID，属于正常情况。',
+    '',
+    '如果不知道某个指标来自哪里、如何计算，或它是不是项目实验规则，请查看「指标说明」。',
+    '',
+    '「今日行动」中带 DecisionID 的新任务在 DONE / SKIP 后，可同步回「决策历史」的 HumanDecision / HumanNote，用于后续判断系统推荐是否被人工执行。DONE ≠ 搜索结果成功；SKIP ≠ 系统推荐一定错误——它们只是人工执行状态。',
+    '',
+    '提醒：没有明确行动时，优先继续观察 GSC，而不是每天改站。'
+  ];
+}
+
+/**
+ * 确保「使用说明」存在，并写成当前真实工作流（覆盖旧说明；不碰其他 Sheet 数据）。
+ */
+function ensureUsageGuideSheet_() {
+  var ss = getSpreadsheet_();
+  var name = SHEET_NAMES.USAGE;
+  var sheet = ss.getSheetByName(name);
+  if (!sheet) {
+    sheet = ss.insertSheet(name);
+  }
+
+  var lines = getUsageGuideLines_();
+  var values = [];
+  for (var i = 0; i < lines.length; i++) {
+    values.push([lines[i]]);
+  }
+
+  sheet.clear();
+  if (sheet.getFilter()) {
+    sheet.getFilter().remove();
+  }
+  sheet.setFrozenRows(0);
+  sheet.getRange(1, 1, values.length, 1).setValues(values);
+  sheet.setColumnWidth(1, 900);
+  sheet.getRange(1, 1).setFontWeight('bold').setFontSize(14);
+  if (values.length > 1) {
+    sheet.getRange(2, 1, values.length, 1).setFontWeight('normal').setFontSize(11);
+  }
+  sheet.setTabColor('4285F4');
+}
+
+/**
+ * 确保「指标说明」存在并重写为当前数据字典（可重复；不碰业务数据 Sheet）。
+ */
+function ensureMetricGuideSheet_() {
+  var ss = getSpreadsheet_();
+  var name = SHEET_NAMES.METRICS;
+  var sheet = ss.getSheetByName(name);
+  if (!sheet) {
+    sheet = ss.insertSheet(name);
+  }
+
+  var headers = METRIC_GUIDE_HEADERS;
+  var rows = getMetricGuideRows_();
+  var values = [headers].concat(rows);
+
+  sheet.clear();
+  if (sheet.getFilter()) {
+    sheet.getFilter().remove();
+  }
+  sheet.getRange(1, 1, values.length, headers.length).setValues(values);
+  sheet.setFrozenRows(1);
+  sheet
+    .getRange(1, 1, 1, headers.length)
+    .setBackground('#1F4E78')
+    .setFontColor('#FFFFFF')
+    .setFontWeight('bold')
+    .setHorizontalAlignment('center');
+  sheet.setTabColor('1D4ED8');
+
+  var widths = [200, 220, 130, 220, 360, 240, 140, 280, 200, 90, 340];
+  for (var i = 0; i < widths.length; i++) {
+    sheet.setColumnWidth(i + 1, widths[i]);
+  }
+}
+
+/**
+ * 纯函数：根据已有 Sheet 名计算目标顺序。
+ * preferred 在前（仅保留已存在的），trailing 次之，其余保持 existingNames 相对顺序。
+ * @param {Array<string>} existingNames
+ * @param {Array<string>} preferredNames
+ * @param {Array<string>} trailingNames
+ * @return {Array<string>}
+ */
+function buildSheetUiOrder_(existingNames, preferredNames, trailingNames) {
+  var present = {};
+  for (var i = 0; i < existingNames.length; i++) {
+    present[existingNames[i]] = true;
+  }
+
+  var used = {};
+  var out = [];
+
+  function appendFrom_(list) {
+    if (!list) return;
+    for (var j = 0; j < list.length; j++) {
+      var n = list[j];
+      if (!present[n] || used[n]) continue;
+      out.push(n);
+      used[n] = true;
+    }
+  }
+
+  appendFrom_(preferredNames);
+  appendFrom_(trailingNames);
+
+  for (var k = 0; k < existingNames.length; k++) {
+    var name = existingNames[k];
+    if (used[name]) continue;
+    out.push(name);
+    used[name] = true;
+  }
+  return out;
+}
+
+/**
+ * 调整 Tab 顺序 + 隐藏旧/实验 Sheet。
+ * 不删除任何 Sheet，不改表头与业务数据行。
+ */
+function organizeSheetUi_() {
+  var ss = getSpreadsheet_();
+  var sheets = ss.getSheets();
+  if (!sheets || !sheets.length) return;
+
+  var existingNames = [];
+  var byName = {};
+  for (var i = 0; i < sheets.length; i++) {
+    var name = sheets[i].getName();
+    existingNames.push(name);
+    byName[name] = sheets[i];
+  }
+
+  var orderedNames = buildSheetUiOrder_(
+    existingNames,
+    SHEET_UI_ORDER,
+    SHEET_UI_TRAILING_ORDER
+  );
+
+  for (var pos = 0; pos < orderedNames.length; pos++) {
+    var sheet = byName[orderedNames[pos]];
+    if (!sheet) continue;
+    ss.setActiveSheet(sheet);
+    ss.moveActiveSheet(pos + 1);
+  }
+
+  for (var h = 0; h < SHEET_UI_HIDDEN.length; h++) {
+    var hideName = SHEET_UI_HIDDEN[h];
+    var hideSheet = byName[hideName];
+    if (!hideSheet) continue;
+    if (!hideSheet.isSheetHidden()) {
+      hideSheet.hideSheet();
+    }
+  }
+
+  // 打开表时落到「使用说明」；若无则落到第一个可见 Tab
+  var focus =
+    byName[SHEET_NAMES.USAGE] ||
+    byName[SHEET_NAMES.TODAY_ACTIONS] ||
+    ss.getSheets()[0];
+  if (focus) {
+    if (focus.isSheetHidden()) {
+      var all = ss.getSheets();
+      for (var v = 0; v < all.length; v++) {
+        if (!all[v].isSheetHidden()) {
+          focus = all[v];
+          break;
+        }
+      }
+    }
+    ss.setActiveSheet(focus);
+  }
+
+  Logger.log('organizeSheetUi_ order=' + JSON.stringify(orderedNames));
+}
+
+/** 菜单/手动：只整理使用说明、指标说明、顺序与隐藏，不改业务数据 */
+function organizeSheetUi() {
+  ensureUsageGuideSheet_();
+  ensureMetricGuideSheet_();
+  organizeSheetUi_();
+  writeLog_('INFO', '', 'organizeSheetUi 完成：使用说明/指标说明/顺序/隐藏已更新');
+}
+
+/**
  * 创建全部工作表；预填站点配置（仅当站点配置为空时）
  */
 function setupSheets() {
@@ -229,12 +453,20 @@ function setupSheets() {
   ensureSheet_(SHEET_NAMES.LOG, LOG_HEADERS);
   ensureSheet_(SHEET_NAMES.RULES, RULE_HEADERS);
   ensureSheet_(SHEET_NAMES.SITE_STATUS, SITE_STATUS_HEADERS);
+  ensureSheet_(SHEET_NAMES.DECISION_HISTORY, DECISION_HISTORY_HEADERS);
+  ensureSheet_(SHEET_NAMES.DECISION_OUTCOMES, DECISION_OUTCOME_HEADERS);
   ensureSheet_(SHEET_NAMES.TODAY_ACTIONS, TODAY_ACTION_HEADERS);
+  ensureTodayActionHeader_();
   ensureSheet_(SHEET_NAMES.OPPORTUNITIES, OPPORTUNITY_HEADERS);
   ensureSheet_(SHEET_NAMES.RESEARCH_JOBS, RESEARCH_JOB_HEADERS);
   ensureSheet_(SHEET_NAMES.RESEARCH_REVIEW, RESEARCH_REVIEW_HEADERS);
   ensureSheet_(SHEET_NAMES.DEVELOPMENT_TASKS, DEVELOPMENT_TASK_HEADERS);
   ensureSheet_(SHEET_NAMES.CONTENT_UPDATES, CONTENT_UPDATE_HEADERS);
+  ensureContentUpdateHeader_();
+
+  // 不 ensure PAGE_OPPORTUNITIES：旧实验页只识别/排序/隐藏，不新建
+  ensureUsageGuideSheet_();
+  ensureMetricGuideSheet_();
 
   seedSitesIfEmpty_();
   seedMissingDecisionRules_();
@@ -244,6 +476,8 @@ function setupSheets() {
   );
   applyResearchReviewDecisionValidation_();
   ensureDevelopmentTaskHeader_();
+
+  organizeSheetUi_();
 
   writeLog_('INFO', '', 'setup 完成：工作表已就绪');
 }
