@@ -18,6 +18,7 @@ var SHEET_NAMES = {
   DECISION_HISTORY: '决策历史',
   DECISION_OUTCOMES: '决策结果',
   FEEDBACK_SAMPLES: '反馈样本',
+  RULE_SCORECARD: '规则评分卡',
   TODAY_ACTIONS: '今日行动',
   OPPORTUNITIES: '内容机会',
   RESEARCH_JOBS: '研究任务',
@@ -50,6 +51,7 @@ var SHEET_UI_ORDER = [
   SHEET_NAMES.DECISION_HISTORY,
   SHEET_NAMES.DECISION_OUTCOMES,
   SHEET_NAMES.FEEDBACK_SAMPLES,
+  SHEET_NAMES.RULE_SCORECARD,
   SHEET_NAMES.RULES,
   SHEET_NAMES.DAILY,
   SHEET_NAMES.QUERIES,
@@ -250,6 +252,25 @@ var FEEDBACK_SAMPLE_STATUS = {
   D14_OBSERVED: 'D14_OBSERVED',
   D30_OBSERVED: 'D30_OBSERVED'
 };
+
+/**
+ * 规则评分卡（派生分析视图，可 rebuild）。
+ * 一行一个 RuleVersion；只做样本计数，不做成功/失败评价。
+ */
+var RULE_SCORECARD_HEADERS = [
+  'RuleVersion',
+  'DecisionCount',
+  'WaitingHumanCount',
+  'DoneCount',
+  'SkipCount',
+  'InterventionDecisionCount',
+  'InterventionRecordCount',
+  'D7ObservedCount',
+  'D14ObservedCount',
+  'D30ObservedCount',
+  'LatestDecisionDataDate',
+  'UpdatedAt'
+];
 
 var TODAY_ACTION_HEADERS = [
   'Date', 'Priority', 'Site', 'LifecycleStage', 'RecommendedAction',
@@ -1328,6 +1349,45 @@ function getMetricGuideRows_() {
       '热词站项目流程状态',
       '实验中',
       '不是 Opportunity Level，不是 Success Label。SKIPPED ≠ False Positive；DONE ≠ Success。'
+    ],
+    [
+      'DecisionCount',
+      '规则评分卡',
+      '系统计算',
+      '决策历史按 RuleVersion 去重 DecisionID',
+      '该 RuleVersion 已落盘的唯一 Decision 数',
+      '衡量规则版本积累了多少真实推荐样本',
+      '否（不参与自动调规则）',
+      '无阈值',
+      '系统聚合',
+      '实验中',
+      '只计数，不表示规则好坏。'
+    ],
+    [
+      'InterventionDecisionCount',
+      '规则评分卡',
+      '系统计算',
+      '内容更新记录按 DecisionID 精确绑定后再按 RuleVersion 聚合',
+      '至少有 1 条 Content Intervention 的 Decision 数（多页面仍计 1）',
+      '区分“仅人工处理”与“真实改站”样本规模',
+      '否',
+      '无阈值',
+      '系统聚合',
+      '实验中',
+      'InterventionRecordCount 才是改站记录总行数。'
+    ],
+    [
+      'D7ObservedCount',
+      '规则评分卡',
+      '系统计算',
+      '决策结果中 Horizon=D7 且 Decision 属于该 RuleVersion 的条数',
+      '已存在的真实 D7 Outcome 数量；不按日期推断“应该成熟”',
+      '衡量该规则版本有多少成熟观察样本',
+      '否',
+      '无阈值',
+      '系统聚合',
+      '实验中',
+      '不是成功率。D14/D30 同理另列。'
     ]
   ];
 }

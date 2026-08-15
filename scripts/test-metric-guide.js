@@ -57,7 +57,7 @@ var rowsMatch = configSrc.match(
 );
 assert(rowsMatch, 'cannot parse getMetricGuideRows_ return array');
 var rows = eval(rowsMatch[1]);
-assert(rows.length === 47, 'metric count must stay 47, got ' + rows.length);
+assert(rows.length === 50, 'metric count must stay 50, got ' + rows.length);
 
 var ALLOWED_TYPES = {
   原始事实: true,

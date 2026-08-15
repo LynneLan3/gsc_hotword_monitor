@@ -108,6 +108,12 @@ function applyColumnWidths_(sheet, name) {
       11: 260, 12: 110, 13: 110, 14: 160, 15: 90,
       30: 180, 31: 140
     };
+  } else if (name === SHEET_NAMES.RULE_SCORECARD) {
+    widths = {
+      1: 160, 2: 100, 3: 120, 4: 90, 5: 90,
+      6: 140, 7: 140, 8: 110, 9: 110, 10: 110,
+      11: 130, 12: 140
+    };
   } else if (name === SHEET_NAMES.DEVELOPMENT_TASKS) {
     widths = {
       1: 280, 2: 160, 3: 260, 4: 160, 5: 160, 6: 240,
@@ -207,6 +213,7 @@ function getUsageGuideLines_() {
     '决策历史：保存系统当时的规则版本、输入指标和推荐动作，用于后续回测；日常无需查看',
     '决策结果：在 Decision 后的 D7 / D14 / D30，用已有 GSC 历史记录后续搜索表现，用于以后回测规则；表示“推荐机会后来的表现”，不等于证明某次人工修改造成了增长；日常无需查看',
     '反馈样本：系统自动生成的分析视图，把决策 → 人工处理 → 实际内容修改 → D7/D14/D30 后续表现汇总到一行。SampleStatus 只表示当前事实阶段，不代表成功或失败。该表可重新生成，不应作为人工填写入口。',
+    '规则评分卡：按 RuleVersion 汇总 Decision / 人工处理 / 内容干预 / D7·D14·D30 样本数量。只回答“积累了多少真实样本”，不评价规则成功或失败；可重新生成，不应人工填写。',
     '规则配置：系统自己的判断阈值；不是 Google 官方标准，也不要当 SEO 真理',
     'GSC日数据：底层历史汇总，日常不用先看',
     'Query明细：真实 GSC Query 明细，日常不用先看',
@@ -464,6 +471,7 @@ function setupSheets() {
   ensureSheet_(SHEET_NAMES.DECISION_HISTORY, DECISION_HISTORY_HEADERS);
   ensureSheet_(SHEET_NAMES.DECISION_OUTCOMES, DECISION_OUTCOME_HEADERS);
   ensureSheet_(SHEET_NAMES.FEEDBACK_SAMPLES, FEEDBACK_SAMPLE_HEADERS);
+  ensureSheet_(SHEET_NAMES.RULE_SCORECARD, RULE_SCORECARD_HEADERS);
   ensureSheet_(SHEET_NAMES.TODAY_ACTIONS, TODAY_ACTION_HEADERS);
   ensureTodayActionHeader_();
   ensureSheet_(SHEET_NAMES.OPPORTUNITIES, OPPORTUNITY_HEADERS);
