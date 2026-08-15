@@ -231,7 +231,7 @@ function seedSitesIfEmpty_() {
   var rows = DEFAULT_SITES.map(function (s) {
     return [
       s.name,
-      ensureTrailingSlash_(s.propertyUrl),
+      normalizePropertyUrlForGsc_(s.propertyUrl),
       defaultSitemapUrl_(s.propertyUrl),
       '', // Day0 留空
       true
@@ -271,7 +271,7 @@ function getEnabledSites() {
 
     sites.push({
       name: name,
-      propertyUrl: ensureTrailingSlash_(propertyUrl),
+      propertyUrl: normalizePropertyUrlForGsc_(propertyUrl),
       sitemapUrl: sitemapUrl,
       day0: day0Str,
       rowIndex: i + 2
@@ -283,6 +283,7 @@ function getEnabledSites() {
 /**
  * 按唯一键 upsert：keyFn(rowValues) -> string
  * headers 对应列顺序；row 为与 headers 对齐的数组
+ * @return {{rowIndex:number, action:string}} action = 'insert' | 'update'
  */
 function upsertRow_(sheetName, headers, row, keyFn) {
   var sheet = getSpreadsheet_().getSheetByName(sheetName);
@@ -298,13 +299,13 @@ function upsertRow_(sheetName, headers, row, keyFn) {
     for (var i = 0; i < existing.length; i++) {
       if (keyFn(existing[i]) === key) {
         sheet.getRange(i + 2, 1, 1, headers.length).setValues([row]);
-        return i + 2;
+        return { rowIndex: i + 2, action: 'update' };
       }
     }
   }
 
   sheet.appendRow(row);
-  return sheet.getLastRow();
+  return { rowIndex: sheet.getLastRow(), action: 'insert' };
 }
 
 function upsertDailyRow_(row) {

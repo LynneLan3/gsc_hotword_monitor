@@ -16,24 +16,37 @@ function listGscSites() {
 
 /**
  * Search Analytics query
- * @param {string} siteUrl Property URL
+ * @param {string} siteUrl Property URL（须与 GSC Property 完全一致）
  * @param {Object} body 请求体
  * @return {Object}
  */
 function searchAnalyticsQuery(siteUrl, body) {
   var encoded = encodeURIComponent(siteUrl);
   var url = GSC_API_BASE + '/sites/' + encoded + '/searchAnalytics/query';
-  return gscFetch(url, { method: 'post', payload: body });
+  try {
+    return gscFetch(url, {
+      method: 'post',
+      payload: body,
+      contextHint: 'siteUrl=' + siteUrl
+    });
+  } catch (e) {
+    // 确保上层日志一定带上未改写的 Property URL
+    var msg = String(e.message || e);
+    if (msg.indexOf('siteUrl=') === -1) {
+      throw new Error('siteUrl=' + siteUrl + ' | ' + msg);
+    }
+    throw e;
+  }
 }
 
 /**
- * 在最近 lookbackDays 天内找出最新有数据的日期
+ * 在最近 lookbackDays 个 GSC 日（America/Los_Angeles）内找出最新有数据的日期
  * @return {string} yyyy-MM-dd 或 ''
  */
 function findLatestGscDataDate(siteUrl, lookbackDays) {
   lookbackDays = lookbackDays || LOOKBACK_DAYS_FOR_LATEST;
-  var endDate = todayStr_();
-  var startDate = daysAgoStr_(lookbackDays - 1);
+  var endDate = gscTodayStr_();
+  var startDate = gscDaysAgoStr_(lookbackDays - 1);
 
   var result = searchAnalyticsQuery(siteUrl, {
     startDate: startDate,
@@ -92,11 +105,19 @@ function fetchQueries(siteUrl, dataDate, rowLimit) {
 /**
  * Fresh Query 明细（含 preliminary 数据，用于 Query明细 / PAGE_OPPORTUNITIES）
  * @param {string} siteUrl
- * @param {string} dataDate yyyy-MM-dd
+ * @param {string} dataDate yyyy-MM-dd（GSC / America/Los_Angeles 日历日）
  * @param {number=} rowLimit
  * @return {Array}
  */
 function fetchFreshQueries(siteUrl, dataDate, rowLimit) {
+  return fetchFreshQueriesResult_(siteUrl, dataDate, rowLimit).rows;
+}
+
+/**
+ * Fresh Query 单日完整响应（rows + 可选 metadata）
+ * @return {{rows:Array, metadata:Object|null, result:Object}}
+ */
+function fetchFreshQueriesResult_(siteUrl, dataDate, rowLimit) {
   rowLimit = rowLimit || QUERY_ROW_LIMIT;
   var result = searchAnalyticsQuery(siteUrl, {
     startDate: dataDate,
@@ -105,20 +126,60 @@ function fetchFreshQueries(siteUrl, dataDate, rowLimit) {
     dataState: 'all',
     rowLimit: rowLimit
   });
-  return (result && result.rows) || [];
+  return {
+    rows: (result && result.rows) || [],
+    metadata: extractGscResponseMetadata_(result),
+    result: result || {}
+  };
+}
+
+/**
+ * 按 date 维度探测 Fresh 范围的最大数据日与 first_incomplete_date（若 API 返回）。
+ * Query 单维请求通常不含该 metadata，故单独探测；失败时返回空结果，不抛错阻断。
+ * @return {{maxDataDate:string, rowCount:number, metadata:Object|null}}
+ */
+function fetchFreshDateCoverage_(siteUrl, startDate, endDate) {
+  var empty = { maxDataDate: '', rowCount: 0, metadata: null };
+  try {
+    var result = searchAnalyticsQuery(siteUrl, {
+      startDate: startDate,
+      endDate: endDate,
+      dimensions: ['date'],
+      dataState: 'all',
+      rowLimit: 50
+    });
+    var rows = (result && result.rows) || [];
+    var maxDataDate = '';
+    for (var i = 0; i < rows.length; i++) {
+      var d = rows[i].keys && rows[i].keys[0];
+      if (d && d > maxDataDate) maxDataDate = d;
+    }
+    return {
+      maxDataDate: maxDataDate,
+      rowCount: rows.length,
+      metadata: extractGscResponseMetadata_(result)
+    };
+  } catch (e) {
+    if (isGscPermissionError_(e)) throw e;
+    writeLog_('WARN', '', 'Fresh date coverage 探测失败: ' + e.message);
+    return empty;
+  }
 }
 
 /**
  * 近 N 天逐日拉取 Fresh Query（避免多日合并超出 rowLimit）
- * @return {Array<{dataDate:string, rows:Array}>}
+ * dataDate 使用请求的 GSC 日历日；空结果不写入、不删历史。
+ * @return {Array<{dataDate:string, rows:Array, metadata:Object|null}>}
  */
 function fetchFreshQueriesForRange(siteUrl, startDate, endDate, rowLimit) {
   var out = [];
   var dates = listDatesInclusive_(startDate, endDate);
   for (var i = 0; i < dates.length; i++) {
+    var packed = fetchFreshQueriesResult_(siteUrl, dates[i], rowLimit);
     out.push({
       dataDate: dates[i],
-      rows: fetchFreshQueries(siteUrl, dates[i], rowLimit)
+      rows: packed.rows,
+      metadata: packed.metadata
     });
   }
   return out;

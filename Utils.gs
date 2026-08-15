@@ -34,6 +34,7 @@ function gscFetch(url, options) {
 
   var attempt = 0;
   var lastError = null;
+  var contextHint = options.contextHint ? String(options.contextHint) + ' | ' : '';
 
   while (attempt < MAX_RETRIES) {
     attempt++;
@@ -50,9 +51,14 @@ function gscFetch(url, options) {
       }
     }
 
-    // 授权问题：不重试
+    // 授权问题：不重试；保留 HTTP 状态与截断正文，便于诊断 Property 权限
     if (code === 401 || code === 403) {
-      var authMsg = '授权或权限问题 (HTTP ' + code + '): ' + truncate_(text, 300);
+      var authMsg =
+        'PROPERTY_PERMISSION | 授权或权限问题 (HTTP ' +
+        code +
+        ') | ' +
+        contextHint +
+        truncate_(text, 500);
       throw new Error(authMsg);
     }
 
@@ -65,7 +71,9 @@ function gscFetch(url, options) {
       continue;
     }
 
-    throw new Error('HTTP ' + code + ': ' + truncate_(text, 300));
+    throw new Error(
+      contextHint + 'HTTP ' + code + ': ' + truncate_(text, 300)
+    );
   }
 
   throw new Error('重试 ' + MAX_RETRIES + ' 次后仍失败: ' + lastError);
@@ -105,6 +113,7 @@ function httpGet_(url) {
   throw new Error('重试后仍失败: ' + lastError);
 }
 
+/** 脚本运营日（RunDate / Trigger）：使用项目时区 Asia/Shanghai */
 function todayStr_() {
   return Utilities.formatDate(new Date(), Session.getScriptTimeZone(), 'yyyy-MM-dd');
 }
@@ -115,25 +124,68 @@ function formatDate_(date) {
   return Utilities.formatDate(date, Session.getScriptTimeZone(), 'yyyy-MM-dd');
 }
 
-/** 从今天往前 n 天（含今天），返回 yyyy-MM-dd */
+/** 从脚本时区「今天」往前 n 天，返回 yyyy-MM-dd（仅用于非 GSC 运营日期） */
 function daysAgoStr_(n) {
-  var d = new Date();
-  d.setDate(d.getDate() - n);
-  return formatDate_(d);
+  return addDaysToDateStr_(todayStr_(), -n);
 }
 
 /**
- * Fresh Query 日期范围：最近 FRESH_QUERY_DAYS 个自然日（含 runDate）
- * @return {{startDate:string, endDate:string}}
+ * GSC 数据日：America/Los_Angeles 的「今天」yyyy-MM-dd
  */
-function getFreshQueryDateRange_(runDate) {
-  var endDate = toDateStr_(runDate) || todayStr_();
-  var startDate = daysAgoStr_(FRESH_QUERY_DAYS - 1);
-  return { startDate: startDate, endDate: endDate };
+function gscTodayStr_() {
+  return Utilities.formatDate(new Date(), GSC_TIMEZONE, 'yyyy-MM-dd');
 }
 
 /**
- * 列出 startDate ~ endDate（含首尾）的全部 yyyy-MM-dd
+ * 从 GSC「今天」往前 n 个日历日（yyyy-MM-dd 字符串算术，避免跨时区偏移）
+ */
+function gscDaysAgoStr_(n) {
+  return addDaysToDateStr_(gscTodayStr_(), -n);
+}
+
+/**
+ * 对 yyyy-MM-dd 做日历日加减，返回 yyyy-MM-dd。
+ * 使用本地 Date 组件，不经 UTC 格式化，避免时区把日期写偏一天。
+ */
+function addDaysToDateStr_(yyyyMmDd, deltaDays) {
+  var base = toDateStr_(yyyyMmDd);
+  var d = parseDateOnly_(base);
+  if (!d) return '';
+  d.setDate(d.getDate() + Number(deltaDays || 0));
+  return formatDateParts_(d);
+}
+
+/** 用 Date 本地 Y/M/D 拼 yyyy-MM-dd（不做时区换算） */
+function formatDateParts_(d) {
+  if (!d || isNaN(d.getTime())) return '';
+  var y = d.getFullYear();
+  var m = d.getMonth() + 1;
+  var day = d.getDate();
+  return (
+    y +
+    '-' +
+    (m < 10 ? '0' : '') +
+    m +
+    '-' +
+    (day < 10 ? '0' : '') +
+    day
+  );
+}
+
+/**
+ * Fresh Query 日期范围：最近 FRESH_QUERY_DAYS 个 GSC 自然日（含 GSC 今天）。
+ * 忽略 runDate 的脚本时区日历，避免亚洲上午把 LA 仍属前一天的请求写成「今天」。
+ * @param {string=} _runDate 保留参数以兼容旧调用；GSC 边界一律用 LA
+ * @return {{startDate:string, endDate:string, gscToday:string}}
+ */
+function getFreshQueryDateRange_(_runDate) {
+  var endDate = gscTodayStr_();
+  var startDate = addDaysToDateStr_(endDate, -(FRESH_QUERY_DAYS - 1));
+  return { startDate: startDate, endDate: endDate, gscToday: endDate };
+}
+
+/**
+ * 列出 startDate ~ endDate（含首尾）的全部 yyyy-MM-dd（日历日，无时区偏移）
  * @return {string[]}
  */
 function listDatesInclusive_(startDate, endDate) {
@@ -144,10 +196,70 @@ function listDatesInclusive_(startDate, endDate) {
   var dates = [];
   var d = new Date(start.getTime());
   while (d.getTime() <= end.getTime()) {
-    dates.push(formatDate_(d));
+    dates.push(formatDateParts_(d));
     d.setDate(d.getDate() + 1);
   }
   return dates;
+}
+
+/**
+ * 是否仍处在 GSC 常见延迟窗口：API 最大数据日 < GSC 今天。
+ * @param {string} maxDataDate
+ * @param {string=} gscToday
+ * @return {boolean}
+ */
+function isGscDataDelayWindow_(maxDataDate, gscToday) {
+  var today = toDateStr_(gscToday) || gscTodayStr_();
+  var maxD = toDateStr_(maxDataDate);
+  if (!today) return false;
+  if (!maxD) return true;
+  return maxD < today;
+}
+
+/**
+ * 从 GSC API 响应中提取不完整数据元信息（有则返回，无则 null；不伪造）。
+ * 兼容 snake_case / camelCase。
+ * @param {Object=} result
+ * @return {{firstIncompleteDate:string, firstIncompleteHour:string}|null}
+ */
+function extractGscResponseMetadata_(result) {
+  if (!result || !result.metadata) return null;
+  var md = result.metadata;
+  var firstDate =
+    md.first_incomplete_date || md.firstIncompleteDate || '';
+  var firstHour =
+    md.first_incomplete_hour || md.firstIncompleteHour || '';
+  if (!firstDate && !firstHour) return null;
+  return {
+    firstIncompleteDate: String(firstDate || ''),
+    firstIncompleteHour: String(firstHour || '')
+  };
+}
+
+/**
+ * 判断是否为 GSC 授权/Property 权限错误（401/403）。
+ */
+function isGscPermissionError_(err) {
+  var msg = String((err && err.message) || err || '');
+  return (
+    msg.indexOf('HTTP 401') >= 0 ||
+    msg.indexOf('HTTP 403') >= 0 ||
+    msg.indexOf('授权或权限问题') >= 0 ||
+    msg.indexOf('PROPERTY_PERMISSION') >= 0
+  );
+}
+
+/**
+ * URL-prefix Property 保留/补齐末尾 /；sc-domain: 不加斜杠。
+ * 不得改成其他路径。
+ */
+function normalizePropertyUrlForGsc_(url) {
+  url = String(url || '').trim();
+  if (!url) return url;
+  if (url.indexOf('sc-domain:') === 0) {
+    return url.replace(/\/+$/, '');
+  }
+  return ensureTrailingSlash_(url);
 }
 
 /**
@@ -253,3 +365,18 @@ function pagePathFromUrl_(pageUrl) {
 function defaultSitemapUrl_(propertyUrl) {
   return ensureTrailingSlash_(propertyUrl) + 'sitemap.xml';
 }
+
+/**
+ * 安全弹窗：有 UI 时 alert；无 UI（编辑器直接运行 / clasp run）时仅写 Logger。
+ * 不吞掉真实业务错误——调用方应先完成逻辑再调用本函数展示结果。
+ */
+function alertUi_(message) {
+  var text = String(message || '');
+  try {
+    SpreadsheetApp.getUi().alert(text);
+  } catch (e) {
+    Logger.log('UI alert skipped (' + e.message + '):');
+    Logger.log(text);
+  }
+}
+

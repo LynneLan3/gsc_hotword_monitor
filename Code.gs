@@ -14,6 +14,8 @@ function onOpen() {
     .addItem('运行URL索引批次', 'runIndexAuditBatch')
     .addItem('回填最近14天GSC数据', 'backfill14Days')
     .addSeparator()
+    .addItem('测试GSC权限', 'testGscAccess')
+    .addItem('运行自测', 'runSelfTests')
     .addItem('创建每日自动任务', 'createDailyTrigger')
     .addItem('删除每日自动任务', 'removeDailyTrigger')
     .addToUi();
@@ -42,10 +44,38 @@ function sortMonitoringSheetsNewestFirst() {
  * 决策/机会引擎失败不回滚已采集数据。
  */
 function runDaily() {
+  var lock = LockService.getScriptLock();
+  if (!lock.tryLock(15000)) {
+    writeLog_('WARN', '', 'runDaily 跳过：已有实例在运行（LockService）');
+    Logger.log('runDaily skipped: lock busy');
+    return 'runDaily skipped: lock busy';
+  }
+
+  try {
+    return runDailyUnlocked_();
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+/** runDaily 主体（已持锁） */
+function runDailyUnlocked_() {
   setupSheets(); // 确保表存在，不覆盖已有数据
   var sites = getEnabledSites();
   var runDate = todayStr_();
-  writeLog_('INFO', '', 'runDaily 开始，站点数量=' + sites.length);
+  writeLog_(
+    'INFO',
+    '',
+    'runDaily 开始，站点数量=' +
+      sites.length +
+      ' runDate=' +
+      runDate +
+      ' gscToday=' +
+      gscTodayStr_() +
+      ' (' +
+      GSC_TIMEZONE +
+      ')'
+  );
 
   if (!sites.length) {
     writeLog_('INFO', '', 'runDaily 采集结束：无启用站点');
@@ -54,11 +84,12 @@ function runDaily() {
       try {
         processSiteDaily_(sites[i], runDate);
       } catch (e) {
-        writeLog_('ERROR', sites[i].name, e.message);
+        var errMsg = String(e.message || e);
+        writeLog_('ERROR', sites[i].name, errMsg);
         appendSnapshotRow_([
           runDate, '', sites[i].name, sites[i].propertyUrl, '',
           '', '', '', '', '', '', '', '', '',
-          '', '', '', '🔴 需要检查', e.message
+          '', '', '', '🔴 需要检查', errMsg
         ]);
       }
     }
@@ -80,6 +111,10 @@ function runDaily() {
     Logger.log('OPPORTUNITY_ENGINE_FAILED | ' + e.message);
   }
   sortSheetsNewestFirst_([SHEET_NAMES.LOG]);
+  var summary =
+    'runDaily done sites=' + sites.length + ' runDate=' + runDate;
+  Logger.log(summary);
+  return summary;
 }
 
 /**
@@ -213,13 +248,26 @@ function processSiteDaily_(site, runDate) {
   var errors = [];
   var propertyUrl = site.propertyUrl;
   var siteName = site.name;
+  var permissionBlocked = false;
 
-  // 1) 最新有数据日期
+  // 1) 最新有数据日期（GSC / America/Los_Angeles）
   var latestDate = '';
   try {
     latestDate = findLatestGscDataDate(propertyUrl, LOOKBACK_DAYS_FOR_LATEST);
   } catch (e) {
-    errors.push('GSC最新日期: ' + e.message);
+    if (isGscPermissionError_(e)) {
+      permissionBlocked = true;
+      errors.push(
+        'PROPERTY_PERMISSION | siteUrl=' + propertyUrl + ' | ' + e.message
+      );
+      writeLog_(
+        'ERROR',
+        siteName,
+        'PROPERTY_PERMISSION | siteUrl=' + propertyUrl + ' | ' + e.message
+      );
+    } else {
+      errors.push('GSC最新日期: ' + e.message);
+    }
   }
 
   // 2) Sitemap 计数（不在此做 URL Inspection）
@@ -241,7 +289,7 @@ function processSiteDaily_(site, runDate) {
     indexRate = sitemapCount > 0 ? percent_(indexedCount, sitemapCount) : '';
   }
 
-  // 4) Search Analytics（依赖 latestDate）
+  // 4) Search Analytics（依赖 latestDate；权限异常时跳过，保留历史）
   var totals = { clicks: 0, impressions: 0, ctr: 0, position: 0 };
   var queryRows = [];
   var pageRows = [];
@@ -250,7 +298,7 @@ function processSiteDaily_(site, runDate) {
   var returnedQueryCount = 0;
   var newQueriesText = '';
 
-  if (latestDate) {
+  if (latestDate && !permissionBlocked) {
     try {
       totals = fetchSiteTotals(propertyUrl, latestDate);
     } catch (e) {
@@ -292,18 +340,41 @@ function processSiteDaily_(site, runDate) {
   }
   // latestDate 为空：API 成功但近期无 Performance 数据，属正常等待状态，不计入 error
 
-  // 4b) Fresh Query明细（dataState=all，独立于 finalized 日数据）
-  try {
-    syncFreshQueryDetails_(siteName, propertyUrl, runDate);
-  } catch (e) {
-    errors.push('FreshQueries: ' + e.message);
+  // 4b) Fresh Query明细（dataState=all；权限异常时跳过，绝不空写覆盖历史）
+  if (!permissionBlocked) {
+    try {
+      syncFreshQueryDetails_(siteName, propertyUrl, runDate);
+    } catch (e) {
+      if (isGscPermissionError_(e)) {
+        permissionBlocked = true;
+        var permMsg =
+          'PROPERTY_PERMISSION | siteUrl=' +
+          propertyUrl +
+          ' | ' +
+          String(e.message || e);
+        errors.push(permMsg);
+        writeLog_('ERROR', siteName, permMsg);
+      } else {
+        errors.push('FreshQueries: ' + e.message);
+      }
+    }
   }
 
   // 4c) Fresh Query×Page → Query页面明细（增强层；失败不阻断主流程 / Status）
-  try {
-    syncFreshQueryPageDetails_(siteName, propertyUrl, runDate);
-  } catch (e) {
-    writeLog_('WARN', siteName, 'QUERY_PAGE_FAILED | ' + e.message);
+  if (!permissionBlocked) {
+    try {
+      syncFreshQueryPageDetails_(siteName, propertyUrl, runDate);
+    } catch (e) {
+      if (isGscPermissionError_(e)) {
+        writeLog_(
+          'ERROR',
+          siteName,
+          'QUERY_PAGE_PERMISSION | siteUrl=' + propertyUrl + ' | ' + e.message
+        );
+      } else {
+        writeLog_('WARN', siteName, 'QUERY_PAGE_FAILED | ' + e.message);
+      }
+    }
   }
 
   // 5) FirstImpressionDate
@@ -358,10 +429,18 @@ function processSiteDaily_(site, runDate) {
 }
 
 /**
- * 写入/更新近 FRESH_QUERY_DAYS 天的 Fresh Query 明细（upsert：Site+DataDate+Query）
+ * 写入/更新近 FRESH_QUERY_DAYS 个 GSC 日的 Fresh Query 明细（upsert：DataDate+Site+Query）。
+ * - 以 API 返回有数据的日期写入，不伪造当天空数据
+ * - 某日 API 返回 0 行：保留历史，不删不覆盖
+ * - 重复运行幂等更新同一键
  */
 function syncFreshQueryDetails_(siteName, propertyUrl, runDate) {
   var range = getFreshQueryDateRange_(runDate);
+  var coverage = fetchFreshDateCoverage_(
+    propertyUrl,
+    range.startDate,
+    range.endDate
+  );
   var batches = fetchFreshQueriesForRange(
     propertyUrl,
     range.startDate,
@@ -369,47 +448,96 @@ function syncFreshQueryDetails_(siteName, propertyUrl, runDate) {
     QUERY_ROW_LIMIT
   );
 
-  var written = 0;
+  var inserted = 0;
+  var updated = 0;
+  var apiRowCount = 0;
+  var maxWrittenDate = '';
+  var daysWithRows = 0;
+
   for (var bi = 0; bi < batches.length; bi++) {
     var dataDate = batches[bi].dataDate;
     var rows = batches[bi].rows || [];
+    if (!rows.length) {
+      // 空结果：保留历史，不写假数据
+      continue;
+    }
+    daysWithRows++;
     for (var qi = 0; qi < rows.length; qi++) {
       var qr = rows[qi];
       var qName = (qr.keys && qr.keys[0]) || '';
       if (!qName) continue;
-      upsertQueryRow_([
+      apiRowCount++;
+      var result = upsertQueryRow_([
         dataDate, siteName, qName,
         qr.clicks || 0, qr.impressions || 0, qr.ctr || 0, qr.position || 0
       ]);
-      written++;
+      if (result && result.action === 'update') updated++;
+      else inserted++;
+      if (!maxWrittenDate || dataDate > maxWrittenDate) maxWrittenDate = dataDate;
+    }
+  }
+
+  var maxDataDate = coverage.maxDataDate || maxWrittenDate;
+  var inDelay = isGscDataDelayWindow_(maxDataDate, range.gscToday);
+  var meta = coverage.metadata;
+  var metaPart = '';
+  if (meta) {
+    if (meta.firstIncompleteDate) {
+      metaPart += ' first_incomplete_date=' + meta.firstIncompleteDate;
+    }
+    if (meta.firstIncompleteHour) {
+      metaPart += ' first_incomplete_hour=' + meta.firstIncompleteHour;
     }
   }
 
   writeLog_(
     'INFO',
     siteName,
-    'Fresh Query明细 upsert ' + written + ' 条（' + range.startDate + '~' + range.endDate + ', dataState=all）'
+    'Fresh Query明细 | range=' +
+      range.startDate +
+      '~' +
+      range.endDate +
+      ' | gscToday=' +
+      range.gscToday +
+      ' | apiMaxDataDate=' +
+      (maxDataDate || '无') +
+      ' | apiRows=' +
+      apiRowCount +
+      ' | daysWithRows=' +
+      daysWithRows +
+      ' | inserted=' +
+      inserted +
+      ' | updated=' +
+      updated +
+      ' | delayWindow=' +
+      (inDelay ? 'yes' : 'no') +
+      ' | dataState=all' +
+      (metaPart || ' | incompleteMeta=none')
   );
 }
 
 /**
- * 写入/更新近 FRESH_QUERY_DAYS 天的 Fresh Query×Page（upsert：DataDate+Site+Query+PageURL）。
- * 0 rows 为正常状态（该日暂无联合维度数据），不记 ERROR。
+ * 写入/更新近 FRESH_QUERY_DAYS 个 GSC 日的 Fresh Query×Page（upsert：DataDate+Site+Query+PageURL）。
+ * 0 rows 为正常状态（该日暂无联合维度数据），不记 ERROR、不删历史。
  * 使用 QUERY_ROW_LIMIT=1000：Query×Page 行数可能多于 Query 单维，小站阶段够用，不保证长期完整。
  */
 function syncFreshQueryPageDetails_(siteName, propertyUrl, runDate) {
   var range = getFreshQueryDateRange_(runDate);
   var dates = listDatesInclusive_(range.startDate, range.endDate);
-  var written = 0;
+  var inserted = 0;
+  var updated = 0;
+  var apiRowCount = 0;
+  var maxWrittenDate = '';
 
   for (var di = 0; di < dates.length; di++) {
     var dataDate = dates[di];
     var rows = fetchFreshQueryPages(propertyUrl, dataDate, QUERY_ROW_LIMIT);
-    // Rows=0：正常结束该日，不写错误
+    // Rows=0：正常结束该日，保留历史，不写错误
     for (var qi = 0; qi < rows.length; qi++) {
       var qr = rows[qi];
       if (!qr || !qr.query || !qr.page) continue;
-      upsertQueryPageRow_([
+      apiRowCount++;
+      var result = upsertQueryPageRow_([
         dataDate,
         siteName,
         qr.query,
@@ -420,16 +548,29 @@ function syncFreshQueryPageDetails_(siteName, propertyUrl, runDate) {
         qr.ctr || 0,
         qr.position || 0
       ]);
-      written++;
+      if (result && result.action === 'update') updated++;
+      else inserted++;
+      if (!maxWrittenDate || dataDate > maxWrittenDate) maxWrittenDate = dataDate;
     }
   }
 
   writeLog_(
     'INFO',
     siteName,
-    'Fresh Query页面明细 upsert ' + written + ' 条（' +
-      range.startDate + '~' + range.endDate +
-      ', dataState=all, rowLimit=' + QUERY_ROW_LIMIT + '）'
+    'Fresh Query页面明细 | range=' +
+      range.startDate +
+      '~' +
+      range.endDate +
+      ' | apiMaxDataDate=' +
+      (maxWrittenDate || '无') +
+      ' | apiRows=' +
+      apiRowCount +
+      ' | inserted=' +
+      inserted +
+      ' | updated=' +
+      updated +
+      ' | dataState=all | rowLimit=' +
+      QUERY_ROW_LIMIT
   );
 }
 
@@ -474,9 +615,19 @@ function computeStatus_(opts) {
 function backfill14Days() {
   setupSheets();
   var sites = getEnabledSites();
-  var endDate = todayStr_();
-  var startDate = daysAgoStr_(BACKFILL_DAYS - 1);
-  writeLog_('INFO', '', 'backfill14Days 开始 ' + startDate + ' ~ ' + endDate);
+  var endDate = gscTodayStr_();
+  var startDate = gscDaysAgoStr_(BACKFILL_DAYS - 1);
+  writeLog_(
+    'INFO',
+    '',
+    'backfill14Days 开始 ' +
+      startDate +
+      ' ~ ' +
+      endDate +
+      ' (' +
+      GSC_TIMEZONE +
+      ')'
+  );
 
   for (var i = 0; i < sites.length; i++) {
     var site = sites[i];
@@ -720,13 +871,21 @@ function debugLeafyCornerQueryPages() {
 }
 
 /**
- * 测试当前账号对 Search Console 的访问权限
- * 只读 Sites.list，不修改任何数据
+ * 测试当前账号对 Search Console 的访问权限。
+ * 对照「站点配置」中 Enabled=TRUE 的 Property（含 Agent 64 等新增站），不只对照 DEFAULT_SITES。
+ * 只读 Sites.list，不修改任何数据。
  */
 function testGscAccess() {
-  var expected = DEFAULT_SITES.map(function (s) {
-    return ensureTrailingSlash_(s.propertyUrl);
+  setupSheets();
+  var enabled = getEnabledSites();
+  var expected = enabled.map(function (s) {
+    return s.propertyUrl;
   });
+  if (!expected.length) {
+    expected = DEFAULT_SITES.map(function (s) {
+      return normalizePropertyUrlForGsc_(s.propertyUrl);
+    });
+  }
 
   var accessible;
   try {
@@ -734,7 +893,7 @@ function testGscAccess() {
   } catch (e) {
     Logger.log('FAIL: 无法调用 Sites.list');
     Logger.log(e.message);
-    SpreadsheetApp.getUi().alert('测试失败：' + e.message + '\n请查看「执行记录 / Logger」。');
+    alertUi_('测试失败：' + e.message + '\n请查看「执行记录 / Logger」。');
     return;
   }
 
@@ -755,11 +914,16 @@ function testGscAccess() {
   }
 
   var missing = [];
+  var missingNames = [];
   for (var e = 0; e < expected.length; e++) {
     var want = expected[e];
-    var wantNoSlash = want.charAt(want.length - 1) === '/' ? want.substring(0, want.length - 1) : want;
+    var wantNoSlash =
+      want.charAt(want.length - 1) === '/'
+        ? want.substring(0, want.length - 1)
+        : want;
     if (!accessSet[want] && !accessSet[wantNoSlash]) {
       missing.push(want);
+      if (enabled[e]) missingNames.push(enabled[e].name);
     }
   }
 
@@ -771,19 +935,31 @@ function testGscAccess() {
   } else {
     Logger.log('FAIL:');
     Logger.log(okCount + '/' + expected.length);
-    Logger.log('Missing:');
+    Logger.log('Missing（需在 Search Console 为运行脚本的 Google 账号添加权限）:');
     for (var m = 0; m < missing.length; m++) {
-      Logger.log(missing[m]);
+      Logger.log(
+        (missingNames[m] ? missingNames[m] + ' → ' : '') + missing[m]
+      );
     }
   }
 
-  SpreadsheetApp.getUi().alert(
+  var summary =
     (missing.length === 0 ? 'PASS: ' : 'FAIL: ') +
-      okCount + '/' + expected.length +
-      ' GSC properties accessible' +
-      (missing.length ? '\n\nMissing:\n' + missing.join('\n') : '') +
-      '\n\n详情见「执行」→「执行记录」中的日志。'
-  );
+    okCount +
+    '/' +
+    expected.length +
+    ' GSC properties accessible' +
+    (missing.length
+      ? '\n\nMissing:\n' +
+        missing
+          .map(function (u, idx) {
+            return (missingNames[idx] ? missingNames[idx] + '\n' : '') + u;
+          })
+          .join('\n\n')
+      : '') +
+    '\n\n详情见「执行」→「执行记录」中的日志。';
+  alertUi_(summary);
+  return summary;
 }
 
 /** 一次性诊断/修复：重置 active sheet 上下文，排查 Sheet 0 not found */
@@ -824,3 +1000,185 @@ function repairSpreadsheetContext() {
     'getSheetByName测试: ' + (testSheet ? testSheet.getName() : 'null')
   );
 }
+
+/**
+ * 一次性：按站点名称定位「站点配置」行，将 Agent 64 纠正为短域名正式配置。
+ * 不改历史快照 / Query / 表结构。可用 clasp run 或编辑器直接运行。
+ */
+function updateAgent64CanonicalDomainConfig() {
+  var SPREADSHEET_ID = '15GJGvPnJlXTSbO4aM_Yxvf0GxCgXrmZr0M5b9uZGIJU';
+  var TARGET_NAME = 'Agent 64: Spies Never Die';
+  var PROPERTY_URL = 'https://agent-64.vercel.app/';
+  var SITEMAP_URL = 'https://agent-64.vercel.app/sitemap-index.xml';
+  var DAY0 = '2026-08-14';
+
+  // Container-bound / webapp only — spreadsheets.currentonly cannot openById.
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  if (!ss) {
+    throw new Error('No active spreadsheet. Open the bound Sheet and run from editor/webapp.');
+  }
+  if (ss.getId() !== SPREADSHEET_ID) {
+    throw new Error(
+      'Active spreadsheet mismatch. expected=' +
+        SPREADSHEET_ID +
+        ' actual=' +
+        ss.getId()
+    );
+  }
+  var sheet = ss.getSheetByName(SHEET_NAMES.SITES);
+  if (!sheet) {
+    throw new Error('找不到工作表：' + SHEET_NAMES.SITES);
+  }
+
+  var lastRow = sheet.getLastRow();
+  if (lastRow < 2) {
+    throw new Error('站点配置为空');
+  }
+
+  var values = sheet.getRange(2, 1, lastRow, SITE_HEADERS.length).getValues();
+  var rowIndex = -1;
+  for (var i = 0; i < values.length; i++) {
+    if (String(values[i][0] || '').trim() === TARGET_NAME) {
+      rowIndex = i + 2;
+      break;
+    }
+  }
+
+  if (rowIndex < 0) {
+    // 不存在则追加一行，避免静默失败
+    rowIndex = lastRow + 1;
+    sheet.getRange(rowIndex, 1, rowIndex, SITE_HEADERS.length).setValues([
+      [TARGET_NAME, PROPERTY_URL, SITEMAP_URL, DAY0, true]
+    ]);
+    sheet.getRange(rowIndex, 5).insertCheckboxes();
+    Logger.log('APPEND row=' + rowIndex + ' name=' + TARGET_NAME);
+  } else {
+    sheet.getRange(rowIndex, 2).setValue(PROPERTY_URL);
+    sheet.getRange(rowIndex, 3).setValue(SITEMAP_URL);
+    sheet.getRange(rowIndex, 4).setValue(DAY0);
+    sheet.getRange(rowIndex, 5).setValue(true);
+    Logger.log('UPDATE row=' + rowIndex + ' name=' + TARGET_NAME);
+  }
+
+  var readBack = sheet.getRange(rowIndex, 1, rowIndex, SITE_HEADERS.length).getValues()[0];
+  var summary =
+    'Agent 64 站点配置已更新\n' +
+    'row=' +
+    rowIndex +
+    '\n站点名称=' +
+    readBack[0] +
+    '\nProperty URL=' +
+    readBack[1] +
+    '\nSitemap URL=' +
+    readBack[2] +
+    '\nDay0=' +
+    toDateStr_(readBack[3]) +
+    '\nEnabled=' +
+    readBack[4];
+  Logger.log(summary);
+  alertUi_(summary);
+  return summary;
+}
+
+/**
+ * 回读 Agent 64 短域名配置、近期日志，以及今日 Query 行数（用于幂等核对）。
+ */
+function readAgent64ShortDomainStatus_() {
+  var TARGET_NAME = 'Agent 64: Spies Never Die';
+  var SHORT = 'https://agent-64.vercel.app/';
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  if (!ss) throw new Error('No active spreadsheet');
+
+  var sites = ss.getSheetByName(SHEET_NAMES.SITES);
+  var siteRow = null;
+  if (sites && sites.getLastRow() >= 2) {
+    var values = sites.getRange(2, 1, sites.getLastRow(), SITE_HEADERS.length).getValues();
+    for (var i = 0; i < values.length; i++) {
+      if (String(values[i][0] || '').trim() === TARGET_NAME) {
+        siteRow = {
+          row: i + 2,
+          name: values[i][0],
+          propertyUrl: values[i][1],
+          sitemapUrl: values[i][2],
+          day0: toDateStr_(values[i][3]),
+          enabled: values[i][4]
+        };
+        break;
+      }
+    }
+  }
+
+  var logHits = [];
+  var logSheet = ss.getSheetByName(SHEET_NAMES.LOG);
+  if (logSheet && logSheet.getLastRow() >= 2) {
+    var logLast = logSheet.getLastRow();
+    // 日志已按「最新在前」排序，从顶部读取
+    var end = Math.min(logLast, 2 + 100);
+    var logs = logSheet.getRange(2, 1, end, Math.min(6, logSheet.getLastColumn())).getValues();
+    for (var l = 0; l < logs.length && logHits.length < 20; l++) {
+      var line = logs[l].join(' | ');
+      if (
+        line.indexOf('Agent 64') >= 0 ||
+        line.indexOf('agent-64') >= 0 ||
+        line.indexOf('runDaily') >= 0 ||
+        line.indexOf('站点数量') >= 0 ||
+        line.indexOf('采集结束') >= 0
+      ) {
+        logHits.push(line);
+      }
+    }
+  }
+
+  var snapshotHits = [];
+  var snap = ss.getSheetByName(SHEET_NAMES.SNAPSHOT);
+  if (snap && snap.getLastRow() >= 2) {
+    var snapEnd = Math.min(snap.getLastRow(), 2 + 40);
+    var snaps = snap.getRange(2, 1, snapEnd, Math.min(6, snap.getLastColumn())).getValues();
+    for (var s = 0; s < snaps.length; s++) {
+      var site = String(snaps[s][2] || '');
+      var prop = String(snaps[s][3] || '');
+      if (site.indexOf('Agent 64') >= 0 || prop.indexOf('agent-64') >= 0) {
+        snapshotHits.push(snaps[s].slice(0, 5).join(' | '));
+        if (snapshotHits.length >= 5) break;
+      }
+    }
+  }
+
+  var queryCountToday = 0;
+  var queryDupCheck = {};
+  var qSheet = ss.getSheetByName(SHEET_NAMES.QUERIES);
+  var runDate = todayStr_();
+  if (qSheet && qSheet.getLastRow() >= 2) {
+    var qVals = qSheet
+      .getRange(2, 1, qSheet.getLastRow(), Math.min(7, qSheet.getLastColumn()))
+      .getValues();
+    for (var q = 0; q < qVals.length; q++) {
+      var siteName = String(qVals[q][1] || '');
+      var dateVal = toDateStr_(qVals[q][0]);
+      var queryText = String(qVals[q][2] || '');
+      if (dateVal === runDate && siteName.indexOf('Agent 64') >= 0) {
+        queryCountToday++;
+        var key = dateVal + '|' + siteName + '|' + queryText;
+        queryDupCheck[key] = (queryDupCheck[key] || 0) + 1;
+      }
+    }
+  }
+  var dupKeys = 0;
+  for (var dk in queryDupCheck) {
+    if (queryDupCheck[dk] > 1) dupKeys++;
+  }
+
+  return {
+    siteRow: siteRow,
+    shortDomainConfigured:
+      siteRow &&
+      String(siteRow.propertyUrl).indexOf(SHORT) === 0 &&
+      String(siteRow.sitemapUrl).indexOf('https://agent-64.vercel.app/sitemap-index.xml') === 0,
+    recentLogs: logHits,
+    recentSnapshots: snapshotHits,
+    queryCountToday: queryCountToday,
+    queryDuplicateKeysToday: dupKeys,
+    runDate: runDate
+  };
+}
+

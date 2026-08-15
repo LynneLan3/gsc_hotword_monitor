@@ -360,7 +360,13 @@ var BRAND_TOKEN_STOPWORDS = {
   iii: true
 };
 
-/** 首次 setup 时预填的 7 个站点（Day0 留空） */
+/**
+ * GSC Search Analytics 的数据日边界时区（官方口径）。
+ * 脚本项目时区仍为 Asia/Shanghai（RunDate / Trigger），二者不可混用。
+ */
+var GSC_TIMEZONE = 'America/Los_Angeles';
+
+/** 首次 setup 时预填的站点（Day0 留空；已有「站点配置」数据时不会覆盖） */
 var DEFAULT_SITES = [
   {
     name: 'Agefield High: Rock the School',
@@ -389,6 +395,10 @@ var DEFAULT_SITES = [
   {
     name: 'Leafy Corner',
     propertyUrl: 'https://leafy-corner.vercel.app/'
+  },
+  {
+    name: 'Agent 64: Spies Never Die',
+    propertyUrl: 'https://agent-64.vercel.app/'
   }
 ];
 
@@ -403,8 +413,11 @@ var LOOKBACK_DAYS_FOR_LATEST = 10;
 var BACKFILL_DAYS = 14;
 var MAX_RETRIES = 3;
 
-/** Fresh Query 明细：覆盖最近 N 个自然日（含今天），使用 dataState=all */
-var FRESH_QUERY_DAYS = 3;
+/**
+ * Fresh Query 明细：覆盖最近 N 个 GSC 自然日（America/Los_Angeles，含今天），
+ * 使用 dataState=all，允许后续补数。取 5 天以覆盖常见延迟窗口。
+ */
+var FRESH_QUERY_DAYS = 5;
 
 /** 每次 runIndexAuditBatch 最多完整 Inspection 的站点数 */
 var INDEX_AUDIT_BATCH_SIZE = 2;
