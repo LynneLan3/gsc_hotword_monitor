@@ -17,6 +17,7 @@ var SHEET_NAMES = {
   SITE_STATUS: '站点状态',
   DECISION_HISTORY: '决策历史',
   DECISION_OUTCOMES: '决策结果',
+  FEEDBACK_SAMPLES: '反馈样本',
   TODAY_ACTIONS: '今日行动',
   OPPORTUNITIES: '内容机会',
   RESEARCH_JOBS: '研究任务',
@@ -48,6 +49,7 @@ var SHEET_UI_ORDER = [
   SHEET_NAMES.SITE_STATUS,
   SHEET_NAMES.DECISION_HISTORY,
   SHEET_NAMES.DECISION_OUTCOMES,
+  SHEET_NAMES.FEEDBACK_SAMPLES,
   SHEET_NAMES.RULES,
   SHEET_NAMES.DAILY,
   SHEET_NAMES.QUERIES,
@@ -198,6 +200,55 @@ var OBSERVATION_STATUS = {
   PENDING: 'PENDING',
   OBSERVED: 'OBSERVED',
   DATA_MISSING: 'DATA_MISSING'
+};
+
+/**
+ * 反馈样本（派生分析视图，可 rebuild）。
+ * 一条 DecisionID 一行；不复制全部 Snapshot / Outcome 字段。
+ */
+var FEEDBACK_SAMPLE_HEADERS = [
+  'DecisionID',
+  'DecisionDataDate',
+  'Site',
+  'RuleVersion',
+  'RecommendedAction',
+  'Priority',
+  'DomainScore',
+  'HumanDecision',
+  'HumanNote',
+  'InterventionCount',
+  'InterventionPages',
+  'FirstInterventionDate',
+  'LastInterventionDate',
+  'InterventionTypes',
+  'D7Status',
+  'D7Impressions',
+  'D7Clicks',
+  'D7GuideQueries',
+  'D7BestPosition',
+  'D14Status',
+  'D14Impressions',
+  'D14Clicks',
+  'D14GuideQueries',
+  'D14BestPosition',
+  'D30Status',
+  'D30Impressions',
+  'D30Clicks',
+  'D30GuideQueries',
+  'D30BestPosition',
+  'SampleStatus',
+  'UpdatedAt'
+];
+
+/** SampleStatus：事实阶段，不是成功/失败标签 */
+var FEEDBACK_SAMPLE_STATUS = {
+  WAITING_HUMAN: 'WAITING_HUMAN',
+  SKIPPED: 'SKIPPED',
+  HANDLED_NO_INTERVENTION: 'HANDLED_NO_INTERVENTION',
+  INTERVENTION_PENDING_OUTCOME: 'INTERVENTION_PENDING_OUTCOME',
+  D7_OBSERVED: 'D7_OBSERVED',
+  D14_OBSERVED: 'D14_OBSERVED',
+  D30_OBSERVED: 'D30_OBSERVED'
 };
 
 var TODAY_ACTION_HEADERS = [
@@ -1238,6 +1289,45 @@ function getMetricGuideRows_() {
       '系统关联键（类型归入系统计算）',
       '实验中',
       '为空不代表记录无效；M2-3B 前的历史 intervention 可以没有 DecisionID。DONE ≠ 自动产生本记录。未知 DecisionID 会 WARN 后清空绑定列。'
+    ],
+    [
+      'InterventionCount',
+      '反馈样本',
+      '系统计算',
+      '内容更新记录按 DecisionID 精确匹配计数',
+      '同 DecisionID 的内容更新记录条数；一 Decision 可对应多页面多行',
+      '区分“仅 DONE”与“真实发生内容修改”',
+      '否（不改 DomainScore / Outcome）',
+      '0=无绑定 intervention',
+      '系统聚合',
+      '实验中',
+      '只按 DecisionID 精确关联；不用 Site/日期模糊匹配。'
+    ],
+    [
+      'FirstInterventionDate',
+      '反馈样本',
+      '系统计算',
+      '内容更新记录「更新时间」聚合（min）',
+      '该 DecisionID 最早实际改站日；与 LastInterventionDate 成对',
+      '观察改站相对 Outcome 的时间关系',
+      '否',
+      '无则空',
+      '系统聚合',
+      '实验中',
+      '来自真实内容更新记录，不是 DecisionDataDate。'
+    ],
+    [
+      'SampleStatus',
+      '反馈样本',
+      '系统计算',
+      'HumanDecision + InterventionCount + D7/D14/D30 是否存在',
+      '事实阶段：WAITING_HUMAN / SKIPPED / HANDLED_NO_INTERVENTION / INTERVENTION_PENDING_OUTCOME / D7_OBSERVED / D14_OBSERVED / D30_OBSERVED',
+      '告诉 PM 当前样本走到哪一步；便于筛选待观察样本',
+      '否（不参与打分）',
+      '固定枚举；不是 SUCCESS/FAILURE',
+      '热词站项目流程状态',
+      '实验中',
+      '不是 Opportunity Level，不是 Success Label。SKIPPED ≠ False Positive；DONE ≠ Success。'
     ]
   ];
 }
