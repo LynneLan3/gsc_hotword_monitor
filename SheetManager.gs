@@ -88,13 +88,23 @@ function applyColumnWidths_(sheet, name) {
       1: 260, 2: 160, 3: 160, 4: 160,
       5: 280, 6: 240, 7: 90, 8: 180, 9: 280, 10: 90, 11: 420,
       12: 140, 13: 90, 14: 360, 15: 160, 16: 280,
-      17: 320, 18: 360
+      17: 320, 18: 360,
+      19: 110, 20: 320, 21: 160
     };
   } else if (name === SHEET_NAMES.RESEARCH_REVIEW) {
     widths = {
       1: 260, 2: 160, 3: 160, 4: 280, 5: 240,
       6: 90, 7: 220, 8: 280, 9: 420, 10: 320,
       11: 80, 12: 160
+    };
+  } else if (name === SHEET_NAMES.CONTENT_UPDATES) {
+    widths = {
+      1: 110, 2: 220, 3: 240, 4: 120, 5: 360
+    };
+  } else if (name === SHEET_NAMES.DEVELOPMENT_TASKS) {
+    widths = {
+      1: 280, 2: 160, 3: 260, 4: 160, 5: 160, 6: 240,
+      7: 120, 8: 360, 9: 70, 10: 90, 11: 160, 12: 280
     };
   }
 
@@ -147,9 +157,15 @@ function applyNumberFormats_(sheet, name) {
   } else if (name === SHEET_NAMES.RESEARCH_JOBS) {
     sheet.getRange('B:B').setNumberFormat('yyyy-mm-dd hh:mm:ss');
     sheet.getRange('O:O').setNumberFormat('yyyy-mm-dd hh:mm:ss');
+    sheet.getRange('U:U').setNumberFormat('yyyy-mm-dd hh:mm:ss');
   } else if (name === SHEET_NAMES.RESEARCH_REVIEW) {
     sheet.getRange('K:K').setNumberFormat('0.00');
     sheet.getRange('L:L').setNumberFormat('yyyy-mm-dd hh:mm:ss');
+  } else if (name === SHEET_NAMES.CONTENT_UPDATES) {
+    sheet.getRange('A:A').setNumberFormat('yyyy-mm-dd');
+  } else if (name === SHEET_NAMES.DEVELOPMENT_TASKS) {
+    sheet.getRange('B:B').setNumberFormat('yyyy-mm-dd hh:mm:ss');
+    sheet.getRange('K:K').setNumberFormat('yyyy-mm-dd hh:mm:ss');
   }
 }
 
@@ -198,7 +214,9 @@ function setupSheets() {
         SHEET_NAMES.TODAY_ACTIONS,
         SHEET_NAMES.OPPORTUNITIES,
         SHEET_NAMES.RESEARCH_JOBS,
-        SHEET_NAMES.RESEARCH_REVIEW
+        SHEET_NAMES.RESEARCH_REVIEW,
+        SHEET_NAMES.DEVELOPMENT_TASKS,
+        SHEET_NAMES.CONTENT_UPDATES
       ])
   );
 
@@ -215,10 +233,17 @@ function setupSheets() {
   ensureSheet_(SHEET_NAMES.OPPORTUNITIES, OPPORTUNITY_HEADERS);
   ensureSheet_(SHEET_NAMES.RESEARCH_JOBS, RESEARCH_JOB_HEADERS);
   ensureSheet_(SHEET_NAMES.RESEARCH_REVIEW, RESEARCH_REVIEW_HEADERS);
+  ensureSheet_(SHEET_NAMES.DEVELOPMENT_TASKS, DEVELOPMENT_TASK_HEADERS);
+  ensureSheet_(SHEET_NAMES.CONTENT_UPDATES, CONTENT_UPDATE_HEADERS);
 
   seedSitesIfEmpty_();
   seedMissingDecisionRules_();
   applyTodayActionValidation_();
+  ensureResearchJobResultColumns_(
+    getSpreadsheet_().getSheetByName(SHEET_NAMES.RESEARCH_JOBS)
+  );
+  applyResearchReviewDecisionValidation_();
+  ensureDevelopmentTaskHeader_();
 
   writeLog_('INFO', '', 'setup 完成：工作表已就绪');
 }

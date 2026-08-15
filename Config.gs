@@ -16,7 +16,9 @@ var SHEET_NAMES = {
   TODAY_ACTIONS: '今日行动',
   OPPORTUNITIES: '内容机会',
   RESEARCH_JOBS: '研究任务',
-  RESEARCH_REVIEW: '研究审核'
+  RESEARCH_REVIEW: '研究审核',
+  DEVELOPMENT_TASKS: '开发任务',
+  CONTENT_UPDATES: '内容更新记录'
 };
 
 var SITE_HEADERS = ['站点名称', 'Property URL', 'Sitemap URL', 'Day0', 'Enabled'];
@@ -66,6 +68,14 @@ var TODAY_ACTION_EXCLUDED = {
   NO_ACTION: true,
   WAIT: true
 };
+
+/**
+ * 内容更新记录：用于 CONTENT_OPTIMIZE / Research Job 观察期冷却。
+ * 页面路径为空 = 整站更新。
+ */
+var CONTENT_UPDATE_HEADERS = [
+  '更新时间', '站点', '页面路径', '来源', '更新说明'
+];
 
 /**
  * Content Opportunity Engine M0：内容机会表头（用户可见中文）。
@@ -191,7 +201,8 @@ var RESEARCH_JOB_HEADERS = [
   '机会等级', '建议动作', 'source_query', '任务状态',
   '关联搜索词',
   '研究结果', '证据数量', '结果路径', '完成时间', '错误信息',
-  '审核摘要', '审核链接'
+  '审核摘要', '审核链接',
+  '审核决定', '审核备注', '审核时间'
 ];
 
 /**
@@ -217,14 +228,43 @@ var RESEARCH_EVIDENCE_EXCERPT_MAX = 800;
 var RESEARCH_JOB_STATUS = {
   PENDING: 'PENDING',
   REVIEW: 'REVIEW',
-  FAILED: 'FAILED'
+  WATCH: 'WATCH',
+  FAILED: 'FAILED',
+  APPROVED: 'APPROVED',
+  ARCHIVED: 'ARCHIVED'
 };
 
 var RESEARCH_JOB_STATUS_LABELS = {
   PENDING: '待处理',
   REVIEW: '待审核',
-  FAILED: '失败'
+  WATCH: '继续观察',
+  FAILED: '失败',
+  APPROVED: '已批准',
+  ARCHIVED: '已归档'
 };
+
+/**
+ * Human Review Gate：运营在「研究任务」填写的审核决定。
+ * 内部 enum 英文；Sheet 下拉与显示层中文。
+ */
+var RESEARCH_REVIEW_DECISION = {
+  APPROVE: 'APPROVE',
+  WATCH: 'WATCH',
+  NO_ACTION: 'NO_ACTION'
+};
+
+var RESEARCH_REVIEW_DECISION_LABELS = {
+  APPROVE: '批准开发',
+  WATCH: '继续观察',
+  NO_ACTION: '无需处理'
+};
+
+/** Sheet「审核决定」下拉选项（中文，顺序固定） */
+var RESEARCH_REVIEW_DECISION_OPTIONS = [
+  RESEARCH_REVIEW_DECISION_LABELS.APPROVE,
+  RESEARCH_REVIEW_DECISION_LABELS.WATCH,
+  RESEARCH_REVIEW_DECISION_LABELS.NO_ACTION
+];
 
 /** hotword-engine 回写的研究结果建议（与内容机会「建议动作」不同） */
 var RESEARCH_RESULT_RECOMMENDATIONS = {
@@ -237,6 +277,40 @@ var RESEARCH_RESULT_RECOMMENDATION_LABELS = {
   EXPAND_EXISTING: '扩充现有页面',
   NEW_CONTENT: '新内容',
   WATCH: '继续观察'
+};
+
+/**
+ * M3：已批准研究任务 → 开发任务队列。
+ * 不调用 Codex、不改网站；仅写「开发任务」Sheet。
+ */
+var DEVELOPMENT_TASK_HEADERS = [
+  '开发任务ID', '创建时间', '来源任务ID', '站点', '游戏', '页面路径',
+  '开发目标', 'Evidence链接', '优先级', '任务状态', '完成时间', '备注'
+];
+
+var DEVELOPMENT_TASK_STATUS = {
+  TODO: 'TODO',
+  DONE: 'DONE',
+  SKIPPED: 'SKIPPED'
+};
+
+var DEVELOPMENT_TASK_STATUS_LABELS = {
+  TODO: '待开发',
+  DONE: '已完成',
+  SKIPPED: '已跳过'
+};
+
+/** 开发目标显示层（短中文，非 Codex prompt） */
+var DEVELOPMENT_GOAL_LABELS = {
+  EXPAND_EXISTING: '扩充现有页面',
+  NEW_PAGE: '新建页面',
+  UPDATE_EXISTING: '更新现有页面'
+};
+
+var DEVELOPMENT_PRIORITY_LABELS = {
+  HIGH: '高',
+  MEDIUM: '中',
+  LOW: '低'
 };
 
 /** Script Properties key；值不进仓库 */
@@ -312,7 +386,8 @@ var DEFAULT_DECISION_RULES = [
   ['CONTENT_OPTIMIZE_MIN_7D_IMPRESSIONS', 30, '进入 CONTENT_OPTIMIZE 所需最近7日最少曝光'],
   ['CONTENT_OPTIMIZE_MIN_GUIDE_QUERIES', 2, '进入 CONTENT_OPTIMIZE 所需攻略型 Query 数'],
   ['CONTENT_OPTIMIZE_MIN_CLICKS', 1, '进入 CONTENT_OPTIMIZE 所需最近7日最少 Click'],
-  ['ACTION_COOLDOWN_DAYS', 3, '同站点同动作完成后多少天内不重复提醒']
+  ['ACTION_COOLDOWN_DAYS', 3, '同站点同动作完成后多少天内不重复提醒'],
+  ['CONTENT_UPDATE_COOLDOWN_DAYS', 3, '内容更新后多少天内不再建议 CONTENT_OPTIMIZE / 不重复创建 Research Job']
 ];
 
 /** V1：这些人工动作在 DONE/SKIP 后进入短冷却；强动作不冷却 */
