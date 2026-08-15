@@ -120,6 +120,10 @@ function applyColumnWidths_(sheet, name) {
       6: 110, 7: 90, 8: 90, 9: 90, 10: 100,
       11: 100, 12: 100, 13: 140, 14: 140
     };
+  } else if (name === SHEET_NAMES.OUTCOME_DELTA) {
+    widths = {
+      1: 280, 2: 140, 3: 110, 4: 160, 5: 100, 6: 110
+    };
   } else if (name === SHEET_NAMES.DEVELOPMENT_TASKS) {
     widths = {
       1: 280, 2: 160, 3: 260, 4: 160, 5: 160, 6: 240,
@@ -221,6 +225,7 @@ function getUsageGuideLines_() {
     '反馈样本：系统自动生成的分析视图，把决策 → 人工处理 → 实际内容修改 → D7/D14/D30 后续表现汇总到一行。SampleStatus 只表示当前事实阶段，不代表成功或失败。该表可重新生成，不应作为人工填写入口。',
     '规则评分卡：按 RuleVersion 汇总 Decision / 人工处理 / 内容干预 / D7·D14·D30 样本数量。只回答“积累了多少真实样本”，不评价规则成功或失败；可重新生成，不应人工填写。',
     '评价资格：判断某个 Decision 在 D7/D14/D30 是否有资格进入后续「内容干预效果评价」。ELIGIBLE 只代表已满足进入该 Horizon 评价的事实条件，不代表成功、失败、正确推荐、错误推荐，也不证明内容修改造成了因果效果。本表只覆盖 Intervention Evaluation Eligibility，不评价 SKIP 推荐质量；可重新生成，不应人工填写。',
+    '效果变化：把 Decision Baseline 7D 与真实 D7/D14/D30 Outcome 做成指标变化视图（Delta / DeltaPct / PositionImprovement）。只描述 Baseline 与后续观察窗口之间的搜索指标变化，不证明 Content Intervention 导致了这些变化；可重新生成，不应人工填写。',
     '规则配置：系统自己的判断阈值；不是 Google 官方标准，也不要当 SEO 真理',
     'GSC日数据：底层历史汇总，日常不用先看',
     'Query明细：真实 GSC Query 明细，日常不用先看',
@@ -481,6 +486,7 @@ function setupSheets() {
   ensureSheet_(SHEET_NAMES.FEEDBACK_SAMPLES, FEEDBACK_SAMPLE_HEADERS);
   ensureSheet_(SHEET_NAMES.RULE_SCORECARD, RULE_SCORECARD_HEADERS);
   ensureSheet_(SHEET_NAMES.EVALUATION_ELIGIBILITY, EVALUATION_ELIGIBILITY_HEADERS);
+  ensureSheet_(SHEET_NAMES.OUTCOME_DELTA, OUTCOME_DELTA_HEADERS);
   ensureSheet_(SHEET_NAMES.TODAY_ACTIONS, TODAY_ACTION_HEADERS);
   ensureTodayActionHeader_();
   ensureSheet_(SHEET_NAMES.OPPORTUNITIES, OPPORTUNITY_HEADERS);

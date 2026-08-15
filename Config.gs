@@ -20,6 +20,7 @@ var SHEET_NAMES = {
   FEEDBACK_SAMPLES: '反馈样本',
   RULE_SCORECARD: '规则评分卡',
   EVALUATION_ELIGIBILITY: '评价资格',
+  OUTCOME_DELTA: '效果变化',
   TODAY_ACTIONS: '今日行动',
   OPPORTUNITIES: '内容机会',
   RESEARCH_JOBS: '研究任务',
@@ -54,6 +55,7 @@ var SHEET_UI_ORDER = [
   SHEET_NAMES.FEEDBACK_SAMPLES,
   SHEET_NAMES.RULE_SCORECARD,
   SHEET_NAMES.EVALUATION_ELIGIBILITY,
+  SHEET_NAMES.OUTCOME_DELTA,
   SHEET_NAMES.RULES,
   SHEET_NAMES.DAILY,
   SHEET_NAMES.QUERIES,
@@ -316,6 +318,66 @@ var EVALUATION_EXCLUSION_REASON = {
   WAITING_HUMAN: 'WAITING_HUMAN',
   SKIPPED: 'SKIPPED',
   NO_INTERVENTION: 'NO_INTERVENTION'
+};
+
+/**
+ * 效果变化（派生分析视图，可 rebuild）。
+ * 一 DecisionID 一行；只描述 Baseline→Horizon 指标变化，不做成败评价。
+ */
+var OUTCOME_DELTA_HEADERS = [
+  'DecisionID',
+  'RuleVersion',
+  'DecisionDataDate',
+  'Site',
+  'HumanDecision',
+  'InterventionCount',
+  'BaselineImpressions',
+  'BaselineClicks',
+  'BaselineGuideQueries',
+  'BaselineBestPosition',
+  'D7Status',
+  'D7Impressions',
+  'D7ImpressionsDelta',
+  'D7ImpressionsDeltaPct',
+  'D7Clicks',
+  'D7ClicksDelta',
+  'D7ClicksDeltaPct',
+  'D7GuideQueries',
+  'D7GuideQueriesDelta',
+  'D7GuideQueriesDeltaPct',
+  'D7BestPosition',
+  'D7PositionImprovement',
+  'D14Status',
+  'D14Impressions',
+  'D14ImpressionsDelta',
+  'D14ImpressionsDeltaPct',
+  'D14Clicks',
+  'D14ClicksDelta',
+  'D14ClicksDeltaPct',
+  'D14GuideQueries',
+  'D14GuideQueriesDelta',
+  'D14GuideQueriesDeltaPct',
+  'D14BestPosition',
+  'D14PositionImprovement',
+  'D30Status',
+  'D30Impressions',
+  'D30ImpressionsDelta',
+  'D30ImpressionsDeltaPct',
+  'D30Clicks',
+  'D30ClicksDelta',
+  'D30ClicksDeltaPct',
+  'D30GuideQueries',
+  'D30GuideQueriesDelta',
+  'D30GuideQueriesDeltaPct',
+  'D30BestPosition',
+  'D30PositionImprovement',
+  'UpdatedAt'
+];
+
+/** 效果变化 Horizon 数据存在状态（不是评价资格） */
+var OUTCOME_DELTA_STATUS = {
+  OBSERVED: 'OBSERVED',
+  PENDING: 'PENDING'
 };
 
 var TODAY_ACTION_HEADERS = [
@@ -1499,6 +1561,71 @@ function getMetricGuideRows_() {
       'M3-3 Decision Baseline 7D',
       '实验中',
       '即使看到 Baseline→D7 变化，也只能描述 Decision 后样本的观察变化，不能直接声称改页造成增长。不等于 Impressions24H / Growth3D。'
+    ],
+    [
+      'ImpressionsDelta / ClicksDelta / GuideQueriesDelta',
+      '效果变化',
+      '系统计算',
+      '决策结果 Outcome − 决策历史 Baseline',
+      '绝对变化：OutcomeWindow − Baseline；PENDING Horizon 留空，不填 0',
+      '观察 Decision 后各 Horizon 相对 Baseline 的搜索量变化',
+      '否（不自动评价）',
+      '无成功/失败阈值',
+      'M3-4 Outcome Delta View',
+      '实验中',
+      '只描述变化事实，不证明 Content Intervention 造成了增长。'
+    ],
+    [
+      'ImpressionsDeltaPct / ClicksDeltaPct / GuideQueriesDeltaPct',
+      '效果变化',
+      '系统计算',
+      '(Outcome − Baseline) / Baseline',
+      '仅当 Baseline > 0 时计算；Baseline=0 时留空（不写 Infinity / 伪增长率）',
+      '观察相对变化幅度',
+      '否',
+      '无阈值',
+      'M3-4 Outcome Delta View',
+      '实验中',
+      '不是 GSC 原始字段；Baseline 与 Outcome 都为 0 时 DeltaAbs=0、DeltaPct 仍空。'
+    ],
+    [
+      'PositionImprovement',
+      '效果变化',
+      '系统计算',
+      'BaselineBestPosition − OutcomeBestPosition',
+      '正数=排名提升（数字变小）；负数=下降；任一缺失则空；不算百分比',
+      '观察平均最佳排名相对 Baseline 的改善/恶化',
+      '否',
+      '无阈值',
+      'M3-4 Outcome Delta View',
+      '实验中',
+      '不要用 Outcome−Baseline 当改善值；排名越小越好。'
+    ],
+    [
+      'D7Status / D14Status / D30Status（效果变化）',
+      '效果变化',
+      '系统计算',
+      '决策结果是否存在该 DecisionID + Horizon',
+      'OBSERVED / PENDING；不按日期推断成熟；不是评价资格',
+      '标明该 Horizon 是否已有真实 Outcome 可供比较',
+      '否',
+      '固定枚举',
+      'M3-4 Outcome Delta View',
+      '实验中',
+      '资格判断仍以「评价资格」为准；本列只表示数据是否存在。'
+    ],
+    [
+      '效果变化（Outcome Delta View）',
+      '效果变化',
+      '系统计算',
+      '决策历史 Baseline + 决策结果 D7/D14/D30',
+      '派生视图；一 DecisionID 一行；可 rebuild；无需 Intervention 也有行',
+      '回答“相对 Baseline 变了多少”，不回答“是否成功”',
+      '否',
+      '无',
+      'M3-4 Outcome Delta View',
+      '实验中',
+      '无 Intervention 的行不能进入未来 Intervention Effect Evaluation。'
     ]
   ];
 }
