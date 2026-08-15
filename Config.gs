@@ -19,6 +19,7 @@ var SHEET_NAMES = {
   DECISION_OUTCOMES: '决策结果',
   FEEDBACK_SAMPLES: '反馈样本',
   RULE_SCORECARD: '规则评分卡',
+  EVALUATION_ELIGIBILITY: '评价资格',
   TODAY_ACTIONS: '今日行动',
   OPPORTUNITIES: '内容机会',
   RESEARCH_JOBS: '研究任务',
@@ -52,6 +53,7 @@ var SHEET_UI_ORDER = [
   SHEET_NAMES.DECISION_OUTCOMES,
   SHEET_NAMES.FEEDBACK_SAMPLES,
   SHEET_NAMES.RULE_SCORECARD,
+  SHEET_NAMES.EVALUATION_ELIGIBILITY,
   SHEET_NAMES.RULES,
   SHEET_NAMES.DAILY,
   SHEET_NAMES.QUERIES,
@@ -271,6 +273,40 @@ var RULE_SCORECARD_HEADERS = [
   'LatestDecisionDataDate',
   'UpdatedAt'
 ];
+
+/**
+ * 评价资格（派生视图，可 rebuild）。
+ * 一 DecisionID 一行；只判定 Intervention Evaluation Eligibility，不做成败评价。
+ */
+var EVALUATION_ELIGIBILITY_HEADERS = [
+  'DecisionID',
+  'RuleVersion',
+  'DecisionDataDate',
+  'Site',
+  'HumanDecision',
+  'InterventionCount',
+  'D7Observed',
+  'D14Observed',
+  'D30Observed',
+  'D7Eligibility',
+  'D14Eligibility',
+  'D30Eligibility',
+  'ExclusionReason',
+  'UpdatedAt'
+];
+
+/** 事实资格状态（禁止价值判断词） */
+var EVALUATION_ELIGIBILITY = {
+  ELIGIBLE: 'ELIGIBLE',
+  PENDING: 'PENDING',
+  EXCLUDED: 'EXCLUDED'
+};
+
+var EVALUATION_EXCLUSION_REASON = {
+  WAITING_HUMAN: 'WAITING_HUMAN',
+  SKIPPED: 'SKIPPED',
+  NO_INTERVENTION: 'NO_INTERVENTION'
+};
 
 var TODAY_ACTION_HEADERS = [
   'Date', 'Priority', 'Site', 'LifecycleStage', 'RecommendedAction',
@@ -1388,6 +1424,45 @@ function getMetricGuideRows_() {
       '系统聚合',
       '实验中',
       '不是成功率。D14/D30 同理另列。'
+    ],
+    [
+      'D7Eligibility / D14Eligibility / D30Eligibility',
+      '评价资格',
+      '系统计算',
+      'HumanDecision + InterventionCount + 决策结果是否真实存在该 Horizon',
+      'ELIGIBLE / PENDING / EXCLUDED；各 Horizon 独立，只认已落盘 Outcome',
+      '筛选哪些 Decision 有资格进入后续 Intervention Outcome Evaluation',
+      '否（不自动评价效果）',
+      '无效果阈值',
+      'M3-2 Evaluation Contract',
+      '实验中',
+      'ELIGIBLE 只表示满足进入该 Horizon 评价的事实条件，不等于成功/失败/正确推荐。'
+    ],
+    [
+      'ExclusionReason',
+      '评价资格',
+      '系统计算',
+      'WAITING_HUMAN / SKIPPED / NO_INTERVENTION',
+      '仅在三 Horizon 均为 EXCLUDED 时填写；PENDING/ELIGIBLE 时留空',
+      '解释为何当前不能进入 Intervention 效果评价',
+      '否',
+      '固定枚举',
+      'M3-2 Evaluation Contract',
+      '实验中',
+      'SKIPPED ≠ False Positive；NO_INTERVENTION ≠ 推荐错误。'
+    ],
+    [
+      'Intervention Evaluation Eligibility',
+      '评价资格',
+      '系统计算',
+      '仅针对已发生 Content Intervention 的 Decision',
+      '派生视图；一 DecisionID 一行；可 rebuild',
+      '明确“谁有资格被评价”，不是“评价结果好坏”',
+      '否',
+      '无',
+      'M3-2 Evaluation Contract',
+      '实验中',
+      '本表不做 Recommendation Evaluation；SKIP 样本本轮不评价。'
     ]
   ];
 }

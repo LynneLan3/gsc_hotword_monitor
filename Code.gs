@@ -14,6 +14,7 @@ function onOpen() {
     .addItem('记录内容更新', 'recordContentInterventionMenu')
     .addItem('重建反馈样本', 'rebuildFeedbackSamples')
     .addItem('重建规则评分卡', 'rebuildRuleScorecard')
+    .addItem('重建评价资格', 'rebuildEvaluationEligibility')
     .addItem('运行内容机会引擎', 'runContentOpportunityEngine')
     .addItem('创建研究任务', 'createResearchJobs')
     .addItem('重置并创建研究任务', 'resetAndCreateResearchJobs')
