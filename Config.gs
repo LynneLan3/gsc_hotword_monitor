@@ -15,7 +15,8 @@ var SHEET_NAMES = {
   SITE_STATUS: '站点状态',
   TODAY_ACTIONS: '今日行动',
   OPPORTUNITIES: '内容机会',
-  RESEARCH_JOBS: '研究任务'
+  RESEARCH_JOBS: '研究任务',
+  RESEARCH_REVIEW: '研究审核'
 };
 
 var SITE_HEADERS = ['站点名称', 'Property URL', 'Sitemap URL', 'Day0', 'Enabled'];
@@ -189,8 +190,29 @@ var RESEARCH_JOB_HEADERS = [
   '搜索词 / topic', '页面路径',
   '机会等级', '建议动作', 'source_query', '任务状态',
   '关联搜索词',
-  '研究结果', '证据数量', '结果路径', '完成时间', '错误信息'
+  '研究结果', '证据数量', '结果路径', '完成时间', '错误信息',
+  '审核摘要', '审核链接'
 ];
+
+/**
+ * Human Gate：Research 证据明细（运营在 Sheet 内审核，无需下载 JSON）。
+ * 按 job_id 幂等替换；每条 evidence 一行。
+ */
+var RESEARCH_REVIEW_HEADERS = [
+  '任务ID', '站点', '游戏', '搜索词 / topic', '页面路径',
+  '来源', '发现主题', '玩家问题', '证据摘录', '来源链接',
+  '相关度', '研究时间'
+];
+
+/** evidence.source → Sheet「来源」显示 */
+var RESEARCH_EVIDENCE_SOURCE_LABELS = {
+  youtube: 'YouTube',
+  reddit: 'Reddit',
+  steam: 'Steam'
+};
+
+/** Sheet「证据摘录」最大字符数（含省略号） */
+var RESEARCH_EVIDENCE_EXCERPT_MAX = 800;
 
 var RESEARCH_JOB_STATUS = {
   PENDING: 'PENDING',

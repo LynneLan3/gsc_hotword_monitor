@@ -96,6 +96,9 @@ function initResearchWriteToken_() {
 
 /**
  * 按 job_id 回写研究任务结果。不存在则 error，不新增行。
+ * REVIEW + evidence：幂等写入「研究审核」，并回写审核摘要 / 审核链接。
+ * 旧 payload（无 evidence / review_summary）：仍更新状态与结果字段，不删已有审核证据。
+ * FAILED：不写 Evidence 行。
  * @param {Object} body
  * @return {Object}
  */
@@ -134,6 +137,10 @@ function writeResearchJobResult_(body) {
   var evidenceCount = '';
   var resultPath = '';
   var errorMsg = '';
+  var reviewSummary = '';
+  var reviewLink = '';
+  var wroteEvidence = false;
+  var evidenceRowsWritten = 0;
 
   if (statusEnum === RESEARCH_JOB_STATUS.FAILED) {
     errorMsg = String((body && body.error) || '').trim();
@@ -150,6 +157,25 @@ function writeResearchJobResult_(body) {
       if (isNaN(evidenceCount)) return { ok: false, error: 'invalid_evidence_count' };
     }
     resultPath = String((body && body.result_path) || '').trim();
+    if (body && body.review_summary != null) {
+      reviewSummary = String(body.review_summary || '').trim();
+    }
+
+    if (body && Object.prototype.toString.call(body.evidence) === '[object Array]') {
+      var jobRow = sheet.getRange(found.sheetRow, 1, 1, lastCol).getValues()[0];
+      var reviewResult = writeResearchReviewEvidence_(ss, {
+        jobId: jobId,
+        site: String(cell_(jobRow, col, '站点') || '').trim(),
+        game: String(cell_(jobRow, col, '游戏') || cell_(jobRow, col, '站点') || '').trim(),
+        topic: String(cell_(jobRow, col, '搜索词 / topic') || '').trim(),
+        pagePath: String(cell_(jobRow, col, '页面路径') || '').trim(),
+        evidence: body.evidence,
+        researchedAt: completedAt
+      });
+      wroteEvidence = true;
+      evidenceRowsWritten = reviewResult.rows;
+      reviewLink = reviewResult.link || '';
+    }
   }
 
   setCellIf_(sheet, found.sheetRow, col, '任务状态', statusLabel);
@@ -158,6 +184,14 @@ function writeResearchJobResult_(body) {
   setCellIf_(sheet, found.sheetRow, col, '结果路径', resultPath);
   setCellIf_(sheet, found.sheetRow, col, '完成时间', completedAt);
   setCellIf_(sheet, found.sheetRow, col, '错误信息', errorMsg);
+  if (statusEnum === RESEARCH_JOB_STATUS.REVIEW) {
+    if (body && body.review_summary != null) {
+      setCellIf_(sheet, found.sheetRow, col, '审核摘要', reviewSummary);
+    }
+    if (wroteEvidence) {
+      setCellIf_(sheet, found.sheetRow, col, '审核链接', reviewLink);
+    }
+  }
   SpreadsheetApp.flush();
 
   return {
@@ -167,6 +201,9 @@ function writeResearchJobResult_(body) {
     recommendation: recEnum || null,
     evidence_count: evidenceCount === '' ? null : evidenceCount,
     result_path: resultPath || null,
+    review_summary: reviewSummary || null,
+    evidence_rows: wroteEvidence ? evidenceRowsWritten : null,
+    review_link: wroteEvidence ? reviewLink || null : null,
     completed_at: toIso8601_(completedAt),
     display: {
       任务状态: statusLabel,
@@ -174,9 +211,155 @@ function writeResearchJobResult_(body) {
       证据数量: evidenceCount === '' ? '' : evidenceCount,
       结果路径: resultPath,
       完成时间: toIso8601_(completedAt),
-      错误信息: errorMsg
+      错误信息: errorMsg,
+      审核摘要: reviewSummary,
+      审核链接: reviewLink
     }
   };
+}
+
+/**
+ * 幂等写入「研究审核」：先删同 job_id 旧行，再追加本批 evidence。
+ * @param {Spreadsheet} ss
+ * @param {Object} opts
+ * @return {{rows:number, link:string, startRow:number, endRow:number}}
+ */
+function writeResearchReviewEvidence_(ss, opts) {
+  var reviewSheet = ensureResearchReviewSheet_();
+  ensureResearchReviewHeader_(reviewSheet);
+  SpreadsheetApp.flush();
+
+  var lastCol = Math.max(reviewSheet.getLastColumn(), RESEARCH_REVIEW_HEADERS.length);
+  var header = reviewSheet.getRange(1, 1, 1, lastCol).getValues()[0];
+  var col = headerIndexMap_(header);
+  if (col['任务ID'] === undefined) {
+    throw new Error('研究审核缺少列: 任务ID');
+  }
+
+  deleteResearchReviewRowsForJob_(reviewSheet, col, opts.jobId);
+
+  var rows = [];
+  var list = opts.evidence || [];
+  for (var i = 0; i < list.length; i++) {
+    var item = list[i] || {};
+    var relevance = '';
+    if (item.relevance != null && item.relevance !== '') {
+      var relNum = Number(item.relevance);
+      relevance = isNaN(relNum) ? String(item.relevance) : relNum;
+    }
+    rows.push([
+      opts.jobId,
+      opts.site || '',
+      opts.game || '',
+      opts.topic || '',
+      opts.pagePath || '',
+      formatResearchEvidenceSource_(item.source),
+      String(item.discovered_topic || '').trim(),
+      String(item.player_question || '').trim(),
+      truncateResearchEvidenceExcerpt_(item.evidence),
+      String(item.url || '').trim(),
+      relevance,
+      opts.researchedAt || new Date()
+    ]);
+  }
+
+  if (!rows.length) {
+    return { rows: 0, link: '', startRow: 0, endRow: 0 };
+  }
+
+  var startRow = reviewSheet.getLastRow() + 1;
+  if (startRow < 2) startRow = 2;
+  reviewSheet
+    .getRange(startRow, 1, rows.length, RESEARCH_REVIEW_HEADERS.length)
+    .setValues(rows);
+  var endRow = startRow + rows.length - 1;
+  var link = buildResearchReviewLink_(ss, reviewSheet, startRow, endRow);
+  return { rows: rows.length, link: link, startRow: startRow, endRow: endRow };
+}
+
+/** 自底向上删除同 job_id 行，避免行号错位。 */
+function deleteResearchReviewRowsForJob_(sheet, col, jobId) {
+  if (!sheet || sheet.getLastRow() < 2) return;
+  var idCol = col['任务ID'];
+  if (idCol === undefined) return;
+  var n = sheet.getLastRow() - 1;
+  var values = sheet.getRange(2, idCol + 1, n, 1).getValues();
+  for (var i = values.length - 1; i >= 0; i--) {
+    if (String(values[i][0] || '').trim() === jobId) {
+      sheet.deleteRow(i + 2);
+    }
+  }
+}
+
+function formatResearchEvidenceSource_(source) {
+  var raw = String(source || '').trim();
+  if (!raw) return '';
+  var key = raw.toLowerCase();
+  if (RESEARCH_EVIDENCE_SOURCE_LABELS[key]) {
+    return RESEARCH_EVIDENCE_SOURCE_LABELS[key];
+  }
+  return raw;
+}
+
+function truncateResearchEvidenceExcerpt_(text) {
+  var s = String(text == null ? '' : text).trim();
+  var max = RESEARCH_EVIDENCE_EXCERPT_MAX || 800;
+  if (s.length <= max) return s;
+  if (max <= 1) return '…';
+  return s.substring(0, max - 1) + '…';
+}
+
+/**
+ * Spreadsheet URL + gid + A1 range → 运营可点的内部审核链接。
+ */
+function buildResearchReviewLink_(ss, reviewSheet, startRow, endRow) {
+  if (!ss || !reviewSheet || !startRow || !endRow || endRow < startRow) return '';
+  var base = String(ss.getUrl() || '').replace(/#.*$/, '');
+  if (!base) return '';
+  var colCount = RESEARCH_REVIEW_HEADERS.length;
+  var rangeA1 =
+    'A' + startRow + ':' + columnIndexToLetter_(colCount) + endRow;
+  return base + '#gid=' + reviewSheet.getSheetId() + '&range=' + rangeA1;
+}
+
+function columnIndexToLetter_(colIndex) {
+  var n = Number(colIndex) || 0;
+  if (n < 1) return 'A';
+  var s = '';
+  while (n > 0) {
+    var rem = (n - 1) % 26;
+    s = String.fromCharCode(65 + rem) + s;
+    n = Math.floor((n - 1) / 26);
+  }
+  return s;
+}
+
+function ensureResearchReviewSheet_() {
+  return ensureSheet_(SHEET_NAMES.RESEARCH_REVIEW, RESEARCH_REVIEW_HEADERS);
+}
+
+/** 已存在的「研究审核」仅补齐缺失表头列。 */
+function ensureResearchReviewHeader_(sheet) {
+  if (!sheet) return;
+  var lastCol = Math.max(sheet.getLastColumn(), 1);
+  var header = sheet.getRange(1, 1, 1, lastCol).getValues()[0];
+  var have = {};
+  for (var i = 0; i < header.length; i++) {
+    var name = String(header[i] || '').trim();
+    if (name) have[name] = true;
+  }
+  var toAdd = [];
+  for (var n = 0; n < RESEARCH_REVIEW_HEADERS.length; n++) {
+    if (!have[RESEARCH_REVIEW_HEADERS[n]]) toAdd.push(RESEARCH_REVIEW_HEADERS[n]);
+  }
+  if (!toAdd.length) return;
+
+  var startCol = lastCol + 1;
+  if (String(header[header.length - 1] || '').trim() === '') {
+    startCol = lastCol;
+  }
+  sheet.getRange(1, startCol, 1, toAdd.length).setValues([toAdd]);
+  sheet.getRange(1, startCol, 1, toAdd.length).setFontWeight('bold');
 }
 
 function setCellIf_(sheet, sheetRow, col, name, value) {
@@ -228,7 +411,9 @@ function readResearchJobDisplay_(jobId) {
       证据数量: cell_(row, col, '证据数量'),
       结果路径: String(cell_(row, col, '结果路径') || '').trim(),
       完成时间: completedAt,
-      错误信息: String(cell_(row, col, '错误信息') || '').trim()
+      错误信息: String(cell_(row, col, '错误信息') || '').trim(),
+      审核摘要: String(cell_(row, col, '审核摘要') || '').trim(),
+      审核链接: String(cell_(row, col, '审核链接') || '').trim()
     }
   };
 }
@@ -456,6 +641,7 @@ function ensureResearchJobSheets_() {
   if (oppSheet) ensureOpportunityResearchColumns_(oppSheet);
   ensureSheet_(SHEET_NAMES.RESEARCH_JOBS, RESEARCH_JOB_HEADERS);
   ensureResearchJobHeader_();
+  ensureResearchReviewSheet_();
 }
 
 function ensureResearchJobHeader_() {
@@ -844,6 +1030,8 @@ function researchJobSheetRow_(job, site, createdAt) {
     '',
     '',
     '',
+    '',
+    '',
     ''
   ];
 }
@@ -1001,6 +1189,8 @@ function debugResearchJobsSelfCheck() {
   assert(sheetRow[10] === job.related_queries, '关联搜索词 column');
   assert(sheetRow.length === RESEARCH_JOB_HEADERS.length, 'sheet row matches headers');
   assert(sheetRow[11] === '', '研究结果 empty on create');
+  assert(sheetRow[16] === '', '审核摘要 empty on create');
+  assert(sheetRow[17] === '', '审核链接 empty on create');
   assert(
     opportunityLabel_(RESEARCH_JOB_STATUS_LABELS, 'REVIEW') === '待审核',
     'REVIEW → 待审核'
@@ -1009,6 +1199,30 @@ function debugResearchJobsSelfCheck() {
     opportunityLabel_(RESEARCH_RESULT_RECOMMENDATION_LABELS, 'EXPAND_EXISTING') ===
       '扩充现有页面',
     'EXPAND_EXISTING → 扩充现有页面'
+  );
+  assert(formatResearchEvidenceSource_('steam') === 'Steam', 'steam → Steam');
+  assert(formatResearchEvidenceSource_('YouTube') === 'YouTube', 'YouTube label');
+  assert(formatResearchEvidenceSource_('reddit') === 'Reddit', 'reddit → Reddit');
+  assert(
+    truncateResearchEvidenceExcerpt_('abc') === 'abc',
+    'short evidence unchanged'
+  );
+  assert(
+    truncateResearchEvidenceExcerpt_(new Array(900 + 1).join('x')).length ===
+      RESEARCH_EVIDENCE_EXCERPT_MAX,
+    'long evidence truncated to max'
+  );
+  assert(
+    RESEARCH_REVIEW_HEADERS.length === 12 &&
+      RESEARCH_REVIEW_HEADERS[0] === '任务ID' &&
+      RESEARCH_REVIEW_HEADERS[8] === '证据摘录',
+    '研究审核 headers'
+  );
+  assert(columnIndexToLetter_(12) === 'L', 'col 12 → L');
+  assert(
+    RESEARCH_JOB_HEADERS.indexOf('审核摘要') >= 0 &&
+      RESEARCH_JOB_HEADERS.indexOf('审核链接') >= 0,
+    '研究任务 has review columns'
   );
 
   var apiJob = researchJobRowToApi_(sheetRow, headerIndexMap_(RESEARCH_JOB_HEADERS));
