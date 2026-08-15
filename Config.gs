@@ -164,7 +164,17 @@ var DECISION_HISTORY_HEADERS = [
   'Reason',
   'HumanDecision',
   'HumanNote',
-  'RecordedAt'
+  'RecordedAt',
+  // M3-3：与 Outcome 同口径的决策前 7D Baseline（追加在末尾，不移动既有列）
+  'BaselineStartDate',
+  'BaselineEndDate',
+  'BaselineImpressions',
+  'BaselineClicks',
+  'BaselineQueryCount',
+  'BaselineGuideQueryCount',
+  'BaselineTop50QueryCount',
+  'BaselineTop20QueryCount',
+  'BaselineBestPosition'
 ];
 
 /**
@@ -1463,6 +1473,32 @@ function getMetricGuideRows_() {
       'M3-2 Evaluation Contract',
       '实验中',
       '本表不做 Recommendation Evaluation；SKIP 样本本轮不评价。'
+    ],
+    [
+      'BaselineStartDate / BaselineEndDate',
+      '决策历史',
+      '系统计算',
+      'DecisionDataDate−6 … DecisionDataDate（含）',
+      '与 Outcome 7d 窗口同一 helper：computeOutcomeWindow_(DecisionDataDate)',
+      '冻结 Decision 前 7 天搜索表现基线的日期范围，供未来与 D7/D14/D30 比较',
+      '否（不参与打分/调规则）',
+      '无效果阈值',
+      'M3-3 Decision Baseline 7D',
+      '实验中',
+      '不是 intervention 前一刻基线；也不是 SEO 行业 benchmark。写入后冻结，不因 rebuild 覆盖。'
+    ],
+    [
+      'BaselineImpressions / BaselineClicks / BaselineQuery*',
+      '决策历史',
+      '系统计算',
+      'GSC日数据 + Query明细；复用 computeOutcomeWindowMetrics_',
+      '与决策结果 ImpressionsWindow / ClicksWindow / QueryCount / GuideQueryCount / Top50 / Top20 / BestPosition 同口径',
+      '建立 Baseline7D → D7 → D14 → D30 可比较的事实基线',
+      '否',
+      '无 Delta / 无 SUCCESS 阈值',
+      'M3-3 Decision Baseline 7D',
+      '实验中',
+      '即使看到 Baseline→D7 变化，也只能描述 Decision 后样本的观察变化，不能直接声称改页造成增长。不等于 Impressions24H / Growth3D。'
     ]
   ];
 }

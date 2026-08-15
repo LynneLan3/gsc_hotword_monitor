@@ -245,6 +245,50 @@ function computeOutcomeWindowMetrics_(opts) {
 }
 
 /**
+ * M3-3：Decision Baseline 7D。
+ * 窗口 = DecisionDataDate−6 … DecisionDataDate，与 Outcome 共用同一统计 helper。
+ * 不请求 GSC；不写 Outcome；不计算 Delta。
+ */
+function buildDecisionBaseline7D_(opts) {
+  opts = opts || {};
+  var end = normalizeKeyDate_(opts.decisionDataDate);
+  var empty = {
+    start: '',
+    end: '',
+    impressions: 0,
+    clicks: 0,
+    queryCount: 0,
+    guideQueryCount: 0,
+    top50QueryCount: 0,
+    top20QueryCount: 0,
+    bestPosition: ''
+  };
+  if (!end) return empty;
+
+  var win = computeOutcomeWindow_(end);
+  var metrics = computeOutcomeWindowMetrics_({
+    dailyRows: opts.dailyRows || [],
+    queryRows: opts.queryRows || [],
+    site: opts.site || { name: opts.siteName || '' },
+    targetDate: end,
+    urlIndexRows: opts.urlIndexRows || [],
+    siteName: opts.siteName || (opts.site && opts.site.name) || ''
+  });
+
+  return {
+    start: win.start,
+    end: win.end,
+    impressions: metrics.impressionsWindow,
+    clicks: metrics.clicksWindow,
+    queryCount: metrics.queryCount,
+    guideQueryCount: metrics.guideQueryCount,
+    top50QueryCount: metrics.top50QueryCount,
+    top20QueryCount: metrics.top20QueryCount,
+    bestPosition: metrics.bestPosition
+  };
+}
+
+/**
  * Query 窗口统计；复用 Guide Intent 词表，另算 BestPosition。
  */
 function computeOutcomeQueryStats_(queryRows, startDate, endDate, site) {

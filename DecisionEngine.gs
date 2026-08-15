@@ -102,6 +102,13 @@ function runDecisionEngine() {
         note: '',
         decisionId: decisionId
       });
+      var baseline = buildDecisionBaseline7D_({
+        decisionDataDate: metrics.decisionDataDate,
+        dailyRows: dailyBySite[site.name] || [],
+        queryRows: queryBySite[site.name] || [],
+        site: site,
+        siteName: site.name
+      });
       historyRows.push(
         buildDecisionHistoryRow_(
           runDate,
@@ -112,7 +119,8 @@ function runDecisionEngine() {
           reason,
           DECISION_RULE_VERSION,
           nowRecordedAt_(),
-          decisionId
+          decisionId,
+          baseline
         )
       );
     }
@@ -138,7 +146,23 @@ function ensureDecisionSheets_() {
   ensureSheet_(SHEET_NAMES.CONTENT_UPDATES, CONTENT_UPDATE_HEADERS);
   ensureContentUpdateHeader_();
   ensureSheet_(SHEET_NAMES.DECISION_HISTORY, DECISION_HISTORY_HEADERS);
+  ensureDecisionHistoryHeader_();
   applyTodayActionValidation_();
+}
+
+/** 已有「决策历史」时补齐 Baseline 等表头，不碰已有 Snapshot 数据行。 */
+function ensureDecisionHistoryHeader_() {
+  var sheet = getSpreadsheet_().getSheetByName(SHEET_NAMES.DECISION_HISTORY);
+  if (!sheet) return;
+  var lastCol = Math.max(sheet.getLastColumn(), DECISION_HISTORY_HEADERS.length);
+  var header = sheet.getRange(1, 1, 1, lastCol).getValues()[0];
+  var actual = [];
+  for (var i = 0; i < DECISION_HISTORY_HEADERS.length; i++) {
+    actual.push(String(header[i] || '').trim());
+  }
+  if (actual.join('|') === DECISION_HISTORY_HEADERS.join('|')) return;
+  sheet.getRange(1, 1, 1, DECISION_HISTORY_HEADERS.length).setValues([DECISION_HISTORY_HEADERS]);
+  sheet.getRange(1, 1, 1, DECISION_HISTORY_HEADERS.length).setFontWeight('bold');
 }
 
 /** 已有「今日行动」时补齐 DecisionID 表头，不碰旧行业务值。 */
@@ -835,6 +859,7 @@ function nowRecordedAt_() {
 
 /**
  * 用与当前 Recommendation 同一份 metrics / scores / decision / reason 冻结 Snapshot。
+ * Baseline 与 Outcome 同口径，写入后冻结；重跑同 DecisionID 不覆盖。
  * @return {Array}
  */
 function buildDecisionHistoryRow_(
@@ -846,12 +871,14 @@ function buildDecisionHistoryRow_(
   reason,
   ruleVersion,
   recordedAt,
-  decisionId
+  decisionId,
+  baseline
 ) {
   ruleVersion = ruleVersion || DECISION_RULE_VERSION;
   var action = decision && decision.action ? decision.action : '';
   var id = String(decisionId || '').trim();
   if (!id) id = buildDecisionId_(runDate, siteName, action, ruleVersion);
+  baseline = baseline || {};
   return [
     id,
     runDate,
@@ -891,7 +918,26 @@ function buildDecisionHistoryRow_(
     reason,
     '',
     '',
-    recordedAt || ''
+    recordedAt || '',
+    String(baseline.start || ''),
+    String(baseline.end || ''),
+    baseline.impressions === undefined || baseline.impressions === null ? 0 : baseline.impressions,
+    baseline.clicks === undefined || baseline.clicks === null ? 0 : baseline.clicks,
+    baseline.queryCount === undefined || baseline.queryCount === null ? 0 : baseline.queryCount,
+    baseline.guideQueryCount === undefined || baseline.guideQueryCount === null
+      ? 0
+      : baseline.guideQueryCount,
+    baseline.top50QueryCount === undefined || baseline.top50QueryCount === null
+      ? 0
+      : baseline.top50QueryCount,
+    baseline.top20QueryCount === undefined || baseline.top20QueryCount === null
+      ? 0
+      : baseline.top20QueryCount,
+    baseline.bestPosition === '' ||
+    baseline.bestPosition === null ||
+    baseline.bestPosition === undefined
+      ? ''
+      : baseline.bestPosition
   ];
 }
 
@@ -937,6 +983,7 @@ function loadDecisionHistoryIdSet_() {
 function appendDecisionHistoryRows_(candidateRows) {
   if (!candidateRows || !candidateRows.length) return 0;
   ensureSheet_(SHEET_NAMES.DECISION_HISTORY, DECISION_HISTORY_HEADERS);
+  ensureDecisionHistoryHeader_();
   var existing = loadDecisionHistoryIdSet_();
   var toAppend = selectDecisionHistoryAppends_(existing, candidateRows);
   if (!toAppend.length) return 0;

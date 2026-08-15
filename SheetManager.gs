@@ -216,7 +216,7 @@ function getUsageGuideLines_() {
     '研究任务：需要外部 Research 的任务队列',
     '研究审核：Human Gate，人工核对证据后再决定是否批准开发/继续观察/无需处理',
     '站点状态：解释 Decision Engine 为什么给出当前判断（分数、阶段、理由）',
-    '决策历史：保存系统当时的规则版本、输入指标和推荐动作，用于后续回测；日常无需查看',
+    '决策历史：保存系统当时的规则版本、输入指标和推荐动作，用于后续回测；并冻结与 Outcome 同口径的决策前 7 天 Baseline（DecisionDataDate−6…DecisionDataDate）。Baseline 不是 intervention 前一刻表现，也不是成功/失败判定；日常无需查看',
     '决策结果：在 Decision 后的 D7 / D14 / D30，用已有 GSC 历史记录后续搜索表现，用于以后回测规则；表示“推荐机会后来的表现”，不等于证明某次人工修改造成了增长；日常无需查看',
     '反馈样本：系统自动生成的分析视图，把决策 → 人工处理 → 实际内容修改 → D7/D14/D30 后续表现汇总到一行。SampleStatus 只表示当前事实阶段，不代表成功或失败。该表可重新生成，不应作为人工填写入口。',
     '规则评分卡：按 RuleVersion 汇总 Decision / 人工处理 / 内容干预 / D7·D14·D30 样本数量。只回答“积累了多少真实样本”，不评价规则成功或失败；可重新生成，不应人工填写。',
@@ -476,6 +476,7 @@ function setupSheets() {
   ensureSheet_(SHEET_NAMES.RULES, RULE_HEADERS);
   ensureSheet_(SHEET_NAMES.SITE_STATUS, SITE_STATUS_HEADERS);
   ensureSheet_(SHEET_NAMES.DECISION_HISTORY, DECISION_HISTORY_HEADERS);
+  ensureDecisionHistoryHeader_();
   ensureSheet_(SHEET_NAMES.DECISION_OUTCOMES, DECISION_OUTCOME_HEADERS);
   ensureSheet_(SHEET_NAMES.FEEDBACK_SAMPLES, FEEDBACK_SAMPLE_HEADERS);
   ensureSheet_(SHEET_NAMES.RULE_SCORECARD, RULE_SCORECARD_HEADERS);
