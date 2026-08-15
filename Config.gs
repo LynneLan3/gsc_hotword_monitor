@@ -21,6 +21,7 @@ var SHEET_NAMES = {
   RULE_SCORECARD: '规则评分卡',
   EVALUATION_ELIGIBILITY: '评价资格',
   OUTCOME_DELTA: '效果变化',
+  EFFECT_EVALUATION: '效果评价',
   TODAY_ACTIONS: '今日行动',
   OPPORTUNITIES: '内容机会',
   RESEARCH_JOBS: '研究任务',
@@ -56,6 +57,7 @@ var SHEET_UI_ORDER = [
   SHEET_NAMES.RULE_SCORECARD,
   SHEET_NAMES.EVALUATION_ELIGIBILITY,
   SHEET_NAMES.OUTCOME_DELTA,
+  SHEET_NAMES.EFFECT_EVALUATION,
   SHEET_NAMES.RULES,
   SHEET_NAMES.DAILY,
   SHEET_NAMES.QUERIES,
@@ -378,6 +380,33 @@ var OUTCOME_DELTA_HEADERS = [
 var OUTCOME_DELTA_STATUS = {
   OBSERVED: 'OBSERVED',
   PENDING: 'PENDING'
+};
+
+/**
+ * 效果评价（派生 cohort / readiness 视图，可 rebuild）。
+ * 只定义是否可进入 Intervention Effect Evaluation 及当前 Horizon；不做成败评价。
+ */
+var EFFECT_EVALUATION_HEADERS = [
+  'DecisionID',
+  'RuleVersion',
+  'DecisionDataDate',
+  'Site',
+  'HumanDecision',
+  'InterventionCount',
+  'EvaluationStatus',
+  'EvaluationHorizon',
+  'ComparableMetricCount',
+  'ImpressionsComparable',
+  'ClicksComparable',
+  'GuideQueriesComparable',
+  'BestPositionComparable',
+  'UpdatedAt'
+];
+
+var EFFECT_EVALUATION_STATUS = {
+  EXCLUDED: 'EXCLUDED',
+  PENDING: 'PENDING',
+  READY: 'READY'
 };
 
 var TODAY_ACTION_HEADERS = [
@@ -1626,6 +1655,45 @@ function getMetricGuideRows_() {
       'M3-4 Outcome Delta View',
       '实验中',
       '无 Intervention 的行不能进入未来 Intervention Effect Evaluation。'
+    ],
+    [
+      'EvaluationStatus',
+      '效果评价',
+      '系统计算',
+      '评价资格三 Horizon 状态',
+      'EXCLUDED / PENDING / READY；消费既有资格层，不重算 SKIP/WAITING/NO_INTERVENTION',
+      '标明 Decision 是否已进入 Intervention Effect Evaluation cohort',
+      '否（不自动评价效果）',
+      '固定枚举',
+      'M3-5 Effect Evaluation Cohort',
+      '实验中',
+      'READY ≠ SUCCESS / 有效 / 推荐正确；只代表具备进入后续效果判断的数据条件。'
+    ],
+    [
+      'EvaluationHorizon',
+      '效果评价',
+      '系统计算',
+      '评价资格中 ELIGIBLE 的最长真实 Horizon',
+      '优先级 D30 > D14 > D7；不要求连续存在；不补造缺失 Horizon',
+      '指定当前应用哪个观察窗口做后续效果判断',
+      '否',
+      '仅 D7 / D14 / D30 或空',
+      'M3-5 Effect Evaluation Cohort',
+      '实验中',
+      '是“截至当前最长可评价窗口”，不是最终效果结论。'
+    ],
+    [
+      'ComparableMetricCount / *Comparable',
+      '效果评价',
+      '系统计算',
+      '效果变化中 Baseline 与选中 Horizon Outcome 是否均为有效数值',
+      '检查 Impressions / Clicks / GuideQueries / BestPosition；Baseline=0 仍可比；不因 DeltaPct 空而判不可比',
+      '统计当前可进入后续效果分类的指标数量',
+      '否',
+      '本轮无最低可比门槛',
+      'M3-5 Effect Evaluation Cohort',
+      '实验中',
+      'READY + ComparableMetricCount=0 仍保持 READY，不擅自改成 EXCLUDED。'
     ]
   ];
 }
