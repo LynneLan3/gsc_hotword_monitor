@@ -383,8 +383,9 @@ var OUTCOME_DELTA_STATUS = {
 };
 
 /**
- * 效果评价（派生 cohort / readiness 视图，可 rebuild）。
- * 只定义是否可进入 Intervention Effect Evaluation 及当前 Horizon；不做成败评价。
+ * 效果评价（派生 cohort / readiness + Evidence Contract 视图，可 rebuild）。
+ * 只定义是否可进入 Intervention Effect Evaluation、当前 Horizon、以及证据是否足以进入后续效果方向分类；
+ * 不做成败评价，不产出 IMPROVED / SUCCESS 等效果标签。
  */
 var EFFECT_EVALUATION_HEADERS = [
   'DecisionID',
@@ -400,6 +401,8 @@ var EFFECT_EVALUATION_HEADERS = [
   'ClicksComparable',
   'GuideQueriesComparable',
   'BestPositionComparable',
+  'EvidenceStatus',
+  'EvidenceReason',
   'UpdatedAt'
 ];
 
@@ -407,6 +410,29 @@ var EFFECT_EVALUATION_STATUS = {
   EXCLUDED: 'EXCLUDED',
   PENDING: 'PENDING',
   READY: 'READY'
+};
+
+/** Evidence Contract V1：是否具备进入效果方向分类的最低证据（非效果好坏）。 */
+var EFFECT_EVIDENCE_STATUS = {
+  NOT_READY: 'NOT_READY',
+  INSUFFICIENT_EVIDENCE: 'INSUFFICIENT_EVIDENCE',
+  COMPARABLE: 'COMPARABLE'
+};
+
+var EFFECT_EVIDENCE_REASON = {
+  TOO_FEW_COMPARABLE_METRICS: 'TOO_FEW_COMPARABLE_METRICS',
+  LOW_SEARCH_VOLUME: 'LOW_SEARCH_VOLUME'
+};
+
+/**
+ * 项目 V1 实验阈值（非 Google / SEO 官方标准）。
+ * MIN_COMPARABLE_METRICS：至少 2 个可比指标。
+ * MIN_IMPRESSIONS_VOLUME / MIN_GUIDE_QUERIES_VOLUME：Search Demand 规模门槛（取 max(Baseline, Outcome)）。
+ */
+var EFFECT_EVIDENCE_V1 = {
+  MIN_COMPARABLE_METRICS: 2,
+  MIN_IMPRESSIONS_VOLUME: 10,
+  MIN_GUIDE_QUERIES_VOLUME: 3
 };
 
 var TODAY_ACTION_HEADERS = [
@@ -1690,10 +1716,36 @@ function getMetricGuideRows_() {
       '检查 Impressions / Clicks / GuideQueries / BestPosition；Baseline=0 仍可比；不因 DeltaPct 空而判不可比',
       '统计当前可进入后续效果分类的指标数量',
       '否',
-      '本轮无最低可比门槛',
+      'EvaluationStatus 本身无最低可比门槛；Evidence 另用 V1 实验阈值',
       'M3-5 Effect Evaluation Cohort',
       '实验中',
       'READY + ComparableMetricCount=0 仍保持 READY，不擅自改成 EXCLUDED。'
+    ],
+    [
+      'EvidenceStatus',
+      '效果评价',
+      '实验规则',
+      'EvaluationStatus + ComparableMetricCount + Baseline/Outcome 绝对规模（效果变化）',
+      'NOT_READY / INSUFFICIENT_EVIDENCE / COMPARABLE。项目内部“是否具备效果分类最低证据”的 V1 实验规则，不是 Google / SEO 官方标准，也不是 AI 判断或效果成功率。COMPARABLE ≠ IMPROVED / SUCCESS。',
+      '回答当前 EvaluationHorizon 的数据是否足以进入下一阶段效果方向分类',
+      '否（不自动产出效果方向标签）',
+      '项目 V1 实验阈值：ComparableMetricCount≥2；且 max(BaselineImpressions,OutcomeImpressions)≥10 或 max(BaselineGuideQueries,OutcomeGuideQueries)≥3',
+      'M3-6 Effect Evidence Contract',
+      '实验中',
+      '不依据 Delta 正负；Clicks / BestPosition 可计入可比数，但不能单独通过 Search Volume Gate。'
+    ],
+    [
+      'EvidenceReason',
+      '效果评价',
+      '实验规则',
+      'EvidenceStatus 判定的首个主要原因',
+      'TOO_FEW_COMPARABLE_METRICS / LOW_SEARCH_VOLUME；NOT_READY 与 COMPARABLE 时留空。V1 只记一个原因，不拼接。',
+      '解释为何证据不足（若不足）',
+      '否',
+      '固定枚举或空',
+      'M3-6 Effect Evidence Contract',
+      '实验中',
+      'Reason 只服务 Evidence Contract，不表示效果方向。'
     ]
   ];
 }

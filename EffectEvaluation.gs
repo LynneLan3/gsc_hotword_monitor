@@ -1,8 +1,28 @@
 /**
- * M3-5 Effect Evaluation Cohort V1
- * 派生视图：消费「评价资格」+「效果变化」，标记 Intervention Effect Evaluation cohort。
+ * M3-5 Effect Evaluation Cohort + M3-6 Effect Evidence Contract V1
+ * 派生视图：消费「评价资格」+「效果变化」，标记 Intervention Effect Evaluation cohort，
+ * 并对 READY 样本判定 Evidence 是否足以进入后续效果方向分类。
  * 不做成功/失败/效果好坏判断；不写上游；不重算 Eligibility / Delta / Baseline / Outcome。
  */
+
+/**
+ * 已有「效果评价」时补齐 Evidence 等表头，不碰上游事实表。
+ */
+function ensureEffectEvaluationHeader_() {
+  var sheet = getSpreadsheet_().getSheetByName(SHEET_NAMES.EFFECT_EVALUATION);
+  if (!sheet) return;
+  var lastCol = Math.max(sheet.getLastColumn(), EFFECT_EVALUATION_HEADERS.length);
+  var header = sheet.getRange(1, 1, 1, lastCol).getValues()[0];
+  var actual = [];
+  for (var i = 0; i < EFFECT_EVALUATION_HEADERS.length; i++) {
+    actual.push(String(header[i] || '').trim());
+  }
+  if (actual.join('|') === EFFECT_EVALUATION_HEADERS.join('|')) return;
+  sheet.getRange(1, 1, 1, EFFECT_EVALUATION_HEADERS.length).setValues([
+    EFFECT_EVALUATION_HEADERS
+  ]);
+  sheet.getRange(1, 1, 1, EFFECT_EVALUATION_HEADERS.length).setFontWeight('bold');
+}
 
 /**
  * 菜单入口：重建效果评价。
@@ -12,6 +32,7 @@ function rebuildEffectEvaluation() {
   ensureSheet_(SHEET_NAMES.EVALUATION_ELIGIBILITY, EVALUATION_ELIGIBILITY_HEADERS);
   ensureSheet_(SHEET_NAMES.OUTCOME_DELTA, OUTCOME_DELTA_HEADERS);
   ensureSheet_(SHEET_NAMES.EFFECT_EVALUATION, EFFECT_EVALUATION_HEADERS);
+  ensureEffectEvaluationHeader_();
 
   var history = loadEffectEvaluationHistoryIds_();
   var eligibility = loadEffectEvaluationEligibilityRecords_();
@@ -130,6 +151,12 @@ function buildEffectEvaluationRow_(input) {
         bestPosition: false,
         count: 0
       };
+  var evidence = classifyEffectEvidence_({
+    evaluationStatus: judged.status,
+    comparableCount: Number(comparable.count || 0),
+    delta: delta,
+    horizon: horizon
+  });
 
   return [
     String(h.decisionId || elig.decisionId || '').trim(),
@@ -149,8 +176,79 @@ function buildEffectEvaluationRow_(input) {
     !!comparable.clicks,
     !!comparable.guideQueries,
     !!comparable.bestPosition,
+    evidence.status,
+    evidence.reason,
     String(input.updatedAt || '')
   ];
+}
+
+/**
+ * Evidence Contract V1：是否足以进入效果方向分类（非效果好坏）。
+ * 优先级：NOT_READY → TOO_FEW_COMPARABLE_METRICS → LOW_SEARCH_VOLUME → COMPARABLE。
+ * 不依据 Delta 正负；Clicks / BestPosition 不单独通过 Search Volume Gate。
+ */
+function classifyEffectEvidence_(input) {
+  input = input || {};
+  var evaluationStatus = String(input.evaluationStatus || '').trim();
+  if (evaluationStatus !== EFFECT_EVALUATION_STATUS.READY) {
+    return { status: EFFECT_EVIDENCE_STATUS.NOT_READY, reason: '' };
+  }
+
+  var comparableCount = Number(input.comparableCount || 0);
+  var minComparable =
+    (typeof EFFECT_EVIDENCE_V1 !== 'undefined' &&
+      EFFECT_EVIDENCE_V1.MIN_COMPARABLE_METRICS) ||
+    2;
+  if (comparableCount < minComparable) {
+    return {
+      status: EFFECT_EVIDENCE_STATUS.INSUFFICIENT_EVIDENCE,
+      reason: EFFECT_EVIDENCE_REASON.TOO_FEW_COMPARABLE_METRICS
+    };
+  }
+
+  if (!passesEffectEvidenceSearchVolumeGate_(input.delta, input.horizon)) {
+    return {
+      status: EFFECT_EVIDENCE_STATUS.INSUFFICIENT_EVIDENCE,
+      reason: EFFECT_EVIDENCE_REASON.LOW_SEARCH_VOLUME
+    };
+  }
+
+  return { status: EFFECT_EVIDENCE_STATUS.COMPARABLE, reason: '' };
+}
+
+/**
+ * Search Demand 规模门槛：仅 Impressions / GuideQueries。
+ * max(Baseline, Outcome) 满足任一即可；Baseline=0 且 Outcome 达标可通过。
+ */
+function passesEffectEvidenceSearchVolumeGate_(delta, horizon) {
+  delta = delta || {};
+  var outcome = horizonOutcomeMetrics_(delta, horizon);
+  var minImp =
+    (typeof EFFECT_EVIDENCE_V1 !== 'undefined' &&
+      EFFECT_EVIDENCE_V1.MIN_IMPRESSIONS_VOLUME) ||
+    10;
+  var minGuide =
+    (typeof EFFECT_EVIDENCE_V1 !== 'undefined' &&
+      EFFECT_EVIDENCE_V1.MIN_GUIDE_QUERIES_VOLUME) ||
+    3;
+
+  var impressionsOk =
+    isValidNumericMetric_(delta.baselineImpressions) &&
+    isValidNumericMetric_(outcome.impressions) &&
+    Math.max(
+      Number(delta.baselineImpressions),
+      Number(outcome.impressions)
+    ) >= minImp;
+
+  var guideOk =
+    isValidNumericMetric_(delta.baselineGuideQueries) &&
+    isValidNumericMetric_(outcome.guideQueries) &&
+    Math.max(
+      Number(delta.baselineGuideQueries),
+      Number(outcome.guideQueries)
+    ) >= minGuide;
+
+  return !!(impressionsOk || guideOk);
 }
 
 /**

@@ -57,7 +57,7 @@ var rowsMatch = configSrc.match(
 );
 assert(rowsMatch, 'cannot parse getMetricGuideRows_ return array');
 var rows = eval(rowsMatch[1]);
-assert(rows.length === 63, 'metric count must stay 63, got ' + rows.length);
+assert(rows.length === 65, 'metric count must stay 65, got ' + rows.length);
 
 var ALLOWED_TYPES = {
   原始事实: true,
@@ -196,7 +196,10 @@ assert(
   /SHEET_UI_HIDDEN\s*=\s*\[\s*SHEET_NAMES\.PAGE_OPPORTUNITIES\s*\]/.test(configSrc),
   'only PAGE_OPPORTUNITIES hidden'
 );
-assert(!/SHEET_UI_HIDDEN[\s\S]*METRICS/.test(configSrc), '指标说明 must not be hidden');
+assert(
+  !/SHEET_UI_HIDDEN\s*=\s*\[[^\]]*SHEET_NAMES\.METRICS/.test(configSrc),
+  '指标说明 must not be hidden'
+);
 
 console.log(
   JSON.stringify(
