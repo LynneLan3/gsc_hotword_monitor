@@ -219,3 +219,83 @@ function cellByHeader_(row, map, headerName) {
   var v = row[idx];
   return v === null || v === undefined ? '' : v;
 }
+
+/**
+ * 将指定 Date+Site+RecommendedAction 的「今日行动」标为 DONE 并写入人工备注。
+ * 保留 DecisionID / 历史行；不删决策历史。之后仍需调用 syncHumanDecisions。
+ * @return {{found:boolean, updated:boolean, decisionId:string, status:string, note:string}}
+ */
+function markTodayActionHumanDone_(actionDate, site, recommendedAction, note) {
+  ensureSheet_(SHEET_NAMES.TODAY_ACTIONS, TODAY_ACTION_HEADERS);
+  ensureTodayActionHeader_();
+  var sheet = getSpreadsheet_().getSheetByName(SHEET_NAMES.TODAY_ACTIONS);
+  if (!sheet || sheet.getLastRow() < 2) {
+    return {
+      found: false,
+      updated: false,
+      decisionId: '',
+      status: '',
+      note: ''
+    };
+  }
+  var lastCol = Math.max(sheet.getLastColumn(), TODAY_ACTION_HEADERS.length);
+  var headers = sheet.getRange(1, 1, 1, lastCol).getValues()[0];
+  var map = headerIndexMap_(headers);
+  var dateCol = map.Date;
+  var siteCol = map.Site;
+  var actionCol = map.RecommendedAction;
+  var statusCol = map.Status;
+  var noteCol = map['人工备注'];
+  var idCol = map.DecisionID;
+  if (
+    dateCol === undefined ||
+    siteCol === undefined ||
+    actionCol === undefined ||
+    statusCol === undefined
+  ) {
+    throw new Error('今日行动缺少必要列');
+  }
+
+  var values = sheet.getRange(2, 1, sheet.getLastRow() - 1, lastCol).getValues();
+  var targetDate = normalizeKeyDate_(actionDate);
+  var targetSite = String(site || '').trim();
+  var targetAction = String(recommendedAction || '').trim();
+  var updated = false;
+  var found = false;
+  var decisionId = '';
+  var status = '';
+  var noteOut = '';
+
+  for (var i = 0; i < values.length; i++) {
+    var row = values[i];
+    if (normalizeKeyDate_(row[dateCol]) !== targetDate) continue;
+    if (String(row[siteCol] || '').trim() !== targetSite) continue;
+    if (String(row[actionCol] || '').trim() !== targetAction) continue;
+    found = true;
+    decisionId = idCol === undefined ? '' : String(row[idCol] || '').trim();
+    var sheetRow = i + 2;
+    var nextStatus = 'DONE';
+    var nextNote = note === null || note === undefined ? '' : String(note);
+    var curStatus = String(row[statusCol] || '').trim().toUpperCase();
+    var curNote = noteCol === undefined ? '' : String(row[noteCol] || '');
+    if (curStatus !== nextStatus) {
+      sheet.getRange(sheetRow, statusCol + 1).setValue(nextStatus);
+      updated = true;
+    }
+    if (noteCol !== undefined && curNote !== nextNote) {
+      sheet.getRange(sheetRow, noteCol + 1).setValue(nextNote);
+      updated = true;
+    }
+    status = nextStatus;
+    noteOut = nextNote;
+    break;
+  }
+
+  return {
+    found: found,
+    updated: updated,
+    decisionId: decisionId,
+    status: status,
+    note: noteOut
+  };
+}

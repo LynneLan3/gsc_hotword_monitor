@@ -192,6 +192,124 @@ var auCooldown = findActionCooldown_(
 assert(!!auCooldown, 'Approximately Up DONE cooldown 兼容');
 assert(auCooldown.untilDate === '2026-08-17', 'Approximately Up suppressed until 2026-08-17');
 
+// Page-specific MS2 beta-progress-carry-over intervention (2026-08-15)
+var ms2PageRows = [
+  [
+    '2026-08-15',
+    'Mortal Shell II',
+    '/mortal-shell-ii/beta-progress-carry-over/',
+    'ms2-beta-progress-carry-over-20260814',
+    'beta carry-over / reset / Flayed Harbinger reward / Marrow Keep Prologue skip',
+    'CONTENT_OPTIMIZE',
+    ''
+  ]
+];
+var ms2TargetCd = findContentUpdateCooldownFromRows_(
+  ms2PageRows,
+  'Mortal Shell II',
+  '/mortal-shell-ii/beta-progress-carry-over/',
+  '2026-08-16',
+  rules
+);
+assert(!!ms2TargetCd, 'MS2 target page 2026-08-16 应处于内容更新冷却');
+assert(ms2TargetCd.untilDate === '2026-08-18', 'MS2 page cooldown until 2026-08-18');
+assert(
+  !findContentUpdateCooldownFromRows_(
+    ms2PageRows,
+    'Mortal Shell II',
+    '/mortal-shell-ii/beta/',
+    '2026-08-16',
+    rules
+  ),
+  '不得误伤 Mortal Shell II 其它页面'
+);
+assert(
+  !findContentUpdateCooldownFromRows_(
+    ms2PageRows,
+    'Approximately Up',
+    '',
+    '2026-08-16',
+    rules
+  ),
+  '不得误伤 Approximately Up'
+);
+assert(
+  !findContentUpdateCooldownFromRows_(
+    ms2PageRows,
+    'Leafy Corner',
+    '',
+    '2026-08-16',
+    rules
+  ),
+  '不得误伤 Leafy Corner'
+);
+// Decision Engine 站点级查询 pagePath=''：页面级记录不匹配（现有 contract）
+assert(
+  !findContentUpdateCooldownFromRows_(
+    ms2PageRows,
+    'Mortal Shell II',
+    '',
+    '2026-08-16',
+    rules
+  ),
+  '页面级记录不触发站点级 Decision content-cooldown 查询'
+);
+assert(
+  !findContentUpdateCooldownFromRows_(
+    ms2PageRows,
+    'Mortal Shell II',
+    '/mortal-shell-ii/beta-progress-carry-over/',
+    '2026-08-18',
+    rules
+  ),
+  '满 3 天后页面 cooldown 解除，重新允许机会'
+);
+
+// 8/16 CONTENT_OPTIMIZE 人工 DONE → action cooldown（不改 Decision 历史事实）
+var ms2ActionCd = findActionCooldown_(
+  [
+    [
+      '2026-08-16',
+      'P2',
+      'Mortal Shell II',
+      'TRACTION',
+      'CONTENT_OPTIMIZE',
+      30,
+      'old',
+      'DONE',
+      '2026-08-15 已完成 beta progress carry-over 页面更新，进入 cooldown，等待新 GSC 数据。'
+    ]
+  ],
+  'Mortal Shell II',
+  'CONTENT_OPTIMIZE',
+  '2026-08-16',
+  rules
+);
+assert(!!ms2ActionCd, 'MS2 8/16 DONE 应进入 action cooldown');
+assert(ms2ActionCd.untilDate === '2026-08-19', 'MS2 action cooldown until 2026-08-19');
+assert(
+  !findActionCooldown_(
+    [
+      [
+        '2026-08-16',
+        'P2',
+        'Mortal Shell II',
+        'TRACTION',
+        'CONTENT_OPTIMIZE',
+        30,
+        'old',
+        'DONE',
+        'note'
+      ]
+    ],
+    'Leafy Corner',
+    'CONTENT_OPTIMIZE',
+    '2026-08-16',
+    rules
+  ),
+  'MS2 DONE 不得误伤 Leafy Corner action cooldown'
+);
+
 if (fails.length) {
   console.error('FAIL:\n- ' + fails.join('\n- '));
   process.exit(1);
@@ -201,3 +319,5 @@ console.log('- Agefield: CONTENT_OPTIMIZE → WAIT(P3) while in content-update o
 console.log('- Mortal Shell II: site-wide update blocks Research Job for any page');
 console.log('- Approximately Up: DONE action cooldown still active until 2026-08-17');
 console.log('- After 3 days: content-update cooldown clears');
+console.log('- MS2 page-specific 2026-08-15: target page cools; other pages / AU / Leafy untouched');
+console.log('- MS2 8/16 DONE: action cooldown until 2026-08-19');
