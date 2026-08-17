@@ -815,7 +815,12 @@ var GUIDE_INTENT_CATEGORIES = [
   { key: 'where', terms: ['where'] },
   { key: 'best', terms: ['best'] },
   { key: 'romance', terms: ['romance'] },
-  { key: 'platform', terms: ['platform', 'console', 'ps5', 'xbox', 'switch'] }
+  { key: 'platform', terms: ['platform', 'console', 'ps5', 'xbox', 'switch'] },
+  {
+    key: 'save_progress',
+    terms: ['carry over', 'carries over', 'carryover', 'save file', 'save', 'progress']
+  },
+  { key: 'reward', terms: ['rewards', 'reward'] }
 ];
 
 /** 从站点名 / hostname 提取品牌词时忽略的短词 */

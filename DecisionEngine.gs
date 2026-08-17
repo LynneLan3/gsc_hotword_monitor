@@ -1461,6 +1461,33 @@ function debugDecisionEngineSelfCheck() {
   assert(matchGuideIntentCategories_('leafy corner walkthrough', site).indexOf('guide') >= 0, '品牌+walkthrough 是 Guide Query');
   assert(matchGuideIntentCategories_('best weapon build', site).indexOf('weapon') >= 0, 'best weapon build 应命中 weapon');
 
+  var mortal = { name: 'Mortal Shell II', propertyUrl: 'https://mortal-shell-ii.vercel.app/' };
+  assert(matchGuideIntentCategories_('mortal shell 2', mortal).length === 0, 'MS2 纯品牌词不是 Guide Query');
+  var saveProgressQueries = [
+    'mortal shell 2 beta progress carry over',
+    'mortal shell 2 beta carry over',
+    'does mortal shell 2 beta progress carry over',
+    'mortal shell 2 beta what carries over',
+    'mortal shell 2 beta save',
+    'mortal shell 2 beta save file',
+    'mortal shell 2 demo progress'
+  ];
+  for (var sp = 0; sp < saveProgressQueries.length; sp++) {
+    var spQ = saveProgressQueries[sp];
+    assert(
+      matchGuideIntentCategories_(spQ, mortal).indexOf('save_progress') >= 0,
+      spQ + ' 应命中 save_progress'
+    );
+  }
+  assert(
+    matchGuideIntentCategories_('mortal shell 2 beta rewards', mortal).indexOf('reward') >= 0,
+    'beta rewards 应命中 reward'
+  );
+  assert(
+    matchGuideIntentCategories_('mortal shell 2 open beta rewards', mortal).indexOf('reward') >= 0,
+    'open beta rewards 应命中 reward'
+  );
+
   var windowSite = { name: 'Grain Rot', propertyUrl: 'https://grainrot.vercel.app/' };
   var queryWindow = aggregateQueryMetrics_(
     [
