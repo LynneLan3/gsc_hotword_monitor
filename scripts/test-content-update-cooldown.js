@@ -265,6 +265,84 @@ assert(
   '满 3 天后页面 cooldown 解除，重新允许机会'
 );
 
+// Same page 8/15 + 8/17: latest is 8/17; 8/15 must not expire cooldown early.
+var ms2TwoInterventions = [
+  [
+    '2026-08-15',
+    'Mortal Shell II',
+    '/mortal-shell-ii/beta-progress-carry-over/',
+    'ms2-beta-progress-carry-over-20260814',
+    'beta carry-over / reset / Flayed Harbinger reward / Marrow Keep Prologue skip',
+    'CONTENT_OPTIMIZE',
+    ''
+  ],
+  [
+    '2026-08-17',
+    'Mortal Shell II',
+    '/mortal-shell-ii/beta-progress-carry-over/',
+    'Winner Asset COMPARISON_MATRIX evidence upgrade',
+    'ResearchJobID=asset-ms2-beta-progress-carry-over-20260817',
+    'CONTENT_EXPAND',
+    ''
+  ]
+];
+var ms2Latest = getLatestContentUpdate_(
+  'Mortal Shell II',
+  '/mortal-shell-ii/beta-progress-carry-over/',
+  ms2TwoInterventions
+);
+assert(ms2Latest && ms2Latest.updateDate === '2026-08-17', 'same-page latest is 2026-08-17');
+var ms2Aug17Cd = findContentUpdateCooldownFromRows_(
+  ms2TwoInterventions,
+  'Mortal Shell II',
+  '/mortal-shell-ii/beta-progress-carry-over/',
+  '2026-08-17',
+  rules
+);
+assert(!!ms2Aug17Cd, '8/17 asOf stays in cooldown');
+assert(ms2Aug17Cd.updateDate === '2026-08-17', 'cooldown starts from 8/17 not 8/15');
+assert(ms2Aug17Cd.untilDate === '2026-08-20', 'cooldown until 2026-08-20');
+assert(
+  !!findContentUpdateCooldownFromRows_(
+    ms2TwoInterventions,
+    'Mortal Shell II',
+    '/mortal-shell-ii/beta-progress-carry-over/',
+    '2026-08-18',
+    rules
+  ),
+  '8/18 still cools because latest is 8/17 (8/15-only would have expired)'
+);
+assert(
+  !!findContentUpdateCooldownFromRows_(
+    ms2TwoInterventions,
+    'Mortal Shell II',
+    '/mortal-shell-ii/beta-progress-carry-over/',
+    '2026-08-19',
+    rules
+  ),
+  '8/19 still cools'
+);
+assert(
+  !findContentUpdateCooldownFromRows_(
+    ms2TwoInterventions,
+    'Mortal Shell II',
+    '/mortal-shell-ii/beta-progress-carry-over/',
+    '2026-08-20',
+    rules
+  ),
+  '8/20 cooldown elapsed'
+);
+assert(
+  !findContentUpdateCooldownFromRows_(
+    ms2TwoInterventions,
+    'Mortal Shell II',
+    '/mortal-shell-ii/open-beta/',
+    '2026-08-17',
+    rules
+  ),
+  '8/17 page cooldown does not block other MS2 pages'
+);
+
 // 8/16 CONTENT_OPTIMIZE 人工 DONE → action cooldown（不改 Decision 历史事实）
 var ms2ActionCd = findActionCooldown_(
   [
@@ -320,4 +398,5 @@ console.log('- Mortal Shell II: site-wide update blocks Research Job for any pag
 console.log('- Approximately Up: DONE action cooldown still active until 2026-08-17');
 console.log('- After 3 days: content-update cooldown clears');
 console.log('- MS2 page-specific 2026-08-15: target page cools; other pages / AU / Leafy untouched');
+console.log('- MS2 8/15+8/17: latest=8/17 until=8/20; 8/15 cannot expire cooldown early');
 console.log('- MS2 8/16 DONE: action cooldown until 2026-08-19');
