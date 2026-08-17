@@ -1152,6 +1152,7 @@ function loadExistingResearchJobs_(sheet) {
     var sourceQuery = String(cell_(rows[i], col, 'source_query') || '').trim();
     var related = String(cell_(rows[i], col, '关联搜索词') || '').trim();
     if (jobId) byJobId[jobId] = true;
+    if (jobId && /^asset-/.test(jobId)) continue;
     if (site && actionEnum) {
       var fake = {
         site: site,

@@ -236,9 +236,24 @@ var ASSET_LOCKED_STATUSES = {
   ARCHIVED: true
 };
 
+var ASSET_HUMAN_DECISION_LABELS = {
+  TODO: '待处理',
+  APPROVE: '批准研究',
+  HOLD: '暂缓',
+  SKIP: '跳过'
+};
+
+var ASSET_HUMAN_DECISION_OPTIONS = [
+  ASSET_HUMAN_DECISION_LABELS.TODO,
+  ASSET_HUMAN_DECISION_LABELS.APPROVE,
+  ASSET_HUMAN_DECISION_LABELS.HOLD,
+  ASSET_HUMAN_DECISION_LABELS.SKIP
+];
+
 /**
  * 内容资产（Winner Asset Candidate Layer）。
- * 只读「站点经营」；不重新计算 Winner；不接 Research Job。
+ * 只读「站点经营」；人工决定后由 processWinnerAssetDecisions 创建标准 Research Job。
+ * 后两列只能追加在末尾，不得移动前 19 列。
  */
 var WINNER_ASSET_HEADERS = [
   '生成时间',
@@ -259,7 +274,9 @@ var WINNER_ASSET_HEADERS = [
   '人工备注',
   '状态',
   '创建时间',
-  '更新时间'
+  '更新时间',
+  '研究任务ID',
+  '研究请求时间'
 ];
 
 /**
@@ -1408,7 +1425,7 @@ function getMetricGuideRows_() {
       '系统计算',
       'runWinnerAssetEngine_ 只读「站点经营」T2_WINNER + 非首页 WinnerPage',
       '按规则建议 AssetType / AssetLevel / EvidenceStatus / 候选理由；Site+WinnerPage 唯一；重复运行更新 metrics 但保留人工字段与已进入 RESEARCH/READY/DONE 的状态',
-      '把已赢页面转成可人工判断的资产升级候选，不自动改站、不自动创建 Research Job',
+      '把已赢页面转成可人工判断的资产升级候选；菜单「处理内容资产决定」后才创建 Research Job，不自动改站',
       '否（人工决定 APPROVE 后才进入 B2-B）',
       '首页 `/` 第一版 skip；save_progress→COMPARISON_MATRIX；intent 空→VERIFIED_GUIDE',
       '热词站项目 B2 资产候选实验规则',

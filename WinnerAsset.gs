@@ -1,21 +1,28 @@
 /**
- * Winner Asset Candidate Layer（B2-A）
- * 只读「站点经营」，把 T2 Winner Page 转成可人工判断的内容资产候选。
- * 不重新计算 GSC / Winner；不接 Research Job；不改网站。
+ * Winner Asset Candidate Layer（B2-A / B2-B）
+ * 只读「站点经营」生成候选；人工 Gate 后由 processWinnerAssetDecisions 创建标准 Research Job。
+ * 不重新计算 GSC / Winner；不自动改站；不改 Opportunity Research 合同。
  */
 
 function ensureWinnerAssetHeader_() {
   var sheet = getSpreadsheet_().getSheetByName(SHEET_NAMES.WINNER_ASSETS);
   if (!sheet) return;
-  var lastCol = Math.max(sheet.getLastColumn(), WINNER_ASSET_HEADERS.length);
+  var lastCol = Math.max(sheet.getLastColumn(), 1);
   var header = sheet.getRange(1, 1, 1, lastCol).getValues()[0];
-  var actual = [];
-  for (var i = 0; i < WINNER_ASSET_HEADERS.length; i++) {
-    actual.push(String(header[i] || '').trim());
+  var have = {};
+  for (var i = 0; i < header.length; i++) {
+    var name = String(header[i] || '').trim();
+    if (name) have[name] = true;
   }
-  if (actual.join('|') === WINNER_ASSET_HEADERS.join('|')) return;
-  sheet.getRange(1, 1, 1, WINNER_ASSET_HEADERS.length).setValues([WINNER_ASSET_HEADERS]);
-  sheet.getRange(1, 1, 1, WINNER_ASSET_HEADERS.length).setFontWeight('bold');
+  var toAdd = [];
+  for (var n = 0; n < WINNER_ASSET_HEADERS.length; n++) {
+    if (!have[WINNER_ASSET_HEADERS[n]]) toAdd.push(WINNER_ASSET_HEADERS[n]);
+  }
+  if (!toAdd.length) return;
+  var startCol = lastCol + 1;
+  if (String(header[header.length - 1] || '').trim() === '') startCol = lastCol;
+  sheet.getRange(1, startCol, 1, toAdd.length).setValues([toAdd]);
+  sheet.getRange(1, startCol, 1, toAdd.length).setFontWeight('bold');
 }
 
 function runWinnerAssetEngine() {
@@ -38,6 +45,7 @@ function runWinnerAssetEngine() {
   out = pruneStaleHomepageCandidates_(out);
 
   writeWinnerAssetRows_(out);
+  applyWinnerAssetDecisionValidation_();
 
   writeLog_(
     'INFO',
@@ -361,7 +369,9 @@ function winnerAssetRow_(opts) {
     opts.humanNote || '',
     opts.status || ASSET_STATUS.CANDIDATE,
     opts.createdAt || '',
-    opts.updatedAt || ''
+    opts.updatedAt || '',
+    opts.researchJobId || '',
+    opts.researchRequestedAt || ''
   ];
 }
 
@@ -395,6 +405,9 @@ function mergeWinnerAssetRow_(existingRow, candidateRow) {
   merged[12] = lockedStatus ? existingRow[12] : candidateRow[12];
   merged[13] = lockedStatus ? existingRow[13] : candidateRow[13];
   merged[18] = candidateRow[18];
+  while (merged.length < WINNER_ASSET_HEADERS.length) merged.push('');
+  if (!String(merged[19] || '').trim()) merged[19] = existingRow[19] || '';
+  if (!String(merged[20] || '').trim()) merged[20] = existingRow[20] || '';
 
   if (!manual) {
     merged[8] = candidateRow[8];
@@ -443,6 +456,389 @@ function writeWinnerAssetRows_(rows) {
     sheet.getRange(2, 1, lastRow - 1, lastCol).clearContent();
   }
   if (rows && rows.length) {
-    sheet.getRange(2, 1, rows.length, WINNER_ASSET_HEADERS.length).setValues(rows);
+    var padded = [];
+    for (var r = 0; r < rows.length; r++) padded.push(padWinnerAssetRow_(rows[r]));
+    sheet.getRange(2, 1, padded.length, WINNER_ASSET_HEADERS.length).setValues(padded);
   }
+}
+
+/**
+ * 人工菜单：处理「内容资产」Human Gate。
+ * 不挂 runDaily；不改 Opportunity Research。
+ */
+function processWinnerAssetDecisions() {
+  ensureSheet_(SHEET_NAMES.WINNER_ASSETS, WINNER_ASSET_HEADERS);
+  ensureWinnerAssetHeader_();
+  applyWinnerAssetDecisionValidation_();
+  ensureResearchJobSheets_();
+
+  var nowTs = nowRecordedAt_();
+  writeLog_('INFO', '', 'processWinnerAssetDecisions 开始');
+
+  var assetSheet = getSpreadsheet_().getSheetByName(SHEET_NAMES.WINNER_ASSETS);
+  var jobSheet = getSpreadsheet_().getSheetByName(SHEET_NAMES.RESEARCH_JOBS);
+  var emptySummary = emptyWinnerAssetDecisionSummary_();
+  if (!assetSheet || assetSheet.getLastRow() < 2) {
+    writeLog_('INFO', '', formatWinnerAssetDecisionSummary_(emptySummary));
+    return emptySummary;
+  }
+
+  var assetLastCol = Math.max(assetSheet.getLastColumn(), WINNER_ASSET_HEADERS.length);
+  var assetHeaders = assetSheet.getRange(1, 1, 1, assetLastCol).getValues()[0];
+  var assetRows = assetSheet.getRange(2, 1, assetSheet.getLastRow() - 1, assetLastCol).getValues();
+
+  var jobHeaders = RESEARCH_JOB_HEADERS;
+  var jobRows = [];
+  if (jobSheet && jobSheet.getLastRow() >= 2) {
+    var jobLastCol = Math.max(jobSheet.getLastColumn(), RESEARCH_JOB_HEADERS.length);
+    jobHeaders = jobSheet.getRange(1, 1, 1, jobLastCol).getValues()[0];
+    jobRows = jobSheet.getRange(2, 1, jobSheet.getLastRow() - 1, jobLastCol).getValues();
+  }
+
+  var existingIds = loadExistingWinnerAssetJobIds_(jobRows, jobHeaders);
+  var result = processWinnerAssetDecisionRows_(assetRows, {
+    nowTs: nowTs,
+    assetHeaders: assetHeaders,
+    existingJobIds: existingIds
+  });
+
+  if (result.jobsToCreate && result.jobsToCreate.length) {
+    try {
+      if (!jobSheet) throw new Error('missing_research_job_sheet');
+      var rows = [];
+      for (var i = 0; i < result.jobsToCreate.length; i++) {
+        rows.push(result.jobsToCreate[i].row);
+      }
+      var start = jobSheet.getLastRow() + 1;
+      if (start < 2) start = 2;
+      jobSheet.getRange(start, 1, rows.length, RESEARCH_JOB_HEADERS.length).setValues(rows);
+    } catch (e) {
+      writeLog_('ERROR', '', 'processWinnerAssetDecisions Job 写入失败，新建任务对应行保持 CANDIDATE');
+      result = revertCreatedWinnerAssetJobs_(assetRows, result, assetHeaders);
+      result.summary.error = String((e && e.message) || e || 'write_failed');
+    }
+  }
+
+  if (result.changed) {
+    assetSheet
+      .getRange(2, 1, result.assets.length, WINNER_ASSET_HEADERS.length)
+      .setValues(result.assets);
+  }
+
+  writeLog_('INFO', '', formatWinnerAssetDecisionSummary_(result.summary));
+  return result.summary;
+}
+
+function applyWinnerAssetDecisionValidation_() {
+  var sheet = getSpreadsheet_().getSheetByName(SHEET_NAMES.WINNER_ASSETS);
+  if (!sheet) return;
+  ensureWinnerAssetHeader_();
+  var lastCol = Math.max(sheet.getLastColumn(), 1);
+  var header = sheet.getRange(1, 1, 1, lastCol).getValues()[0];
+  var col = winnerAssetDecisionCol_(header);
+  if (col.humanDecision === undefined) return;
+  var rule = SpreadsheetApp.newDataValidation()
+    .requireValueInList(ASSET_HUMAN_DECISION_OPTIONS, true)
+    .setAllowInvalid(true)
+    .build();
+  sheet.getRange(2, col.humanDecision + 1, sheet.getMaxRows() - 1, 1).setDataValidation(rule);
+}
+
+function winnerAssetDecisionCol_(headerRow) {
+  var headers = headerRow && headerRow.length ? headerRow : WINNER_ASSET_HEADERS;
+  var map = {};
+  for (var i = 0; i < headers.length; i++) {
+    var name = String(headers[i] || '').trim();
+    if (name && map[name] === undefined) map[name] = i;
+  }
+  function idx_(name, fallback) {
+    return map[name] !== undefined ? map[name] : fallback;
+  }
+  return {
+    siteName: idx_('站点', 1),
+    winnerPage: idx_('赢家页面', 2),
+    winnerIntent: idx_('赢家意图', 3),
+    assetType: idx_('资产候选类型', 8),
+    assetTitle: idx_('资产候选标题', 9),
+    assetLevel: idx_('当前资产级别', 11),
+    evidenceStatus: idx_('证据状态', 12),
+    missingEvidence: idx_('缺失证据', 13),
+    humanDecision: idx_('人工决定', 14),
+    humanNote: idx_('人工备注', 15),
+    status: idx_('状态', 16),
+    updatedAt: idx_('更新时间', 18),
+    researchJobId: idx_('研究任务ID', 19),
+    researchRequestedAt: idx_('研究请求时间', 20)
+  };
+}
+
+function emptyWinnerAssetDecisionSummary_() {
+  return {
+    processed: 0,
+    researchCreated: 0,
+    researchExisting: 0,
+    ready: 0,
+    archived: 0,
+    held: 0,
+    skipped: 0
+  };
+}
+
+function formatWinnerAssetDecisionSummary_(summary) {
+  summary = summary || emptyWinnerAssetDecisionSummary_();
+  return (
+    'processWinnerAssetDecisions 结束 processed=' +
+    summary.processed +
+    ' researchCreated=' +
+    summary.researchCreated +
+    ' researchExisting=' +
+    summary.researchExisting +
+    ' ready=' +
+    summary.ready +
+    ' archived=' +
+    summary.archived +
+    ' held=' +
+    summary.held +
+    ' skipped=' +
+    summary.skipped
+  );
+}
+
+function normalizeAssetHumanDecision_(value) {
+  var raw = String(value || '').trim();
+  if (!raw) return ASSET_HUMAN_DECISION.TODO;
+  if (ASSET_HUMAN_DECISION_LABELS[raw]) return raw;
+  var keys = Object.keys(ASSET_HUMAN_DECISION_LABELS);
+  for (var i = 0; i < keys.length; i++) {
+    if (ASSET_HUMAN_DECISION_LABELS[keys[i]] === raw) return keys[i];
+  }
+  return raw;
+}
+
+function isWinnerAssetResearchJobId_(jobId) {
+  return /^asset-/.test(String(jobId || '').trim());
+}
+
+function makeWinnerAssetResearchJobId_(siteName, winnerPage) {
+  var prefix = RESEARCH_GAME_SLUGS[siteName] || slugifyResearch_(siteName);
+  var path = winnerAssetPathname_(winnerPage);
+  var slug = '';
+  if (path && path !== '/') {
+    var segments = String(path).split('/').filter(function (s) {
+      return !!s;
+    });
+    if (segments.length) slug = slugifyResearch_(segments[segments.length - 1]);
+  }
+  if (!slug) slug = 'page';
+  if (slug.length > 40) slug = slug.substring(0, 40).replace(/-+$/, '');
+  return ('asset-' + prefix + '-' + slug).replace(/-+/g, '-').replace(/^-|-$/g, '');
+}
+
+function buildWinnerAssetResearchTopic_(opts) {
+  opts = opts || {};
+  var title = String(opts.assetTitle || '').trim();
+  if (title) return title;
+  var intent = String(opts.winnerIntent || '').trim();
+  if (intent === 'save_progress') return 'save progress / carry over / reset / rewards';
+  if (intent === 'platform') return 'platform availability / console / PC';
+  if (intent) return intent.replace(/_/g, ' ');
+  var assetType = String(opts.assetType || '').trim();
+  if (assetType === ASSET_TYPE.VERIFIED_GUIDE) return 'verified guide evidence';
+  if (assetType) return assetType.replace(/_/g, ' ').toLowerCase();
+  return 'winner page evidence';
+}
+
+function buildWinnerAssetResearchJob_(asset, createdAt) {
+  var topic = buildWinnerAssetResearchTopic_(asset);
+  var job = {
+    job_id: makeWinnerAssetResearchJobId_(asset.siteName, asset.winnerPage),
+    game: asset.siteName,
+    topic: topic,
+    existing_page: String(asset.winnerPage || '').trim(),
+    opportunity_level: OPPORTUNITY_LEVELS.HIGH,
+    recommended_action: OPPORTUNITY_ACTIONS.RESEARCH_EXPAND_EXISTING,
+    source_query: topic,
+    related_queries: '',
+    created_at: createdAt
+  };
+  return {
+    job: job,
+    row: researchJobSheetRow_(job, asset.siteName, createdAt)
+  };
+}
+
+function loadExistingWinnerAssetJobIds_(jobRows, jobHeaders) {
+  var headers = jobHeaders && jobHeaders.length ? jobHeaders : RESEARCH_JOB_HEADERS;
+  var map = {};
+  for (var i = 0; i < headers.length; i++) {
+    var name = String(headers[i] || '').trim();
+    if (name && map[name] === undefined) map[name] = i;
+  }
+  var idIdx = map['任务ID'] !== undefined ? map['任务ID'] : 0;
+  var ids = {};
+  for (var r = 0; r < (jobRows || []).length; r++) {
+    var jobId = String(cellAt_(jobRows[r], idIdx) || '').trim();
+    if (jobId) ids[jobId] = true;
+  }
+  return ids;
+}
+
+function padWinnerAssetRow_(row) {
+  var out = (row || []).slice();
+  while (out.length < WINNER_ASSET_HEADERS.length) out.push('');
+  return out;
+}
+
+function revertCreatedWinnerAssetJobs_(originalRows, result, assetHeaders) {
+  var createdIds = {};
+  var jobs = (result && result.jobsToCreate) || [];
+  for (var i = 0; i < jobs.length; i++) {
+    var jobId = jobs[i] && jobs[i].job && jobs[i].job.job_id;
+    if (jobId) createdIds[jobId] = true;
+  }
+  var col = winnerAssetDecisionCol_(assetHeaders);
+  var assets = [];
+  var changed = false;
+  for (var r = 0; r < ((result && result.assets) || []).length; r++) {
+    var row = padWinnerAssetRow_(result.assets[r]);
+    var id = String(cellAt_(row, col.researchJobId) || '').trim();
+    if (createdIds[id]) {
+      assets.push(padWinnerAssetRow_(originalRows[r]));
+      changed = true;
+      continue;
+    }
+    assets.push(row);
+    if (
+      originalRows[r] &&
+      String(originalRows[r][col.status] || '') !== String(row[col.status] || '')
+    ) {
+      changed = true;
+    }
+  }
+  var summary = result.summary || emptyWinnerAssetDecisionSummary_();
+  summary.researchCreated = 0;
+  return {
+    assets: assets,
+    jobsToCreate: [],
+    summary: summary,
+    changed: changed || !!(result && result.changed)
+  };
+}
+
+/**
+ * 纯函数：Human Gate → 标准 Research Job。
+ * 只处理 CANDIDATE；LOCKED 状态不重跑。
+ */
+function processWinnerAssetDecisionRows_(assetRows, opts) {
+  opts = opts || {};
+  var nowTs = opts.nowTs || '';
+  var col = winnerAssetDecisionCol_(opts.assetHeaders);
+  var existingJobIds = opts.existingJobIds || {};
+  var summary = emptyWinnerAssetDecisionSummary_();
+  var jobsToCreate = [];
+  var claimedIds = {};
+  var outAssets = [];
+  var changed = false;
+
+  for (var i = 0; i < (assetRows || []).length; i++) {
+    var row = padWinnerAssetRow_(assetRows[i]);
+    outAssets.push(row);
+    var status = String(cellAt_(row, col.status) || '').trim() || ASSET_STATUS.CANDIDATE;
+    var decision = normalizeAssetHumanDecision_(cellAt_(row, col.humanDecision));
+    var note = String(cellAt_(row, col.humanNote) || '');
+    var title = String(cellAt_(row, col.assetTitle) || '');
+
+    if (ASSET_LOCKED_STATUSES[status]) {
+      summary.skipped += 1;
+      continue;
+    }
+    if (status !== ASSET_STATUS.CANDIDATE) {
+      summary.skipped += 1;
+      continue;
+    }
+
+    summary.processed += 1;
+
+    if (decision === ASSET_HUMAN_DECISION.TODO) {
+      summary.skipped += 1;
+      continue;
+    }
+    if (decision === ASSET_HUMAN_DECISION.HOLD) {
+      summary.held += 1;
+      continue;
+    }
+    if (decision === ASSET_HUMAN_DECISION.SKIP) {
+      row[col.status] = ASSET_STATUS.ARCHIVED;
+      row[col.updatedAt] = nowTs;
+      row[col.humanNote] = note;
+      row[col.assetTitle] = title;
+      summary.archived += 1;
+      changed = true;
+      continue;
+    }
+    if (decision !== ASSET_HUMAN_DECISION.APPROVE) {
+      summary.skipped += 1;
+      continue;
+    }
+
+    var evidence = String(cellAt_(row, col.evidenceStatus) || '').trim();
+    if (evidence === ASSET_EVIDENCE_STATUS.READY) {
+      row[col.status] = ASSET_STATUS.READY;
+      row[col.updatedAt] = nowTs;
+      row[col.humanNote] = note;
+      row[col.assetTitle] = title;
+      summary.ready += 1;
+      changed = true;
+      continue;
+    }
+
+    var siteName = String(cellAt_(row, col.siteName) || '').trim();
+    var winnerPage = String(cellAt_(row, col.winnerPage) || '').trim();
+    var stableId = makeWinnerAssetResearchJobId_(siteName, winnerPage);
+    var existingId = String(cellAt_(row, col.researchJobId) || '').trim();
+    var alreadyInSheet = !!(existingJobIds[stableId] || claimedIds[stableId]);
+
+    if (existingId || alreadyInSheet) {
+      var reuseId = existingId || stableId;
+      row[col.researchJobId] = reuseId;
+      if (!String(cellAt_(row, col.researchRequestedAt) || '').trim()) {
+        row[col.researchRequestedAt] = nowTs;
+      }
+      row[col.status] = ASSET_STATUS.RESEARCH;
+      row[col.updatedAt] = nowTs;
+      row[col.humanNote] = note;
+      row[col.assetTitle] = title;
+      summary.researchExisting += 1;
+      changed = true;
+      continue;
+    }
+
+    var built = buildWinnerAssetResearchJob_(
+      {
+        siteName: siteName,
+        winnerPage: winnerPage,
+        winnerIntent: String(cellAt_(row, col.winnerIntent) || '').trim(),
+        assetType: String(cellAt_(row, col.assetType) || '').trim(),
+        assetTitle: title
+      },
+      nowTs
+    );
+    jobsToCreate.push(built);
+    claimedIds[stableId] = true;
+    row[col.researchJobId] = built.job.job_id;
+    row[col.researchRequestedAt] = nowTs;
+    row[col.status] = ASSET_STATUS.RESEARCH;
+    row[col.updatedAt] = nowTs;
+    row[col.humanNote] = note;
+    row[col.assetTitle] = title;
+    summary.researchCreated += 1;
+    changed = true;
+  }
+
+  return {
+    assets: outAssets,
+    jobsToCreate: jobsToCreate,
+    summary: summary,
+    changed: changed
+  };
 }

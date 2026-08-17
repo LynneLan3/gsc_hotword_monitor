@@ -337,7 +337,9 @@ function buildWinnerAssetCandidates_(portfolioRows, generatedAt, nowTs, headerRo
       '',
       ASSET_STATUS.CANDIDATE,
       nowTs,
-      nowTs
+      nowTs,
+      '',
+      ''
     ]);
   }
   return out;
@@ -390,6 +392,9 @@ function mergeWinnerAssetRow_(existingRow, candidateRow) {
     if (!String(merged[16] || '').trim()) merged[16] = ASSET_STATUS.CANDIDATE;
   }
   if (!String(merged[17] || '').trim()) merged[17] = candidateRow[17];
+  while (merged.length < 21) merged.push('');
+  if (!String(merged[19] || '').trim()) merged[19] = existingRow[19] || '';
+  if (!String(merged[20] || '').trim()) merged[20] = existingRow[20] || '';
   return merged;
 }
 
@@ -422,6 +427,7 @@ var t2Rows = buildWinnerAssetCandidates_(
   nowTs
 );
 assert(t2Rows.length === 1, 'T2 non-homepage should create 1 candidate');
+assert(t2Rows[0].length === 21, 'candidate row should have 21 columns');
 
 // 2. T1/T0 → skip
 var tierRows = buildWinnerAssetCandidates_(
@@ -540,6 +546,12 @@ assert(mergedManual[14] === ASSET_HUMAN_DECISION.APPROVE, 'human decision preser
 assert(mergedManual[15] === '人工备注', 'human note preserved');
 assert(mergedManual[16] === ASSET_STATUS.RESEARCH, 'locked status preserved');
 
+manualRow[19] = 'asset-site-x-guide';
+manualRow[20] = '2026-08-17 11:00:00';
+var mergedJobId = mergeWinnerAssetRows_([manualRow], second)[0];
+assert(mergedJobId[19] === 'asset-site-x-guide', 'research job id preserved on rebuild');
+assert(mergedJobId[20] === '2026-08-17 11:00:00', 'research requested at preserved on rebuild');
+
 // 8. winner page change → new row, old kept
 var oldWinner = buildWinnerAssetCandidates_(
   [portfolioRow_({ siteName: 'site-y', winnerPage: '/site-y/old-page/' })],
@@ -576,7 +588,9 @@ function staleHomepageRow_(opts) {
     opts.humanNote || '',
     opts.status || ASSET_STATUS.CANDIDATE,
     nowTs,
-    nowTs
+    nowTs,
+    '',
+    ''
   ];
 }
 
@@ -684,6 +698,12 @@ assert(ms2Like[0][10].indexOf('save/progress') >= 0, 'MS2-like reason mentions s
 var configGs = fs.readFileSync(path.join(__dirname, '..', 'Config.gs'), 'utf8');
 assert(configGs.indexOf("WINNER_ASSETS: '内容资产'") >= 0, 'Config must define WINNER_ASSETS sheet');
 assert(configGs.indexOf('WINNER_ASSET_HEADERS') >= 0, 'Config must define WINNER_ASSET_HEADERS');
+assert(configGs.indexOf("'研究任务ID'") >= 0, 'WINNER_ASSET_HEADERS must append 研究任务ID');
+assert(configGs.indexOf("'研究请求时间'") >= 0, 'WINNER_ASSET_HEADERS must append 研究请求时间');
+assert(
+  /'更新时间',\s*'研究任务ID',\s*'研究请求时间'/.test(configGs),
+  'research columns must be appended after 更新时间'
+);
 
 var codeGs = fs.readFileSync(path.join(__dirname, '..', 'Code.gs'), 'utf8');
 assert(codeGs.indexOf('runWinnerAssetEngine') >= 0, 'Code.gs menu must call runWinnerAssetEngine');

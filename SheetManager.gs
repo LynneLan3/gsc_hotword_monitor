@@ -63,7 +63,7 @@ function applyColumnWidths_(sheet, name) {
       1: 100, 2: 180, 3: 280, 4: 120, 5: 110, 6: 110,
       7: 110, 8: 100, 9: 150, 10: 220, 11: 420, 12: 130,
       13: 110, 14: 260, 15: 110, 16: 220, 17: 100,
-      18: 150, 19: 150
+      18: 150, 19: 150, 20: 220, 21: 160
     };
   } else if (name === SHEET_NAMES.URL_INDEX) {
     widths = {
@@ -184,6 +184,7 @@ function applyNumberFormats_(sheet, name) {
     sheet.getRange('A:A').setNumberFormat('yyyy-mm-dd');
     sheet.getRange('R:R').setNumberFormat('yyyy-mm-dd hh:mm:ss');
     sheet.getRange('S:S').setNumberFormat('yyyy-mm-dd hh:mm:ss');
+    sheet.getRange('U:U').setNumberFormat('yyyy-mm-dd hh:mm:ss');
   } else if (name === SHEET_NAMES.URL_INDEX) {
     sheet.getRange('A:A').setNumberFormat('yyyy-mm-dd');
   } else if (name === SHEET_NAMES.LOG) {
@@ -246,7 +247,7 @@ function getUsageGuideLines_() {
     '研究审核：Human Gate，人工核对证据后再决定是否批准开发/继续观察/无需处理',
     '站点状态：解释 Decision Engine 为什么给出当前判断（分数、阶段、理由）',
     '站点经营：在 SEO RecommendedAction 之外看经营投入（投入档位 / 经营动作 / 赢家页面）。HOLD 不覆盖今日行动里的 SEO Decision',
-    '内容资产：把已赢页面转成可人工判断的资产升级候选（类型 / 理由 / 证据缺口 / 人工决定）。不自动改站、不自动创建 Research Job',
+    '内容资产：把已赢页面转成可人工判断的资产升级候选。人工决定后用菜单「处理内容资产决定」创建研究任务。不自动改站',
     '决策历史：保存系统当时的规则版本、输入指标和推荐动作，用于后续回测；并冻结与 Outcome 同口径的决策前 7 天 Baseline（DecisionDataDate−6…DecisionDataDate）。Baseline 不是 intervention 前一刻表现，也不是成功/失败判定；日常无需查看',
     '决策结果：在 Decision 后的 D7 / D14 / D30，用已有 GSC 历史记录后续搜索表现，用于以后回测规则；表示“推荐机会后来的表现”，不等于证明某次人工修改造成了增长；日常无需查看',
     '反馈样本：系统自动生成的分析视图，把决策 → 人工处理 → 实际内容修改 → D7/D14/D30 后续表现汇总到一行。SampleStatus 只表示当前事实阶段，不代表成功或失败。该表可重新生成，不应作为人工填写入口。',
@@ -517,6 +518,7 @@ function setupSheets() {
   ensurePortfolioHeader_();
   ensureSheet_(SHEET_NAMES.WINNER_ASSETS, WINNER_ASSET_HEADERS);
   ensureWinnerAssetHeader_();
+  applyWinnerAssetDecisionValidation_();
   ensureSheet_(SHEET_NAMES.DECISION_HISTORY, DECISION_HISTORY_HEADERS);
   ensureDecisionHistoryHeader_();
   ensureSheet_(SHEET_NAMES.DECISION_OUTCOMES, DECISION_OUTCOME_HEADERS);
