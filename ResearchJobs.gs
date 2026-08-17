@@ -82,6 +82,20 @@ function checkResearchWriteToken_(e, body) {
   return provided !== '' && provided === expected;
 }
 
+/**
+ * 轮换 Research callback token。由 clasp run 传入，不把 token 写进仓库。
+ * @param {string} token
+ */
+function rotateResearchWriteToken(token) {
+  token = String(token || '').trim();
+  if (!token) return { ok: false, error: 'empty_token' };
+  PropertiesService.getScriptProperties().setProperty(
+    RESEARCH_JOB_WRITE_TOKEN_PROP,
+    token
+  );
+  return { ok: true, key: RESEARCH_JOB_WRITE_TOKEN_PROP };
+}
+
 /** 仅当未配置时生成 token，不进仓库。 */
 function initResearchWriteToken_() {
   var props = PropertiesService.getScriptProperties();
