@@ -12,6 +12,7 @@ function onOpen() {
     .addItem('重建站点经营', 'runPortfolioEngine')
     .addItem('重建内容资产候选', 'runWinnerAssetEngine')
     .addItem('处理内容资产决定', 'processWinnerAssetDecisions')
+    .addItem('同步内容资产研究结果', 'syncWinnerAssetResearchResults')
     .addItem('观察决策结果', 'runDecisionOutcomeObservation')
     .addItem('同步人工决策', 'syncHumanDecisions')
     .addItem('记录内容更新', 'recordContentInterventionMenu')

@@ -1,6 +1,7 @@
 /**
- * Winner Asset Candidate Layer（B2-A / B2-B）
- * 只读「站点经营」生成候选；人工 Gate 后由 processWinnerAssetDecisions 创建标准 Research Job。
+ * Winner Asset Candidate Layer（B2-A / B2-B / B2-C）
+ * 只读「站点经营」生成候选；人工 Gate 后创建标准 Research Job；
+ * syncWinnerAssetResearchResults 只消费现有「研究任务」终态。
  * 不重新计算 GSC / Winner；不自动改站；不改 Opportunity Research 合同。
  */
 
@@ -840,5 +841,240 @@ function processWinnerAssetDecisionRows_(assetRows, opts) {
     jobsToCreate: jobsToCreate,
     summary: summary,
     changed: changed
+  };
+}
+
+/**
+ * 人工菜单：把「研究任务」终态同步回「内容资产」。
+ * 不挂 runDaily；不调用研究审核处理或开发任务创建。
+ */
+function syncWinnerAssetResearchResults() {
+  ensureSheet_(SHEET_NAMES.WINNER_ASSETS, WINNER_ASSET_HEADERS);
+  ensureWinnerAssetHeader_();
+  ensureResearchJobSheets_();
+
+  var nowTs = nowRecordedAt_();
+  writeLog_('INFO', '', 'syncWinnerAssetResearchResults 开始');
+
+  var assetSheet = getSpreadsheet_().getSheetByName(SHEET_NAMES.WINNER_ASSETS);
+  var emptySummary = emptyWinnerAssetResearchSyncSummary_();
+  if (!assetSheet || assetSheet.getLastRow() < 2) {
+    writeLog_('INFO', '', formatWinnerAssetResearchSyncSummary_(emptySummary));
+    return emptySummary;
+  }
+
+  var assetLastCol = Math.max(assetSheet.getLastColumn(), WINNER_ASSET_HEADERS.length);
+  var assetHeaders = assetSheet.getRange(1, 1, 1, assetLastCol).getValues()[0];
+  var assetRows = assetSheet.getRange(2, 1, assetSheet.getLastRow() - 1, assetLastCol).getValues();
+
+  var jobSheet = getSpreadsheet_().getSheetByName(SHEET_NAMES.RESEARCH_JOBS);
+  var jobHeaders = RESEARCH_JOB_HEADERS;
+  var jobRows = [];
+  if (jobSheet && jobSheet.getLastRow() >= 2) {
+    var jobLastCol = Math.max(jobSheet.getLastColumn(), RESEARCH_JOB_HEADERS.length);
+    jobHeaders = jobSheet.getRange(1, 1, 1, jobLastCol).getValues()[0];
+    jobRows = jobSheet.getRange(2, 1, jobSheet.getLastRow() - 1, jobLastCol).getValues();
+  }
+
+  var result = syncWinnerAssetResearchRows_(assetRows, jobRows, {
+    nowTs: nowTs,
+    assetHeaders: assetHeaders,
+    researchHeaders: jobHeaders
+  });
+
+  var warnings = result.warnings || [];
+  for (var w = 0; w < warnings.length; w++) {
+    writeLog_('WARN', '', warnings[w]);
+  }
+
+  if (result.changed) {
+    assetSheet
+      .getRange(2, 1, result.assets.length, WINNER_ASSET_HEADERS.length)
+      .setValues(result.assets);
+  }
+
+  writeLog_('INFO', '', formatWinnerAssetResearchSyncSummary_(result.summary));
+  return result.summary;
+}
+
+function emptyWinnerAssetResearchSyncSummary_() {
+  return {
+    scanned: 0,
+    ready: 0,
+    archived: 0,
+    pending: 0,
+    awaitingReview: 0,
+    watch: 0,
+    failed: 0,
+    missingJob: 0,
+    skippedInvalidBinding: 0,
+    skippedLocked: 0
+  };
+}
+
+function formatWinnerAssetResearchSyncSummary_(summary) {
+  summary = summary || emptyWinnerAssetResearchSyncSummary_();
+  return (
+    'syncWinnerAssetResearchResults 结束 scanned=' +
+    summary.scanned +
+    ' ready=' +
+    summary.ready +
+    ' archived=' +
+    summary.archived +
+    ' pending=' +
+    summary.pending +
+    ' awaitingReview=' +
+    summary.awaitingReview +
+    ' watch=' +
+    summary.watch +
+    ' failed=' +
+    summary.failed +
+    ' missingJob=' +
+    summary.missingJob +
+    ' skippedInvalidBinding=' +
+    summary.skippedInvalidBinding +
+    ' skippedLocked=' +
+    summary.skippedLocked
+  );
+}
+
+function researchJobSyncCol_(headerRow) {
+  var headers = headerRow && headerRow.length ? headerRow : RESEARCH_JOB_HEADERS;
+  var map = {};
+  for (var i = 0; i < headers.length; i++) {
+    var name = String(headers[i] || '').trim();
+    if (name && map[name] === undefined) map[name] = i;
+  }
+  function idx_(name, fallback) {
+    return map[name] !== undefined ? map[name] : fallback;
+  }
+  return {
+    jobId: idx_('任务ID', 0),
+    status: idx_('任务状态', 9),
+    reviewDecision: idx_('审核决定', 18)
+  };
+}
+
+function indexResearchJobsById_(jobRows, jobHeaders) {
+  var col = researchJobSyncCol_(jobHeaders);
+  var map = {};
+  for (var i = 0; i < (jobRows || []).length; i++) {
+    var jobId = String(cellAt_(jobRows[i], col.jobId) || '').trim();
+    if (jobId && !map[jobId]) map[jobId] = jobRows[i];
+  }
+  return map;
+}
+
+function researchJobStatusEnum_(value) {
+  return enumFromLabel_(RESEARCH_JOB_STATUS_LABELS, String(value || '').trim());
+}
+
+function researchReviewDecisionEnum_(value) {
+  return enumFromLabel_(RESEARCH_REVIEW_DECISION_LABELS, String(value || '').trim());
+}
+
+function isWinnerAssetResearchApprovedForReady_(statusEnum, decisionEnum) {
+  return (
+    statusEnum === RESEARCH_JOB_STATUS.APPROVED &&
+    decisionEnum === RESEARCH_REVIEW_DECISION.APPROVE
+  );
+}
+
+/**
+ * 纯函数：按「研究任务ID」把 Research Job 终态同步回内容资产。
+ * 只改 RESEARCH 行；只有 RESEARCH→READY / RESEARCH→ARCHIVED 才更新时间。
+ */
+function syncWinnerAssetResearchRows_(assetRows, researchRows, opts) {
+  opts = opts || {};
+  var nowTs = opts.nowTs || '';
+  var col = winnerAssetDecisionCol_(opts.assetHeaders);
+  var jobCol = researchJobSyncCol_(opts.researchHeaders);
+  var jobsById = indexResearchJobsById_(researchRows, opts.researchHeaders);
+  var summary = emptyWinnerAssetResearchSyncSummary_();
+  var warnings = [];
+  var outAssets = [];
+  var changed = false;
+
+  for (var i = 0; i < (assetRows || []).length; i++) {
+    var row = padWinnerAssetRow_(assetRows[i]);
+    outAssets.push(row);
+
+    var status = String(cellAt_(row, col.status) || '').trim() || ASSET_STATUS.CANDIDATE;
+    if (status === ASSET_STATUS.READY || status === ASSET_STATUS.ARCHIVED || status === ASSET_STATUS.DONE) {
+      summary.skippedLocked += 1;
+      continue;
+    }
+    if (status !== ASSET_STATUS.RESEARCH) continue;
+
+    var jobId = String(cellAt_(row, col.researchJobId) || '').trim();
+    if (!jobId) continue;
+
+    summary.scanned += 1;
+    var siteName = String(cellAt_(row, col.siteName) || '').trim();
+    var winnerPage = String(cellAt_(row, col.winnerPage) || '').trim();
+    var assetKey = siteName + '||' + winnerPage;
+
+    if (!isWinnerAssetResearchJobId_(jobId)) {
+      summary.skippedInvalidBinding += 1;
+      warnings.push(
+        '内容资产绑定非 Winner Asset 研究任务 asset=' + assetKey + ' job_id=' + jobId
+      );
+      continue;
+    }
+
+    var jobRow = jobsById[jobId];
+    if (!jobRow) {
+      summary.missingJob += 1;
+      warnings.push(
+        '内容资产绑定研究任务不存在 asset=' + assetKey + ' job_id=' + jobId
+      );
+      continue;
+    }
+
+    var jobStatusEnum = researchJobStatusEnum_(cellAt_(jobRow, jobCol.status));
+    var decisionEnum = researchReviewDecisionEnum_(cellAt_(jobRow, jobCol.reviewDecision));
+
+    if (jobStatusEnum === RESEARCH_JOB_STATUS.PENDING) {
+      summary.pending += 1;
+      continue;
+    }
+    if (jobStatusEnum === RESEARCH_JOB_STATUS.REVIEW) {
+      summary.awaitingReview += 1;
+      continue;
+    }
+    if (jobStatusEnum === RESEARCH_JOB_STATUS.WATCH) {
+      summary.watch += 1;
+      continue;
+    }
+    if (jobStatusEnum === RESEARCH_JOB_STATUS.FAILED) {
+      summary.failed += 1;
+      continue;
+    }
+    if (jobStatusEnum === RESEARCH_JOB_STATUS.ARCHIVED) {
+      row[col.status] = ASSET_STATUS.ARCHIVED;
+      row[col.updatedAt] = nowTs;
+      summary.archived += 1;
+      changed = true;
+      continue;
+    }
+    if (isWinnerAssetResearchApprovedForReady_(jobStatusEnum, decisionEnum)) {
+      row[col.status] = ASSET_STATUS.READY;
+      row[col.evidenceStatus] = ASSET_EVIDENCE_STATUS.READY;
+      row[col.missingEvidence] = '';
+      row[col.updatedAt] = nowTs;
+      summary.ready += 1;
+      changed = true;
+      continue;
+    }
+    if (jobStatusEnum === RESEARCH_JOB_STATUS.APPROVED) {
+      summary.awaitingReview += 1;
+    }
+  }
+
+  return {
+    assets: outAssets,
+    changed: changed,
+    summary: summary,
+    warnings: warnings
   };
 }
