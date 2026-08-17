@@ -48,6 +48,11 @@ function applyColumnWidths_(sheet, name) {
     widths = {
       1: 100, 2: 180, 3: 260, 4: 70, 5: 100, 6: 70, 7: 110
     };
+  } else if (name === SHEET_NAMES.PAGES) {
+    widths = {
+      1: 100, 2: 180, 3: 320, 4: 220,
+      5: 70, 6: 100, 7: 70, 8: 110
+    };
   } else if (name === SHEET_NAMES.QUERY_PAGES) {
     widths = {
       1: 100, 2: 180, 3: 220, 4: 320, 5: 220,
@@ -160,6 +165,10 @@ function applyNumberFormats_(sheet, name) {
     sheet.getRange('A:A').setNumberFormat('yyyy-mm-dd');
     sheet.getRange('F:F').setNumberFormat('0.00%');
     sheet.getRange('G:G').setNumberFormat('0.0');
+  } else if (name === SHEET_NAMES.PAGES) {
+    sheet.getRange('A:A').setNumberFormat('yyyy-mm-dd');
+    sheet.getRange('G:G').setNumberFormat('0.00%');
+    sheet.getRange('H:H').setNumberFormat('0.0');
   } else if (name === SHEET_NAMES.QUERY_PAGES) {
     sheet.getRange('A:A').setNumberFormat('yyyy-mm-dd');
     sheet.getRange('H:H').setNumberFormat('0.00%');
@@ -208,7 +217,7 @@ function getUsageGuideLines_() {
     '这张表是热词站 GSC 每日监控的工作台。打开后先看「今日行动」，不要从后台数据表开始翻。',
     '',
     '—— 当前工作流 ——',
-    'GSC 数据 → Decision Engine → 今日行动 → 内容机会 → 研究任务 → 研究审核 → 人工决定是否修改内容 → 后续继续观察 GSC',
+    'GSC 数据 → Decision Engine → 今日行动 → 站点经营 → 内容机会 → 研究任务 → 研究审核 → 人工决定是否修改内容 → 后续继续观察 GSC',
     '',
     '—— 每日 SOP（很短） ——',
     '1. 看「今日行动」',
@@ -225,6 +234,7 @@ function getUsageGuideLines_() {
     '研究任务：需要外部 Research 的任务队列',
     '研究审核：Human Gate，人工核对证据后再决定是否批准开发/继续观察/无需处理',
     '站点状态：解释 Decision Engine 为什么给出当前判断（分数、阶段、理由）',
+    '站点经营：在 SEO RecommendedAction 之外看经营投入（投入档位 / 经营动作 / 赢家页面）。HOLD 不覆盖今日行动里的 SEO Decision',
     '决策历史：保存系统当时的规则版本、输入指标和推荐动作，用于后续回测；并冻结与 Outcome 同口径的决策前 7 天 Baseline（DecisionDataDate−6…DecisionDataDate）。Baseline 不是 intervention 前一刻表现，也不是成功/失败判定；日常无需查看',
     '决策结果：在 Decision 后的 D7 / D14 / D30，用已有 GSC 历史记录后续搜索表现，用于以后回测规则；表示“推荐机会后来的表现”，不等于证明某次人工修改造成了增长；日常无需查看',
     '反馈样本：系统自动生成的分析视图，把决策 → 人工处理 → 实际内容修改 → D7/D14/D30 后续表现汇总到一行。SampleStatus 只表示当前事实阶段，不代表成功或失败。该表可重新生成，不应作为人工填写入口。',
@@ -235,6 +245,7 @@ function getUsageGuideLines_() {
     '规则配置：系统自己的判断阈值；不是 Google 官方标准，也不要当 SEO 真理',
     'GSC日数据：底层历史汇总，日常不用先看',
     'Query明细：真实 GSC Query 明细，日常不用先看',
+    'Page明细：真实 GSC 页面 Performance，经营层 Winner Page 看这张表',
     'Query页面明细：Query × Landing Page，用于核对「词落到了哪个页」',
     'URL索引：收录异常诊断，有索引问题时再看',
     '运行日志：自动任务故障诊断，脚本报错时再看',
@@ -463,11 +474,13 @@ function setupSheets() {
         SHEET_NAMES.SNAPSHOT,
         SHEET_NAMES.DAILY,
         SHEET_NAMES.QUERIES,
+        SHEET_NAMES.PAGES,
         SHEET_NAMES.QUERY_PAGES,
         SHEET_NAMES.URL_INDEX,
         SHEET_NAMES.LOG,
         SHEET_NAMES.RULES,
         SHEET_NAMES.SITE_STATUS,
+        SHEET_NAMES.PORTFOLIO,
         SHEET_NAMES.TODAY_ACTIONS,
         SHEET_NAMES.OPPORTUNITIES,
         SHEET_NAMES.RESEARCH_JOBS,
@@ -481,11 +494,14 @@ function setupSheets() {
   ensureSheet_(SHEET_NAMES.SNAPSHOT, SNAPSHOT_HEADERS);
   ensureSheet_(SHEET_NAMES.DAILY, DAILY_HEADERS);
   ensureSheet_(SHEET_NAMES.QUERIES, QUERY_HEADERS);
+  ensureSheet_(SHEET_NAMES.PAGES, PAGE_HEADERS);
   ensureSheet_(SHEET_NAMES.QUERY_PAGES, QUERY_PAGE_HEADERS);
   ensureSheet_(SHEET_NAMES.URL_INDEX, URL_INDEX_HEADERS);
   ensureSheet_(SHEET_NAMES.LOG, LOG_HEADERS);
   ensureSheet_(SHEET_NAMES.RULES, RULE_HEADERS);
   ensureSheet_(SHEET_NAMES.SITE_STATUS, SITE_STATUS_HEADERS);
+  ensureSheet_(SHEET_NAMES.PORTFOLIO, PORTFOLIO_HEADERS);
+  ensurePortfolioHeader_();
   ensureSheet_(SHEET_NAMES.DECISION_HISTORY, DECISION_HISTORY_HEADERS);
   ensureDecisionHistoryHeader_();
   ensureSheet_(SHEET_NAMES.DECISION_OUTCOMES, DECISION_OUTCOME_HEADERS);
@@ -616,6 +632,19 @@ function upsertDailyRow_(row) {
 function upsertQueryRow_(row) {
   return upsertRow_(SHEET_NAMES.QUERIES, QUERY_HEADERS, row, function (r) {
     return normalizeKeyDate_(r[0]) + '||' + String(r[1] || '') + '||' + String(r[2] || '');
+  });
+}
+
+/** 唯一键：DataDate + Site + PageURL */
+function upsertPageRow_(row) {
+  return upsertRow_(SHEET_NAMES.PAGES, PAGE_HEADERS, row, function (r) {
+    return (
+      normalizeKeyDate_(r[0]) +
+      '||' +
+      String(r[1] || '') +
+      '||' +
+      String(r[2] || '')
+    );
   });
 }
 
@@ -836,6 +865,12 @@ function getMonitoringSortSpecs_() {
     { header: 'Impressions', ascending: false },
     { header: 'AveragePosition', ascending: true }
   ];
+  specs[SHEET_NAMES.PAGES] = [
+    { header: 'DataDate', ascending: false },
+    { header: 'Site', ascending: true },
+    { header: 'Impressions', ascending: false },
+    { header: 'Position', ascending: true }
+  ];
   specs[SHEET_NAMES.QUERY_PAGES] = [
     { header: 'DataDate', ascending: false },
     { header: 'Site', ascending: true },
@@ -865,6 +900,7 @@ function sortSheetsNewestFirst_(sheetNames) {
         SHEET_NAMES.SNAPSHOT,
         SHEET_NAMES.DAILY,
         SHEET_NAMES.QUERIES,
+        SHEET_NAMES.PAGES,
         SHEET_NAMES.QUERY_PAGES,
         SHEET_NAMES.URL_INDEX,
         SHEET_NAMES.LOG

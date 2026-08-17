@@ -133,6 +133,12 @@ function runDecisionEngine() {
   appendDecisionHistoryRows_(historyRows);
   applyTodayActionValidation_();
 
+  try {
+    runPortfolioEngine();
+  } catch (e) {
+    writeLog_('ERROR', '', 'Portfolio Engine 失败: ' + e.message);
+  }
+
   writeLog_('INFO', '', 'runDecisionEngine 结束 ' + summaries.join(' | '));
 }
 
@@ -268,6 +274,10 @@ function loadQueryRowsBySite_() {
 
 function loadQueryPageRowsBySite_() {
   return groupSheetRowsBySite_(SHEET_NAMES.QUERY_PAGES, QUERY_PAGE_HEADERS, 1);
+}
+
+function loadPageRowsBySite_() {
+  return groupSheetRowsBySite_(SHEET_NAMES.PAGES, PAGE_HEADERS, 1);
 }
 
 function groupSheetRowsBySite_(sheetName, headers, siteCol) {

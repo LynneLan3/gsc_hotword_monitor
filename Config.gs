@@ -10,6 +10,7 @@ var SHEET_NAMES = {
   SNAPSHOT: '每日快照',
   DAILY: 'GSC日数据',
   QUERIES: 'Query明细',
+  PAGES: 'Page明细',
   QUERY_PAGES: 'Query页面明细',
   URL_INDEX: 'URL索引',
   LOG: '运行日志',
@@ -22,6 +23,7 @@ var SHEET_NAMES = {
   EVALUATION_ELIGIBILITY: '评价资格',
   OUTCOME_DELTA: '效果变化',
   EFFECT_EVALUATION: '效果评价',
+  PORTFOLIO: '站点经营',
   TODAY_ACTIONS: '今日行动',
   OPPORTUNITIES: '内容机会',
   RESEARCH_JOBS: '研究任务',
@@ -51,6 +53,7 @@ var SHEET_UI_ORDER = [
   SHEET_NAMES.RESEARCH_JOBS,
   SHEET_NAMES.RESEARCH_REVIEW,
   SHEET_NAMES.SITE_STATUS,
+  SHEET_NAMES.PORTFOLIO,
   SHEET_NAMES.DECISION_HISTORY,
   SHEET_NAMES.DECISION_OUTCOMES,
   SHEET_NAMES.FEEDBACK_SAMPLES,
@@ -61,6 +64,7 @@ var SHEET_UI_ORDER = [
   SHEET_NAMES.RULES,
   SHEET_NAMES.DAILY,
   SHEET_NAMES.QUERIES,
+  SHEET_NAMES.PAGES,
   SHEET_NAMES.QUERY_PAGES,
   SHEET_NAMES.URL_INDEX,
   SHEET_NAMES.LOG,
@@ -107,6 +111,11 @@ var DAILY_HEADERS = [
 var QUERY_HEADERS = [
   'DataDate', 'Site', 'Query', 'Clicks', 'Impressions', 'CTR', 'AveragePosition'
 ];
+/** Fresh page-only 维度；Winner Page 事实源。rowLimit 仍用 QUERY_ROW_LIMIT */
+var PAGE_HEADERS = [
+  'DataDate', 'Site', 'PageURL', 'PagePath',
+  'Clicks', 'Impressions', 'CTR', 'Position'
+];
 /** Fresh Query×Page 联合维度；rowLimit 仍用 QUERY_ROW_LIMIT（小站够用，不保证长期完整） */
 var QUERY_PAGE_HEADERS = [
   'DataDate', 'Site', 'Query', 'PageURL', 'PagePath',
@@ -130,6 +139,54 @@ var SITE_STATUS_HEADERS = [
   'DomainScore',
   'LifecycleStage', 'RecommendedAction', 'Priority', 'Reason'
 ];
+
+/**
+ * 站点经营（Portfolio / Investment Layer）。
+ * 显示层中文；InvestmentTier / PortfolioAction / WinnerIntent 单元格仍写英文 enum。
+ * 不替代 RecommendedAction，不改 DomainScore。
+ */
+var PORTFOLIO_HEADERS = [
+  '运行日期',
+  '站点',
+  '投入档位',
+  '经营动作',
+  '赢家页面',
+  '赢家意图',
+  '赢家页点击7日',
+  '赢家页曝光7日',
+  '攻略查询数7日',
+  '意图类别数',
+  '点击7日',
+  '曝光7日',
+  'Top20查询数',
+  'DomainScore',
+  '最近内容更新',
+  '人工经营决定',
+  '人工原因',
+  '下次复盘日期'
+];
+
+var INVESTMENT_TIER = {
+  T0_TEST: 'T0_TEST',
+  T1_TRACTION: 'T1_TRACTION',
+  T2_WINNER: 'T2_WINNER',
+  FROZEN: 'FROZEN'
+};
+
+var PORTFOLIO_ACTION = {
+  INVEST: 'INVEST',
+  HOLD: 'HOLD',
+  FREEZE: 'FREEZE'
+};
+
+/** B1 经营层实验阈值（偏保守；不是 Google / SEO 官方标准） */
+var PORTFOLIO_V1 = {
+  TRACTION_MIN_IMPRESSIONS_7D: 30,
+  INTENT_BREADTH_MIN: 3,
+  FREEZE_MIN_DAY: 21,
+  WINNER_LEAD_RATIO: 1.5,
+  REVIEW_EVERY_DAYS: 7
+};
 
 /**
  * Decision Snapshot（append-only）。只记录真正进入「今日行动」的判断。
@@ -935,7 +992,7 @@ function getMetricGuideRows_() {
     ],
     [
       'Clicks',
-      '每日快照 / GSC日数据 / Query明细 / Query页面明细 / 内容机会',
+      '每日快照 / GSC日数据 / Query明细 / Page明细 / Query页面明细 / 内容机会',
       '原始事实',
       'Google Search Console Search Analytics API',
       'GSC 直接返回的 clicks',
@@ -948,7 +1005,7 @@ function getMetricGuideRows_() {
     ],
     [
       'Impressions',
-      '每日快照 / GSC日数据 / Query明细 / Query页面明细 / 内容机会',
+      '每日快照 / GSC日数据 / Query明细 / Page明细 / Query页面明细 / 内容机会',
       '原始事实',
       'Google Search Console Search Analytics API',
       'GSC 直接返回的 impressions',
@@ -961,7 +1018,7 @@ function getMetricGuideRows_() {
     ],
     [
       'CTR',
-      '每日快照 / GSC日数据 / Query明细 / Query页面明细 / 内容机会',
+      '每日快照 / GSC日数据 / Query明细 / Page明细 / Query页面明细 / 内容机会',
       '原始事实',
       'Google Search Console Search Analytics API',
       'GSC API 返回的 ctr 字段（非本地 Clicks÷Impressions 重算）',
@@ -974,7 +1031,7 @@ function getMetricGuideRows_() {
     ],
     [
       'Average Position',
-      '每日快照 / GSC日数据 / Query明细 / Query页面明细 / 内容机会',
+      '每日快照 / GSC日数据 / Query明细 / Page明细 / Query页面明细 / 内容机会',
       '原始事实',
       'Google Search Console Search Analytics API',
       'GSC 返回的 position（平均排名；数值越小越好）',
@@ -1000,16 +1057,29 @@ function getMetricGuideRows_() {
     ],
     [
       'Landing Page / Page',
-      'Query页面明细 / 内容机会',
+      'Page明细 / Query页面明细 / 内容机会',
       '原始事实',
-      'Google Search Console（Query × Page 维度）',
-      'GSC 返回的承接该 Query 的页面 URL/Path',
-      '判断 Google 当前用哪个页承接该词；影响扩写已有页 vs 新内容建议',
-      '是（Opportunity 动作）',
+      'Google Search Console（page 维度 / Query × Page 维度）',
+      'Page明细：page-only 的 URL/Path。Query页面明细：承接该 Query 的页面 URL/Path',
+      'Page明细用于 Winner Page；Query×Page 用于核对词落到了哪个页',
+      '是（经营层 Winner Page；Opportunity 动作）',
       'Hub / 相关 Guide 路径规则见 Opportunity Engine',
       '外部事实（Google Search Console）',
       '较稳定',
-      '页面归属是 GSC 事实；是否 Hub / 是否相关 Guide 是项目规则。'
+      '页面归属是 GSC 事实；是否 Hub / 是否相关 Guide 是项目规则。Page-only 与 Query×Page 因隐私截断可能不一致。'
+    ],
+    [
+      'Page明细',
+      'Page明细 / 站点经营',
+      '原始事实',
+      'Google Search Console Search Analytics API（dimensions=page, dataState=all）',
+      '按日 page-only 行：DataDate+Site+PageURL 唯一；Clicks/Impressions/CTR/Position 为 GSC 原始值',
+      'Page Performance 事实源；Portfolio Winner Page 只读本表，不读 Query×Page',
+      '是（经营层 Winner Page）',
+      '每日滚动最近 FRESH_QUERY_DAYS=5 天；历史用 14 日补采',
+      '外部事实（Google Search Console）',
+      '实验中',
+      'Query×Page 行数少不等于页面没有点击。Winner Page 必须以 Page明细为准。'
     ],
     [
       'RunDate',
@@ -1231,6 +1301,32 @@ function getMetricGuideRows_() {
       '热词站项目当前评分模型',
       '实验中',
       '不是 Google 指标，也不是 SEO 行业标准。不要为提高 Domain Score 而刷分。'
+    ],
+    [
+      'InvestmentTier / PortfolioAction',
+      '站点经营',
+      '实验规则',
+      'classifyInvestmentTier_ / recommendPortfolioAction_（PORTFOLIO_V1）',
+      'T0_TEST：无 traction。T1_TRACTION：有 traction 但无赢家页。T2_WINNER：近 7 天有真实点击且曝光/排名明显领先的页面。FROZEN：Day≥21 且仍无 traction。INVEST：T2 且意图类别≥3。HOLD：默认观察。FREEZE：仅 FROZEN 档。不看 RecommendedAction',
+      '回答哪些站值得继续投入 / 只观察 / 冻结；与今日行动的 SEO Decision 独立',
+      '是（只写「站点经营」，不改今日行动）',
+      '曝光门槛 30；意图广度 3；冻结最早 Day 21；赢家领先比 1.5',
+      '热词站项目 B1 经营层实验参数',
+      '实验中',
+      '不是 Google 指标。PortfolioAction=HOLD 可以与 RecommendedAction=DOMAIN_UPGRADE 同时成立。'
+    ],
+    [
+      'WinnerPage / WinnerIntent',
+      '站点经营',
+      '系统计算',
+      'Page明细 7 日窗口聚合；WinnerIntent 另读 Query页面明细 + GUIDE_INTENT_CATEGORIES',
+      'Winner Page 按 Page明细汇总点击/曝光/最佳排名；必须有真实点击，且点击第一并在曝光或排名上明显领先。WinnerIntent 取赢家页在 Query×Page 中出现最多的 Guide Intent key；Query×Page 缺失时 WinnerIntent 可为空，不取消 Winner',
+      '识别当前最值得跟进的落地页，而不是再做一套评分模型',
+      '是（经营层）',
+      '点击≥1；相对第二名点击严格更高，或点击并列时曝光≥1.5 倍',
+      '确定性聚合 + 项目 Guide 词表',
+      '实验中',
+      '赢家页不是 Google 官方概念；无点击的曝光页不能当 Winner。不要用 Query×Page 判断页面是否 Winner。'
     ],
     [
       'DOMAIN_PREPARE / DOMAIN_UPGRADE / Fast Track',

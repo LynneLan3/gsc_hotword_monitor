@@ -186,7 +186,7 @@ function fetchFreshQueriesForRange(siteUrl, startDate, endDate, rowLimit) {
 }
 
 /**
- * Page 明细
+ * Page 明细（finalized，用于 GSC日数据 TopPages）
  */
 function fetchPages(siteUrl, dataDate, rowLimit) {
   rowLimit = rowLimit || QUERY_ROW_LIMIT;
@@ -197,6 +197,53 @@ function fetchPages(siteUrl, dataDate, rowLimit) {
     rowLimit: rowLimit
   });
   return (result && result.rows) || [];
+}
+
+/**
+ * 将 Search Analytics page-only 行标准化。
+ * 约定 keys[0]=page；缺键则跳过，不造假值。
+ * @param {Array=} rows
+ * @return {Array<{page:string,clicks:number,impressions:number,ctr:number,position:number}>}
+ */
+function normalizePageRows_(rows) {
+  var out = [];
+  if (!rows || !rows.length) return out;
+
+  for (var i = 0; i < rows.length; i++) {
+    var r = rows[i];
+    var keys = r && r.keys;
+    if (!keys || !keys.length) continue;
+    var page = keys[0];
+    if (!page) continue;
+    out.push({
+      page: String(page),
+      clicks: r.clicks || 0,
+      impressions: r.impressions || 0,
+      ctr: r.ctr || 0,
+      position: r.position || 0
+    });
+  }
+  return out;
+}
+
+/**
+ * Fresh Page 明细（dataState=all，与 fetchFreshQueries / Page明细同口径）
+ * 不要带 query 维度。本轮无 pagination。
+ * @param {string} siteUrl
+ * @param {string} dataDate yyyy-MM-dd
+ * @param {number=} rowLimit
+ * @return {Array<{page:string,clicks:number,impressions:number,ctr:number,position:number}>}
+ */
+function fetchFreshPages(siteUrl, dataDate, rowLimit) {
+  rowLimit = rowLimit || QUERY_ROW_LIMIT;
+  var result = searchAnalyticsQuery(siteUrl, {
+    startDate: dataDate,
+    endDate: dataDate,
+    dimensions: ['page'],
+    dataState: 'all',
+    rowLimit: rowLimit
+  });
+  return normalizePageRows_((result && result.rows) || []);
 }
 
 /**

@@ -9,6 +9,7 @@ function onOpen() {
     .addItem('整理工作表视图', 'organizeSheetUi')
     .addItem('立即运行一次', 'runDaily')
     .addItem('运行决策引擎', 'runDecisionEngine')
+    .addItem('重建站点经营', 'runPortfolioEngine')
     .addItem('观察决策结果', 'runDecisionOutcomeObservation')
     .addItem('同步人工决策', 'syncHumanDecisions')
     .addItem('记录内容更新', 'recordContentInterventionMenu')
@@ -24,6 +25,8 @@ function onOpen() {
     .addItem('创建开发任务', 'createDevelopmentTasks')
     .addItem('运行URL索引批次', 'runIndexAuditBatch')
     .addItem('回填最近14天GSC数据', 'backfill14Days')
+    .addItem('补采14天Query页面明细', 'backfillQueryPageDetails14Days')
+    .addItem('补采14天Page明细', 'backfillPageDetails14Days')
     .addSeparator()
     .addItem('测试GSC权限', 'testGscAccess')
     .addItem('运行自测', 'runSelfTests')
@@ -388,6 +391,23 @@ function processSiteDaily_(site, runDate) {
     }
   }
 
+  // 4d) Fresh Page-only → Page明细（Winner Page 事实源；失败不阻断主流程 / Status）
+  if (!permissionBlocked) {
+    try {
+      syncFreshPageDetails_(siteName, propertyUrl, runDate);
+    } catch (e) {
+      if (isGscPermissionError_(e)) {
+        writeLog_(
+          'ERROR',
+          siteName,
+          'PAGE_PERMISSION | siteUrl=' + propertyUrl + ' | ' + e.message
+        );
+      } else {
+        writeLog_('WARN', siteName, 'PAGE_FAILED | ' + e.message);
+      }
+    }
+  }
+
   // 5) FirstImpressionDate
   var firstImpression = getKnownFirstImpressionDate_(siteName);
   if (!firstImpression && site.day0 && latestDate && site.day0 <= latestDate) {
@@ -528,6 +548,67 @@ function syncFreshQueryDetails_(siteName, propertyUrl, runDate) {
 }
 
 /**
+ * 单日 Fresh Query×Page upsert（DataDate+Site+Query+PageURL）。
+ * 0 rows 为正常：不写、不删其它日期历史。
+ * @return {{inserted:number, updated:number, apiRowCount:number}}
+ */
+function upsertQueryPageDetailsForDate_(siteName, propertyUrl, dataDate) {
+  var rows = fetchFreshQueryPages(propertyUrl, dataDate, QUERY_ROW_LIMIT);
+  var inserted = 0;
+  var updated = 0;
+  var apiRowCount = 0;
+  for (var qi = 0; qi < rows.length; qi++) {
+    var qr = rows[qi];
+    if (!qr || !qr.query || !qr.page) continue;
+    apiRowCount++;
+    var result = upsertQueryPageRow_([
+      dataDate,
+      siteName,
+      qr.query,
+      qr.page,
+      pagePathFromUrl_(qr.page),
+      qr.clicks || 0,
+      qr.impressions || 0,
+      qr.ctr || 0,
+      qr.position || 0
+    ]);
+    if (result && result.action === 'update') updated++;
+    else inserted++;
+  }
+  return { inserted: inserted, updated: updated, apiRowCount: apiRowCount };
+}
+
+/**
+ * 单日 Fresh Page-only upsert（DataDate+Site+PageURL）。
+ * 0 rows 为正常：不写、不删其它日期历史。
+ * @return {{inserted:number, updated:number, apiRowCount:number}}
+ */
+function upsertPageDetailsForDate_(siteName, propertyUrl, dataDate) {
+  var rows = fetchFreshPages(propertyUrl, dataDate, QUERY_ROW_LIMIT);
+  var inserted = 0;
+  var updated = 0;
+  var apiRowCount = 0;
+  for (var pi = 0; pi < rows.length; pi++) {
+    var pr = rows[pi];
+    if (!pr || !pr.page) continue;
+    apiRowCount++;
+    var result = upsertPageRow_([
+      dataDate,
+      siteName,
+      pr.page,
+      pagePathFromUrl_(pr.page),
+      pr.clicks || 0,
+      pr.impressions || 0,
+      pr.ctr || 0,
+      pr.position || 0
+    ]);
+    if (result && result.action === 'update') updated++;
+    else inserted++;
+  }
+  return { inserted: inserted, updated: updated, apiRowCount: apiRowCount };
+}
+
+/**
  * 写入/更新近 FRESH_QUERY_DAYS 个 GSC 日的 Fresh Query×Page（upsert：DataDate+Site+Query+PageURL）。
  * 0 rows 为正常状态（该日暂无联合维度数据），不记 ERROR、不删历史。
  * 使用 QUERY_ROW_LIMIT=1000：Query×Page 行数可能多于 Query 单维，小站阶段够用，不保证长期完整。
@@ -542,26 +623,12 @@ function syncFreshQueryPageDetails_(siteName, propertyUrl, runDate) {
 
   for (var di = 0; di < dates.length; di++) {
     var dataDate = dates[di];
-    var rows = fetchFreshQueryPages(propertyUrl, dataDate, QUERY_ROW_LIMIT);
-    // Rows=0：正常结束该日，保留历史，不写错误
-    for (var qi = 0; qi < rows.length; qi++) {
-      var qr = rows[qi];
-      if (!qr || !qr.query || !qr.page) continue;
-      apiRowCount++;
-      var result = upsertQueryPageRow_([
-        dataDate,
-        siteName,
-        qr.query,
-        qr.page,
-        pagePathFromUrl_(qr.page),
-        qr.clicks || 0,
-        qr.impressions || 0,
-        qr.ctr || 0,
-        qr.position || 0
-      ]);
-      if (result && result.action === 'update') updated++;
-      else inserted++;
-      if (!maxWrittenDate || dataDate > maxWrittenDate) maxWrittenDate = dataDate;
+    var dayResult = upsertQueryPageDetailsForDate_(siteName, propertyUrl, dataDate);
+    inserted += dayResult.inserted;
+    updated += dayResult.updated;
+    apiRowCount += dayResult.apiRowCount;
+    if (dayResult.apiRowCount > 0 && (!maxWrittenDate || dataDate > maxWrittenDate)) {
+      maxWrittenDate = dataDate;
     }
   }
 
@@ -569,6 +636,49 @@ function syncFreshQueryPageDetails_(siteName, propertyUrl, runDate) {
     'INFO',
     siteName,
     'Fresh Query页面明细 | range=' +
+      range.startDate +
+      '~' +
+      range.endDate +
+      ' | apiMaxDataDate=' +
+      (maxWrittenDate || '无') +
+      ' | apiRows=' +
+      apiRowCount +
+      ' | inserted=' +
+      inserted +
+      ' | updated=' +
+      updated +
+      ' | dataState=all | rowLimit=' +
+      QUERY_ROW_LIMIT
+  );
+}
+
+/**
+ * 写入/更新近 FRESH_QUERY_DAYS 个 GSC 日的 Fresh Page-only（upsert：DataDate+Site+PageURL）。
+ * 0 rows 为正常状态，不记 ERROR、不删历史。
+ */
+function syncFreshPageDetails_(siteName, propertyUrl, runDate) {
+  var range = getFreshQueryDateRange_(runDate);
+  var dates = listDatesInclusive_(range.startDate, range.endDate);
+  var inserted = 0;
+  var updated = 0;
+  var apiRowCount = 0;
+  var maxWrittenDate = '';
+
+  for (var di = 0; di < dates.length; di++) {
+    var dataDate = dates[di];
+    var dayResult = upsertPageDetailsForDate_(siteName, propertyUrl, dataDate);
+    inserted += dayResult.inserted;
+    updated += dayResult.updated;
+    apiRowCount += dayResult.apiRowCount;
+    if (dayResult.apiRowCount > 0 && (!maxWrittenDate || dataDate > maxWrittenDate)) {
+      maxWrittenDate = dataDate;
+    }
+  }
+
+  writeLog_(
+    'INFO',
+    siteName,
+    'Fresh Page明细 | range=' +
       range.startDate +
       '~' +
       range.endDate +
@@ -620,8 +730,8 @@ function computeStatus_(opts) {
 }
 
 /**
- * 回填最近 14 天：写入 GSC日数据 + Query明细（幂等）
- * 不做 sitemap / URL Inspection
+ * 回填最近 14 天：写入 GSC日数据 + Query明细 + Query页面明细（幂等）
+ * 不做 sitemap / URL Inspection，不跑 Decision / Portfolio
  */
 function backfill14Days() {
   setupSheets();
@@ -651,7 +761,9 @@ function backfill14Days() {
 
   writeLog_('INFO', '', 'backfill14Days 结束');
   sortMonitoringSheetsNewestFirst_();
-  SpreadsheetApp.getUi().alert('回填完成。请查看「GSC日数据」和「Query明细」。');
+  SpreadsheetApp.getUi().alert(
+    '回填完成。请查看「GSC日数据」「Query明细」「Page明细」和「Query页面明细」。'
+  );
 }
 
 function backfillSite_(site, startDate, endDate) {
@@ -711,6 +823,182 @@ function backfillSite_(site, startDate, endDate) {
   } catch (e) {
     writeLog_('WARN', site.name, '回填 Fresh Query 失败: ' + e.message);
   }
+
+  try {
+    backfillQueryPageDetailsForSite_(site, startDate, endDate);
+  } catch (e) {
+    writeLog_('WARN', site.name, '回填 Query页面明细失败: ' + e.message);
+  }
+
+  try {
+    backfillPageDetailsForSite_(site, startDate, endDate);
+  } catch (e) {
+    writeLog_('WARN', site.name, '回填 Page明细失败: ' + e.message);
+  }
+}
+
+/**
+ * 只补采 Query页面明细（最近 BACKFILL_DAYS 个 GSC 日）。
+ * 不写 GSC日数据 / Query明细，不跑 Decision / Portfolio。
+ */
+function backfillQueryPageDetails14Days() {
+  setupSheets();
+  var sites = getEnabledSites();
+  var endDate = gscTodayStr_();
+  var startDate = gscDaysAgoStr_(BACKFILL_DAYS - 1);
+  writeLog_(
+    'INFO',
+    '',
+    'backfillQueryPageDetails14Days 开始 ' +
+      startDate +
+      ' ~ ' +
+      endDate +
+      ' (' +
+      GSC_TIMEZONE +
+      ')'
+  );
+
+  for (var i = 0; i < sites.length; i++) {
+    var site = sites[i];
+    try {
+      backfillQueryPageDetailsForSite_(site, startDate, endDate);
+    } catch (e) {
+      writeLog_('ERROR', site.name, 'Query页面明细回填失败: ' + e.message);
+    }
+  }
+
+  writeLog_('INFO', '', 'backfillQueryPageDetails14Days 结束');
+  sortMonitoringSheetsNewestFirst_();
+  alertUi_('Query页面明细补采完成。请查看「Query页面明细」。');
+}
+
+/**
+ * 在 startDate~endDate 内，按 GSC 已有数据日补采 Query×Page。
+ * 单日失败记 WARN 并继续；空结果不删历史。
+ */
+function backfillQueryPageDetailsForSite_(site, startDate, endDate) {
+  var dateRows = fetchDateRows(site.propertyUrl, startDate, endDate);
+  writeLog_('INFO', site.name, 'Query页面明细回填可用日期数=' + dateRows.length);
+
+  var inserted = 0;
+  var updated = 0;
+  var apiRowCount = 0;
+
+  for (var i = 0; i < dateRows.length; i++) {
+    var dataDate = dateRows[i].keys && dateRows[i].keys[0];
+    if (!dataDate) continue;
+    try {
+      var dayResult = upsertQueryPageDetailsForDate_(
+        site.name,
+        site.propertyUrl,
+        dataDate
+      );
+      inserted += dayResult.inserted;
+      updated += dayResult.updated;
+      apiRowCount += dayResult.apiRowCount;
+    } catch (e) {
+      writeLog_('WARN', site.name, dataDate + ' Query页面明细失败: ' + e.message);
+    }
+  }
+
+  writeLog_(
+    'INFO',
+    site.name,
+    'Query页面明细回填 | range=' +
+      startDate +
+      '~' +
+      endDate +
+      ' | apiRows=' +
+      apiRowCount +
+      ' | inserted=' +
+      inserted +
+      ' | updated=' +
+      updated +
+      ' | dataState=all | rowLimit=' +
+      QUERY_ROW_LIMIT
+  );
+}
+
+/**
+ * 只补采 Page明细（最近 BACKFILL_DAYS 个 GSC 日）。
+ * 不写 GSC日数据 / Query明细 / Query页面明细，不跑 Decision / Portfolio。
+ */
+function backfillPageDetails14Days() {
+  setupSheets();
+  var sites = getEnabledSites();
+  var endDate = gscTodayStr_();
+  var startDate = gscDaysAgoStr_(BACKFILL_DAYS - 1);
+  writeLog_(
+    'INFO',
+    '',
+    'backfillPageDetails14Days 开始 ' +
+      startDate +
+      ' ~ ' +
+      endDate +
+      ' (' +
+      GSC_TIMEZONE +
+      ')'
+  );
+
+  for (var i = 0; i < sites.length; i++) {
+    var site = sites[i];
+    try {
+      backfillPageDetailsForSite_(site, startDate, endDate);
+    } catch (e) {
+      writeLog_('ERROR', site.name, 'Page明细回填失败: ' + e.message);
+    }
+  }
+
+  writeLog_('INFO', '', 'backfillPageDetails14Days 结束');
+  sortMonitoringSheetsNewestFirst_();
+  alertUi_('Page明细补采完成。请查看「Page明细」。');
+}
+
+/**
+ * 在 startDate~endDate 内，按 GSC 已有数据日补采 Page-only。
+ * 单日失败记 WARN 并继续；空结果不删历史。
+ */
+function backfillPageDetailsForSite_(site, startDate, endDate) {
+  var dateRows = fetchDateRows(site.propertyUrl, startDate, endDate);
+  writeLog_('INFO', site.name, 'Page明细回填可用日期数=' + dateRows.length);
+
+  var inserted = 0;
+  var updated = 0;
+  var apiRowCount = 0;
+
+  for (var i = 0; i < dateRows.length; i++) {
+    var dataDate = dateRows[i].keys && dateRows[i].keys[0];
+    if (!dataDate) continue;
+    try {
+      var dayResult = upsertPageDetailsForDate_(
+        site.name,
+        site.propertyUrl,
+        dataDate
+      );
+      inserted += dayResult.inserted;
+      updated += dayResult.updated;
+      apiRowCount += dayResult.apiRowCount;
+    } catch (e) {
+      writeLog_('WARN', site.name, dataDate + ' Page明细失败: ' + e.message);
+    }
+  }
+
+  writeLog_(
+    'INFO',
+    site.name,
+    'Page明细回填 | range=' +
+      startDate +
+      '~' +
+      endDate +
+      ' | apiRows=' +
+      apiRowCount +
+      ' | inserted=' +
+      inserted +
+      ' | updated=' +
+      updated +
+      ' | dataState=all | rowLimit=' +
+      QUERY_ROW_LIMIT
+  );
 }
 
 /**
