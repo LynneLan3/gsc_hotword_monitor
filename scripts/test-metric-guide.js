@@ -57,7 +57,7 @@ var rowsMatch = configSrc.match(
 );
 assert(rowsMatch, 'cannot parse getMetricGuideRows_ return array');
 var rows = eval(rowsMatch[1]);
-assert(rows.length === 68, 'metric count must stay 68, got ' + rows.length);
+assert(rows.length === 69, 'metric count must stay 69, got ' + rows.length);
 
 var ALLOWED_TYPES = {
   原始事实: true,
@@ -122,6 +122,7 @@ function mustHave(name) {
   'DomainScore',
   'InvestmentTier / PortfolioAction',
   'WinnerPage / WinnerIntent',
+  'Winner Asset Candidate',
   'Page明细',
   '搜索意图 / Opportunity Level / 内容机会动作',
   '相关度 / 发现主题 / 玩家问题 / Research Recommendation',

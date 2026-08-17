@@ -24,6 +24,7 @@ var SHEET_NAMES = {
   OUTCOME_DELTA: '效果变化',
   EFFECT_EVALUATION: '效果评价',
   PORTFOLIO: '站点经营',
+  WINNER_ASSETS: '内容资产',
   TODAY_ACTIONS: '今日行动',
   OPPORTUNITIES: '内容机会',
   RESEARCH_JOBS: '研究任务',
@@ -54,6 +55,7 @@ var SHEET_UI_ORDER = [
   SHEET_NAMES.RESEARCH_REVIEW,
   SHEET_NAMES.SITE_STATUS,
   SHEET_NAMES.PORTFOLIO,
+  SHEET_NAMES.WINNER_ASSETS,
   SHEET_NAMES.DECISION_HISTORY,
   SHEET_NAMES.DECISION_OUTCOMES,
   SHEET_NAMES.FEEDBACK_SAMPLES,
@@ -187,6 +189,78 @@ var PORTFOLIO_V1 = {
   WINNER_LEAD_RATIO: 1.5,
   REVIEW_EVERY_DAYS: 7
 };
+
+/** B2 内容资产候选层 enum（单元格仍写英文） */
+var ASSET_TYPE = {
+  VERIFIED_GUIDE: 'VERIFIED_GUIDE',
+  ANSWER_DATABASE: 'ANSWER_DATABASE',
+  COMPARISON_MATRIX: 'COMPARISON_MATRIX',
+  CHECKLIST: 'CHECKLIST',
+  STATS_TABLE: 'STATS_TABLE',
+  TIMELINE: 'TIMELINE',
+  OTHER: 'OTHER'
+};
+
+var ASSET_LEVEL = {
+  NORMAL_PAGE: 'NORMAL_PAGE',
+  EVIDENCE_PAGE: 'EVIDENCE_PAGE',
+  LINKABLE_ASSET: 'LINKABLE_ASSET'
+};
+
+var ASSET_EVIDENCE_STATUS = {
+  UNKNOWN: 'UNKNOWN',
+  PARTIAL: 'PARTIAL',
+  READY: 'READY'
+};
+
+var ASSET_HUMAN_DECISION = {
+  TODO: 'TODO',
+  APPROVE: 'APPROVE',
+  HOLD: 'HOLD',
+  SKIP: 'SKIP'
+};
+
+var ASSET_STATUS = {
+  CANDIDATE: 'CANDIDATE',
+  RESEARCH: 'RESEARCH',
+  READY: 'READY',
+  DONE: 'DONE',
+  ARCHIVED: 'ARCHIVED'
+};
+
+/** 已进入人工流程的状态；重复运行时不覆盖 Status */
+var ASSET_LOCKED_STATUSES = {
+  RESEARCH: true,
+  READY: true,
+  DONE: true,
+  ARCHIVED: true
+};
+
+/**
+ * 内容资产（Winner Asset Candidate Layer）。
+ * 只读「站点经营」；不重新计算 Winner；不接 Research Job。
+ */
+var WINNER_ASSET_HEADERS = [
+  '生成时间',
+  '站点',
+  '赢家页面',
+  '赢家意图',
+  '赢家页点击7日',
+  '赢家页曝光7日',
+  '攻略查询数7日',
+  '意图类别数',
+  '资产候选类型',
+  '资产候选标题',
+  '候选理由',
+  '当前资产级别',
+  '证据状态',
+  '缺失证据',
+  '人工决定',
+  '人工备注',
+  '状态',
+  '创建时间',
+  '更新时间'
+];
 
 /**
  * Decision Snapshot（append-only）。只记录真正进入「今日行动」的判断。
@@ -1327,6 +1401,19 @@ function getMetricGuideRows_() {
       '确定性聚合 + 项目 Guide 词表',
       '实验中',
       '赢家页不是 Google 官方概念；无点击的曝光页不能当 Winner。不要用 Query×Page 判断页面是否 Winner。'
+    ],
+    [
+      'Winner Asset Candidate',
+      '内容资产',
+      '系统计算',
+      'runWinnerAssetEngine_ 只读「站点经营」T2_WINNER + 非首页 WinnerPage',
+      '按规则建议 AssetType / AssetLevel / EvidenceStatus / 候选理由；Site+WinnerPage 唯一；重复运行更新 metrics 但保留人工字段与已进入 RESEARCH/READY/DONE 的状态',
+      '把已赢页面转成可人工判断的资产升级候选，不自动改站、不自动创建 Research Job',
+      '否（人工决定 APPROVE 后才进入 B2-B）',
+      '首页 `/` 第一版 skip；save_progress→COMPARISON_MATRIX；intent 空→VERIFIED_GUIDE',
+      '热词站项目 B2 资产候选实验规则',
+      '实验中',
+      '不等于自动内容生产。Approximately Up 类 homepage winner 默认不生成 candidate。'
     ],
     [
       'DOMAIN_PREPARE / DOMAIN_UPGRADE / Fast Track',

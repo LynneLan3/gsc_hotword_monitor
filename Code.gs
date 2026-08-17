@@ -10,6 +10,7 @@ function onOpen() {
     .addItem('立即运行一次', 'runDaily')
     .addItem('运行决策引擎', 'runDecisionEngine')
     .addItem('重建站点经营', 'runPortfolioEngine')
+    .addItem('重建内容资产候选', 'runWinnerAssetEngine')
     .addItem('观察决策结果', 'runDecisionOutcomeObservation')
     .addItem('同步人工决策', 'syncHumanDecisions')
     .addItem('记录内容更新', 'recordContentInterventionMenu')
