@@ -745,8 +745,15 @@ var RESEARCH_JOB_HEADERS = [
   '关联搜索词',
   '研究结果', '证据数量', '结果路径', '完成时间', '错误信息',
   '审核摘要', '审核链接',
-  '审核决定', '审核备注', '审核时间'
+  '审核决定', '审核备注', '审核时间',
+  '研究类型'
 ];
+
+/** 研究任务来源类型（单元格写英文；旧行空值视为 CONTENT_RESEARCH） */
+var RESEARCH_TYPE = {
+  CONTENT_RESEARCH: 'CONTENT_RESEARCH',
+  ASSET_RESEARCH: 'ASSET_RESEARCH'
+};
 
 /**
  * Human Gate：Research 证据明细（运营在 Sheet 内审核，无需下载 JSON）。

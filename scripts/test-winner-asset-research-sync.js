@@ -684,10 +684,10 @@ assert(
   'WinnerAsset must not call createDevelopmentTasks'
 );
 assert(
-  /'审核决定', '审核备注', '审核时间'\s*\];/.test(configSrc),
-  'RESEARCH_JOB_HEADERS contract unchanged'
+  /'审核决定', '审核备注', '审核时间',\s*'研究类型'\s*\];/.test(configSrc),
+  'RESEARCH_JOB_HEADERS appends 研究类型 after 审核时间'
 );
-assert(!/RESEARCH_TYPE/.test(configSrc), 'must not add RESEARCH_TYPE');
+assert(/var RESEARCH_TYPE/.test(configSrc), 'defines RESEARCH_TYPE for ASSET_RESEARCH');
 assert(WINNER_ASSET_HEADERS.length === 21, 'no new winner asset columns');
 assert(WINNER_ASSET_HEADERS[19] === '研究任务ID', 'binding stays 研究任务ID');
 

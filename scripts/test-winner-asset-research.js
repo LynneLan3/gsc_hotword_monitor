@@ -1,10 +1,11 @@
 /**
- * B2-B 本地自测：Winner Asset Human Gate → 标准 Research Job。
+ * B2-B1 本地自测：Winner Asset APPROVE → ASSET_RESEARCH Job。
  * 运行：node scripts/test-winner-asset-research.js
  */
 
 var fs = require('fs');
 var path = require('path');
+var vm = require('vm');
 
 function assert(cond, msg) {
   if (!cond) throw new Error(msg);
@@ -55,12 +56,26 @@ var RESEARCH_JOB_HEADERS = [
   '审核链接',
   '审核决定',
   '审核备注',
-  '审核时间'
+  '审核时间',
+  '研究类型'
 ];
 
-var ASSET_TYPE = { VERIFIED_GUIDE: 'VERIFIED_GUIDE', COMPARISON_MATRIX: 'COMPARISON_MATRIX' };
+var RESEARCH_TYPE = {
+  CONTENT_RESEARCH: 'CONTENT_RESEARCH',
+  ASSET_RESEARCH: 'ASSET_RESEARCH'
+};
+var ASSET_TYPE = {
+  VERIFIED_GUIDE: 'VERIFIED_GUIDE',
+  COMPARISON_MATRIX: 'COMPARISON_MATRIX'
+};
+var ASSET_LEVEL = { NORMAL_PAGE: 'NORMAL_PAGE', EVIDENCE_PAGE: 'EVIDENCE_PAGE' };
 var ASSET_EVIDENCE_STATUS = { UNKNOWN: 'UNKNOWN', PARTIAL: 'PARTIAL', READY: 'READY' };
-var ASSET_HUMAN_DECISION = { TODO: 'TODO', APPROVE: 'APPROVE', HOLD: 'HOLD', SKIP: 'SKIP' };
+var ASSET_HUMAN_DECISION = {
+  TODO: 'TODO',
+  APPROVE: 'APPROVE',
+  HOLD: 'HOLD',
+  SKIP: 'SKIP'
+};
 var ASSET_HUMAN_DECISION_LABELS = {
   TODO: '待处理',
   APPROVE: '批准研究',
@@ -87,12 +102,16 @@ var OPPORTUNITY_ACTION_LABELS = { RESEARCH_EXPAND_EXISTING: '研究并扩充现�
 var RESEARCH_JOB_STATUS_LABELS = { PENDING: '待处理' };
 
 var NOW_TS = '2026-08-17 18:00:00';
-
-function cellAt_(row, idx) {
-  if (idx === undefined || idx === null || idx < 0) return '';
-  var v = row[idx];
-  return v === null || v === undefined ? '' : v;
-}
+var CONTRACT_FIELDS = [
+  'job_id',
+  'game',
+  'topic',
+  'existing_page',
+  'opportunity_level',
+  'recommended_action',
+  'source_query',
+  'created_at'
+];
 
 function opportunityLabel_(map, key) {
   return (map && map[key]) || key || '';
@@ -103,92 +122,6 @@ function slugifyResearch_(text) {
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, '-')
     .replace(/^-+|-+$/g, '');
-}
-
-function winnerAssetPathname_(value) {
-  var raw = String(value || '').trim();
-  if (!raw) return '';
-  var m = /^https?:\/\/[^\/?#]+(\/[^?#]*)?/i.exec(raw);
-  if (m) return m[1] || '/';
-  return raw;
-}
-
-function winnerAssetDecisionCol_(headerRow) {
-  var headers = headerRow && headerRow.length ? headerRow : WINNER_ASSET_HEADERS;
-  var map = {};
-  for (var i = 0; i < headers.length; i++) {
-    var name = String(headers[i] || '').trim();
-    if (name && map[name] === undefined) map[name] = i;
-  }
-  function idx_(name, fallback) {
-    return map[name] !== undefined ? map[name] : fallback;
-  }
-  return {
-    siteName: idx_('站点', 1),
-    winnerPage: idx_('赢家页面', 2),
-    winnerIntent: idx_('赢家意图', 3),
-    assetType: idx_('资产候选类型', 8),
-    assetTitle: idx_('资产候选标题', 9),
-    evidenceStatus: idx_('证据状态', 12),
-    humanDecision: idx_('人工决定', 14),
-    humanNote: idx_('人工备注', 15),
-    status: idx_('状态', 16),
-    updatedAt: idx_('更新时间', 18),
-    researchJobId: idx_('研究任务ID', 19),
-    researchRequestedAt: idx_('研究请求时间', 20)
-  };
-}
-
-function emptyWinnerAssetDecisionSummary_() {
-  return {
-    processed: 0,
-    researchCreated: 0,
-    researchExisting: 0,
-    ready: 0,
-    archived: 0,
-    held: 0,
-    skipped: 0
-  };
-}
-
-function normalizeAssetHumanDecision_(value) {
-  var raw = String(value || '').trim();
-  if (!raw) return ASSET_HUMAN_DECISION.TODO;
-  if (ASSET_HUMAN_DECISION_LABELS[raw]) return raw;
-  var keys = Object.keys(ASSET_HUMAN_DECISION_LABELS);
-  for (var i = 0; i < keys.length; i++) {
-    if (ASSET_HUMAN_DECISION_LABELS[keys[i]] === raw) return keys[i];
-  }
-  return raw;
-}
-
-function makeWinnerAssetResearchJobId_(siteName, winnerPage) {
-  var prefix = RESEARCH_GAME_SLUGS[siteName] || slugifyResearch_(siteName);
-  var pathName = winnerAssetPathname_(winnerPage);
-  var slug = '';
-  if (pathName && pathName !== '/') {
-    var segments = String(pathName).split('/').filter(function (s) {
-      return !!s;
-    });
-    if (segments.length) slug = slugifyResearch_(segments[segments.length - 1]);
-  }
-  if (!slug) slug = 'page';
-  if (slug.length > 40) slug = slug.substring(0, 40).replace(/-+$/, '');
-  return ('asset-' + prefix + '-' + slug).replace(/-+/g, '-').replace(/^-|-$/g, '');
-}
-
-function buildWinnerAssetResearchTopic_(opts) {
-  opts = opts || {};
-  var title = String(opts.assetTitle || '').trim();
-  if (title) return title;
-  var intent = String(opts.winnerIntent || '').trim();
-  if (intent === 'save_progress') return 'save progress / carry over / reset / rewards';
-  if (intent === 'platform') return 'platform availability / console / PC';
-  if (intent) return intent.replace(/_/g, ' ');
-  var assetType = String(opts.assetType || '').trim();
-  if (assetType === ASSET_TYPE.VERIFIED_GUIDE) return 'verified guide evidence';
-  if (assetType) return assetType.replace(/_/g, ' ').toLowerCase();
-  return 'winner page evidence';
 }
 
 function researchJobSheetRow_(job, site, createdAt) {
@@ -213,165 +146,82 @@ function researchJobSheetRow_(job, site, createdAt) {
     '',
     '',
     '',
-    ''
+    '',
+    job.research_type || RESEARCH_TYPE.CONTENT_RESEARCH
   ];
 }
 
-function buildWinnerAssetResearchJob_(asset, createdAt) {
-  var topic = buildWinnerAssetResearchTopic_(asset);
-  var job = {
-    job_id: makeWinnerAssetResearchJobId_(asset.siteName, asset.winnerPage),
-    game: asset.siteName,
-    topic: topic,
-    existing_page: String(asset.winnerPage || '').trim(),
-    opportunity_level: OPPORTUNITY_LEVELS.HIGH,
-    recommended_action: OPPORTUNITY_ACTIONS.RESEARCH_EXPAND_EXISTING,
-    source_query: topic,
-    related_queries: '',
-    created_at: createdAt
-  };
-  return { job: job, row: researchJobSheetRow_(job, asset.siteName, createdAt) };
-}
-
-function padWinnerAssetRow_(row) {
-  var out = (row || []).slice();
-  while (out.length < WINNER_ASSET_HEADERS.length) out.push('');
-  return out;
-}
-
-function processWinnerAssetDecisionRows_(assetRows, opts) {
-  opts = opts || {};
-  var nowTs = opts.nowTs || '';
-  var col = winnerAssetDecisionCol_(opts.assetHeaders);
-  var existingJobIds = opts.existingJobIds || {};
-  var summary = emptyWinnerAssetDecisionSummary_();
-  var jobsToCreate = [];
-  var claimedIds = {};
-  var outAssets = [];
-  var changed = false;
-
-  for (var i = 0; i < (assetRows || []).length; i++) {
-    var row = padWinnerAssetRow_(assetRows[i]);
-    outAssets.push(row);
-    var status = String(cellAt_(row, col.status) || '').trim() || ASSET_STATUS.CANDIDATE;
-    var decision = normalizeAssetHumanDecision_(cellAt_(row, col.humanDecision));
-    var note = String(cellAt_(row, col.humanNote) || '');
-    var title = String(cellAt_(row, col.assetTitle) || '');
-
-    if (ASSET_LOCKED_STATUSES[status]) {
-      summary.skipped += 1;
-      continue;
+var sandbox = {
+  WINNER_ASSET_HEADERS: WINNER_ASSET_HEADERS,
+  RESEARCH_JOB_HEADERS: RESEARCH_JOB_HEADERS,
+  RESEARCH_TYPE: RESEARCH_TYPE,
+  ASSET_TYPE: ASSET_TYPE,
+  ASSET_LEVEL: ASSET_LEVEL,
+  ASSET_EVIDENCE_STATUS: ASSET_EVIDENCE_STATUS,
+  ASSET_HUMAN_DECISION: ASSET_HUMAN_DECISION,
+  ASSET_HUMAN_DECISION_LABELS: ASSET_HUMAN_DECISION_LABELS,
+  ASSET_HUMAN_DECISION_OPTIONS: [
+    ASSET_HUMAN_DECISION_LABELS.TODO,
+    ASSET_HUMAN_DECISION_LABELS.APPROVE,
+    ASSET_HUMAN_DECISION_LABELS.HOLD,
+    ASSET_HUMAN_DECISION_LABELS.SKIP
+  ],
+  ASSET_STATUS: ASSET_STATUS,
+  ASSET_LOCKED_STATUSES: ASSET_LOCKED_STATUSES,
+  RESEARCH_GAME_SLUGS: RESEARCH_GAME_SLUGS,
+  OPPORTUNITY_LEVELS: OPPORTUNITY_LEVELS,
+  OPPORTUNITY_ACTIONS: OPPORTUNITY_ACTIONS,
+  RESEARCH_JOB_STATUS: RESEARCH_JOB_STATUS,
+  OPPORTUNITY_LEVEL_LABELS: OPPORTUNITY_LEVEL_LABELS,
+  OPPORTUNITY_ACTION_LABELS: OPPORTUNITY_ACTION_LABELS,
+  RESEARCH_JOB_STATUS_LABELS: RESEARCH_JOB_STATUS_LABELS,
+  PORTFOLIO_HEADERS: [],
+  SHEET_NAMES: {},
+  opportunityLabel_: opportunityLabel_,
+  slugifyResearch_: slugifyResearch_,
+  researchJobSheetRow_: researchJobSheetRow_,
+  enumFromLabel_: function (map, raw) {
+    var s = String(raw || '').trim();
+    if (!s) return '';
+    if (map && map[s]) return s;
+    var keys = Object.keys(map || {});
+    for (var i = 0; i < keys.length; i++) {
+      if (map[keys[i]] === s) return keys[i];
     }
-    if (status !== ASSET_STATUS.CANDIDATE) {
-      summary.skipped += 1;
-      continue;
-    }
+    return s;
+  },
+  RESEARCH_REVIEW_DECISION: { APPROVE: 'APPROVE' },
+  RESEARCH_REVIEW_DECISION_LABELS: { APPROVE: '批准开发' }
+};
 
-    summary.processed += 1;
-
-    if (decision === ASSET_HUMAN_DECISION.TODO) {
-      summary.skipped += 1;
-      continue;
-    }
-    if (decision === ASSET_HUMAN_DECISION.HOLD) {
-      summary.held += 1;
-      continue;
-    }
-    if (decision === ASSET_HUMAN_DECISION.SKIP) {
-      row[col.status] = ASSET_STATUS.ARCHIVED;
-      row[col.updatedAt] = nowTs;
-      row[col.humanNote] = note;
-      row[col.assetTitle] = title;
-      summary.archived += 1;
-      changed = true;
-      continue;
-    }
-    if (decision !== ASSET_HUMAN_DECISION.APPROVE) {
-      summary.skipped += 1;
-      continue;
-    }
-
-    var evidence = String(cellAt_(row, col.evidenceStatus) || '').trim();
-    if (evidence === ASSET_EVIDENCE_STATUS.READY) {
-      row[col.status] = ASSET_STATUS.READY;
-      row[col.updatedAt] = nowTs;
-      row[col.humanNote] = note;
-      row[col.assetTitle] = title;
-      summary.ready += 1;
-      changed = true;
-      continue;
-    }
-
-    var siteName = String(cellAt_(row, col.siteName) || '').trim();
-    var winnerPage = String(cellAt_(row, col.winnerPage) || '').trim();
-    var stableId = makeWinnerAssetResearchJobId_(siteName, winnerPage);
-    var existingId = String(cellAt_(row, col.researchJobId) || '').trim();
-    var alreadyInSheet = !!(existingJobIds[stableId] || claimedIds[stableId]);
-
-    if (existingId || alreadyInSheet) {
-      var reuseId = existingId || stableId;
-      row[col.researchJobId] = reuseId;
-      if (!String(cellAt_(row, col.researchRequestedAt) || '').trim()) {
-        row[col.researchRequestedAt] = nowTs;
-      }
-      row[col.status] = ASSET_STATUS.RESEARCH;
-      row[col.updatedAt] = nowTs;
-      row[col.humanNote] = note;
-      row[col.assetTitle] = title;
-      summary.researchExisting += 1;
-      changed = true;
-      continue;
-    }
-
-    var built = buildWinnerAssetResearchJob_(
-      {
-        siteName: siteName,
-        winnerPage: winnerPage,
-        winnerIntent: String(cellAt_(row, col.winnerIntent) || '').trim(),
-        assetType: String(cellAt_(row, col.assetType) || '').trim(),
-        assetTitle: title
-      },
-      nowTs
-    );
-    jobsToCreate.push(built);
-    claimedIds[stableId] = true;
-    row[col.researchJobId] = built.job.job_id;
-    row[col.researchRequestedAt] = nowTs;
-    row[col.status] = ASSET_STATUS.RESEARCH;
-    row[col.updatedAt] = nowTs;
-    row[col.humanNote] = note;
-    row[col.assetTitle] = title;
-    summary.researchCreated += 1;
-    changed = true;
-  }
-
-  return {
-    assets: outAssets,
-    jobsToCreate: jobsToCreate,
-    summary: summary,
-    changed: changed
-  };
-}
+vm.createContext(sandbox);
+vm.runInContext(
+  fs.readFileSync(path.join(__dirname, '..', 'WinnerAsset.gs'), 'utf8'),
+  sandbox
+);
 
 function assetRow_(opts) {
   opts = opts || {};
   return [
     '2026-08-17',
     opts.siteName || 'Mortal Shell II',
-    opts.winnerPage || '/mortal-shell-ii/beta-progress-carry-over/',
+    opts.winnerPage ||
+      'https://mortal-shell-ii.vercel.app/mortal-shell-ii/beta-progress-carry-over/',
     opts.winnerIntent === undefined ? 'save_progress' : opts.winnerIntent,
     4,
     817,
     17,
     2,
     opts.assetType || ASSET_TYPE.COMPARISON_MATRIX,
-    opts.assetTitle || '',
+    opts.assetTitle === undefined ? '' : opts.assetTitle,
     'candidate reason',
-    'EVIDENCE_PAGE',
+    opts.assetLevel || ASSET_LEVEL.EVIDENCE_PAGE,
     opts.evidenceStatus === undefined ? ASSET_EVIDENCE_STATUS.PARTIAL : opts.evidenceStatus,
-    'missing evidence',
+    opts.missingEvidence === undefined
+      ? 'carry-over / reset / reward 对照未齐'
+      : opts.missingEvidence,
     opts.humanDecision === undefined ? ASSET_HUMAN_DECISION.TODO : opts.humanDecision,
-    opts.humanNote || '',
+    opts.humanNote === undefined ? '' : opts.humanNote,
     opts.status || ASSET_STATUS.CANDIDATE,
     '2026-08-17 10:00:00',
     opts.updatedAt || '2026-08-17 10:00:00',
@@ -380,31 +230,80 @@ function assetRow_(opts) {
   ];
 }
 
-function run_(rows, existingJobIds) {
-  return processWinnerAssetDecisionRows_(rows, {
-    nowTs: NOW_TS,
-    existingJobIds: existingJobIds || {}
+function agefieldRow_(opts) {
+  opts = opts || {};
+  return assetRow_({
+    siteName: 'Agefield High: Rock the School',
+    winnerPage:
+      'https://agefield-high-rock-the-school.vercel.app/agefield-high-rock-the-school/classes/',
+    winnerIntent: '',
+    assetType: ASSET_TYPE.VERIFIED_GUIDE,
+    assetLevel: ASSET_LEVEL.NORMAL_PAGE,
+    evidenceStatus: ASSET_EVIDENCE_STATUS.UNKNOWN,
+    missingEvidence: 'classes / answers / structured data 未齐',
+    humanDecision: opts.humanDecision,
+    humanNote: opts.humanNote,
+    status: opts.status,
+    assetTitle: opts.assetTitle
   });
 }
 
-// 1. TODO → 无动作
+function jobRow_(opts) {
+  opts = opts || {};
+  var row = [];
+  for (var i = 0; i < RESEARCH_JOB_HEADERS.length; i++) row.push('');
+  row[0] = opts.jobId || 'asset-ms2-beta-progress-carry-over-20260816';
+  row[2] = opts.site || 'Mortal Shell II';
+  row[3] = opts.site || 'Mortal Shell II';
+  row[4] = opts.topic || 'existing';
+  row[5] = opts.page || '/mortal-shell-ii/beta-progress-carry-over/';
+  row[9] = opts.status || '待处理';
+  row[21] = opts.researchType === undefined ? RESEARCH_TYPE.ASSET_RESEARCH : opts.researchType;
+  return row;
+}
+
+function run_(assetRows, jobRows, writeJobs) {
+  return sandbox.runWinnerAssetDecisionPipeline_(assetRows, jobRows || [], {
+    nowTs: NOW_TS,
+    assetHeaders: WINNER_ASSET_HEADERS,
+    jobHeaders: RESEARCH_JOB_HEADERS,
+    writeJobs: writeJobs
+  });
+}
+
+function assertContract_(job) {
+  for (var i = 0; i < CONTRACT_FIELDS.length; i++) {
+    var key = CONTRACT_FIELDS[i];
+    assert(String(job[key] || '').trim(), 'hotword contract missing ' + key);
+  }
+}
+
+var approve = run_([
+  assetRow_({
+    humanDecision: ASSET_HUMAN_DECISION.APPROVE,
+    humanNote: 'go research',
+    assetTitle: 'Keep title'
+  })
+]);
+assert(approve.created === 1, '1 creates 1 job');
+assert(approve.assets[0][16] === ASSET_STATUS.RESEARCH, '1 Status=RESEARCH');
+assert(approve.assets[0][14] === ASSET_HUMAN_DECISION.APPROVE, '1 HumanDecision stays APPROVE');
+assert(approve.assets[0][15] === 'go research', '1 keeps human note');
+assert(approve.assets[0][9] === 'Keep title', '1 keeps asset title');
+assert(approve.assets[0][8] === ASSET_TYPE.COMPARISON_MATRIX, '1 does not change AssetType');
+assert(approve.assets[0][11] === ASSET_LEVEL.EVIDENCE_PAGE, '1 does not change AssetLevel');
+assert(approve.assets[0][12] === ASSET_EVIDENCE_STATUS.PARTIAL, '1 does not change EvidenceStatus');
+assert(approve.jobsToCreate[0].job.research_type === RESEARCH_TYPE.ASSET_RESEARCH, '1 research_type');
+assert(approve.jobsToCreate[0].row[21] === RESEARCH_TYPE.ASSET_RESEARCH, '1 sheet 研究类型');
+assertContract_(approve.jobsToCreate[0].job);
+
 var todo = run_([assetRow_({ humanDecision: ASSET_HUMAN_DECISION.TODO })]);
-assert(todo.jobsToCreate.length === 0, '1 TODO must not create job');
-assert(todo.assets[0][16] === ASSET_STATUS.CANDIDATE, '1 TODO stays CANDIDATE');
-assert(todo.summary.skipped === 1, '1 TODO counted as skipped');
+assert(todo.created === 0 && todo.assets[0][16] === ASSET_STATUS.CANDIDATE, '2 TODO');
 
-var emptyDecision = run_([assetRow_({ humanDecision: '' })]);
-assert(emptyDecision.jobsToCreate.length === 0, '1 empty decision must not create job');
-assert(emptyDecision.assets[0][16] === ASSET_STATUS.CANDIDATE, '1 empty decision stays CANDIDATE');
-
-// 2. HOLD → 无 Job，CANDIDATE
 var hold = run_([assetRow_({ humanDecision: ASSET_HUMAN_DECISION.HOLD })]);
-assert(hold.jobsToCreate.length === 0, '2 HOLD must not create job');
-assert(hold.assets[0][16] === ASSET_STATUS.CANDIDATE, '2 HOLD stays CANDIDATE');
-assert(hold.assets[0][14] === ASSET_HUMAN_DECISION.HOLD, '2 HOLD decision not rewritten');
-assert(hold.summary.held === 1, '2 HOLD counted');
+assert(hold.created === 0 && hold.assets[0][16] === ASSET_STATUS.CANDIDATE, '3 HOLD');
+assert(hold.assets[0][14] === ASSET_HUMAN_DECISION.HOLD, '3 HOLD decision kept');
 
-// 3. SKIP → ARCHIVED，无 Job
 var skip = run_([
   assetRow_({
     humanDecision: ASSET_HUMAN_DECISION.SKIP,
@@ -412,238 +311,137 @@ var skip = run_([
     assetTitle: 'Keep title'
   })
 ]);
-assert(skip.jobsToCreate.length === 0, '3 SKIP must not create job');
-assert(skip.assets[0][16] === ASSET_STATUS.ARCHIVED, '3 SKIP → ARCHIVED');
-assert(skip.assets[0][15] === 'skip this page', '3 SKIP keeps human note');
-assert(skip.assets[0][9] === 'Keep title', '3 SKIP keeps asset title');
-assert(skip.assets[0][18] === NOW_TS, '3 SKIP updates 更新时间');
-assert(skip.summary.archived === 1, '3 SKIP counted');
+assert(skip.created === 0, '4 SKIP no job');
+assert(skip.assets[0][16] === ASSET_STATUS.CANDIDATE, '4 SKIP stays CANDIDATE');
+assert(skip.assets[0][14] === ASSET_HUMAN_DECISION.SKIP, '4 SKIP decision kept');
 
-var skipAgain = run_([skip.assets[0]]);
-assert(skipAgain.jobsToCreate.length === 0, '3 SKIP rerun must be idempotent');
-assert(skipAgain.assets[0][16] === ASSET_STATUS.ARCHIVED, '3 SKIP rerun stays ARCHIVED');
+var pendingExisting = run_(
+  [assetRow_({ humanDecision: ASSET_HUMAN_DECISION.APPROVE })],
+  [jobRow_({ status: '待处理', researchType: RESEARCH_TYPE.ASSET_RESEARCH })]
+);
+assert(pendingExisting.created === 0, '5 PENDING no recreate');
+assert(pendingExisting.assets[0][16] === ASSET_STATUS.RESEARCH, '5 heals RESEARCH');
 
-// 4. APPROVE + PARTIAL → Job + RESEARCH
-var approvePartial = run_([
-  assetRow_({
-    humanDecision: ASSET_HUMAN_DECISION.APPROVE,
-    evidenceStatus: ASSET_EVIDENCE_STATUS.PARTIAL,
-    humanNote: 'go research',
-    assetTitle: ''
-  })
-]);
-assert(approvePartial.jobsToCreate.length === 1, '4 PARTIAL creates 1 job');
-assert(approvePartial.assets[0][16] === ASSET_STATUS.RESEARCH, '4 PARTIAL → RESEARCH');
-assert(approvePartial.assets[0][19] === 'asset-ms2-beta-progress-carry-over', '4 writes stable job id');
-assert(approvePartial.assets[0][20] === NOW_TS, '4 writes 研究请求时间');
-assert(approvePartial.assets[0][15] === 'go research', '4 keeps human note');
-assert(approvePartial.summary.researchCreated === 1, '4 researchCreated');
-
-// 5. APPROVE + UNKNOWN → Job + RESEARCH
-var approveUnknown = run_([
-  assetRow_({
-    siteName: 'Agefield High: Rock the School',
-    winnerPage: '/classes/',
-    winnerIntent: '',
-    assetType: ASSET_TYPE.VERIFIED_GUIDE,
-    humanDecision: ASSET_HUMAN_DECISION.APPROVE,
-    evidenceStatus: ASSET_EVIDENCE_STATUS.UNKNOWN
-  })
-]);
-assert(approveUnknown.jobsToCreate.length === 1, '5 UNKNOWN creates 1 job');
-assert(approveUnknown.assets[0][16] === ASSET_STATUS.RESEARCH, '5 UNKNOWN → RESEARCH');
-
-var approveEmptyEvidence = run_([
-  assetRow_({
-    siteName: 'Agefield High: Rock the School',
-    winnerPage: '/classes/',
-    humanDecision: ASSET_HUMAN_DECISION.APPROVE,
-    evidenceStatus: ''
-  })
-]);
-assert(approveEmptyEvidence.jobsToCreate.length === 1, '5 empty evidence creates job');
-
-// 6. APPROVE + READY → READY，无 Job
-var approveReady = run_([
-  assetRow_({
-    humanDecision: ASSET_HUMAN_DECISION.APPROVE,
-    evidenceStatus: ASSET_EVIDENCE_STATUS.READY,
-    humanNote: 'enough evidence'
-  })
-]);
-assert(approveReady.jobsToCreate.length === 0, '6 READY evidence must not create job');
-assert(approveReady.assets[0][16] === ASSET_STATUS.READY, '6 → READY');
-assert(approveReady.assets[0][15] === 'enough evidence', '6 keeps note');
-assert(approveReady.summary.ready === 1, '6 ready counted');
-
-// 7. RESEARCH 再跑 → 不重复
-var researchRerun = run_([
-  assetRow_({
-    humanDecision: ASSET_HUMAN_DECISION.APPROVE,
-    status: ASSET_STATUS.RESEARCH,
-    researchJobId: 'asset-ms2-beta-progress-carry-over'
-  })
-]);
-assert(researchRerun.jobsToCreate.length === 0, '7 RESEARCH rerun must not create job');
-assert(researchRerun.assets[0][16] === ASSET_STATUS.RESEARCH, '7 stays RESEARCH');
-
-// 8. READY / DONE / ARCHIVED 再跑 → 不重复
-['READY', 'DONE', 'ARCHIVED'].forEach(function (st) {
-  var locked = run_([
-    assetRow_({
-      humanDecision: ASSET_HUMAN_DECISION.APPROVE,
-      status: st
-    })
-  ]);
-  assert(locked.jobsToCreate.length === 0, '8 ' + st + ' must not create job');
-  assert(locked.assets[0][16] === st, '8 ' + st + ' stays locked');
+['RUNNING', '待审核', 'REVIEW'].forEach(function (st) {
+  var blocked = run_(
+    [assetRow_({ humanDecision: ASSET_HUMAN_DECISION.APPROVE })],
+    [jobRow_({ status: st, researchType: RESEARCH_TYPE.ASSET_RESEARCH })]
+  );
+  assert(blocked.created === 0, '6 ' + st + ' no recreate');
+});
+['已归档', 'ARCHIVED', 'DONE'].forEach(function (st) {
+  var closed = run_(
+    [assetRow_({ humanDecision: ASSET_HUMAN_DECISION.APPROVE })],
+    [jobRow_({ status: st, researchType: RESEARCH_TYPE.ASSET_RESEARCH })]
+  );
+  assert(closed.created === 0, '6 ' + st + ' no reopen');
 });
 
-// 9. 已有 task id + CANDIDATE → 不新建，校正 RESEARCH
-var existingId = run_([
-  assetRow_({
-    humanDecision: ASSET_HUMAN_DECISION.APPROVE,
-    evidenceStatus: ASSET_EVIDENCE_STATUS.PARTIAL,
-    researchJobId: 'asset-ms2-beta-progress-carry-over'
-  })
-]);
-assert(existingId.jobsToCreate.length === 0, '9 existing task id must not create');
-assert(existingId.assets[0][16] === ASSET_STATUS.RESEARCH, '9 CANDIDATE + id → RESEARCH');
-assert(existingId.assets[0][19] === 'asset-ms2-beta-progress-carry-over', '9 keeps task id');
-assert(existingId.summary.researchExisting === 1, '9 researchExisting');
-
-// 10. Job Sheet 已有稳定 ID 但 asset 未回写 → 不重复创建
-var orphanJob = run_(
+var contentSamePage = run_(
+  [assetRow_({ humanDecision: ASSET_HUMAN_DECISION.APPROVE })],
   [
-    assetRow_({
-      humanDecision: ASSET_HUMAN_DECISION.APPROVE,
-      evidenceStatus: ASSET_EVIDENCE_STATUS.PARTIAL
+    jobRow_({
+      jobId: 'ms2-beta-progress-carry-over-20260814',
+      researchType: RESEARCH_TYPE.CONTENT_RESEARCH
     })
-  ],
-  { 'asset-ms2-beta-progress-carry-over': true }
+  ]
 );
-assert(orphanJob.jobsToCreate.length === 0, '10 existing job sheet id must not append');
-assert(orphanJob.assets[0][16] === ASSET_STATUS.RESEARCH, '10 backfills RESEARCH');
-assert(orphanJob.assets[0][19] === 'asset-ms2-beta-progress-carry-over', '10 backfills job id');
-assert(orphanJob.assets[0][20] === NOW_TS, '10 backfills requested at');
-assert(orphanJob.summary.researchExisting === 1, '10 researchExisting');
+assert(contentSamePage.created === 1, 'CONTENT_RESEARCH same page does not block');
 
-// 11. 同 site + page 跨不同日期生成同一 asset job id
-var idA = makeWinnerAssetResearchJobId_(
-  'Mortal Shell II',
-  '/mortal-shell-ii/beta-progress-carry-over/'
+var failed = run_(
+  [assetRow_({ humanDecision: ASSET_HUMAN_DECISION.APPROVE })],
+  [],
+  function () {
+    throw new Error('write_failed');
+  }
 );
-var idB = makeWinnerAssetResearchJobId_(
-  'Mortal Shell II',
-  'https://mortal-shell-ii.vercel.app/mortal-shell-ii/beta-progress-carry-over/'
-);
-var idC = makeWinnerAssetResearchJobId_(
-  'Agefield High: Rock the School',
-  '/classes/'
-);
-assert(idA === 'asset-ms2-beta-progress-carry-over', '11 ms2 stable id');
-assert(idA === idB, '11 same site+page across URL forms / dates');
-assert(idC === 'asset-agefield-classes', '11 agefield stable id');
-assert(!/20\d{6}/.test(idA), '11 job id must not include yyyymmdd');
+assert(failed.created === 0 && failed.assets[0][16] === ASSET_STATUS.CANDIDATE, '7 fail stays CANDIDATE');
 
-// 12. topic：save_progress
-assert(
-  buildWinnerAssetResearchTopic_({ winnerIntent: 'save_progress' }) ===
-    'save progress / carry over / reset / rewards',
-  '12 save_progress topic'
-);
-assert(
-  buildWinnerAssetResearchTopic_({ winnerIntent: 'platform' }) ===
-    'platform availability / console / PC',
-  '12 platform topic'
-);
-assert(
-  buildWinnerAssetResearchTopic_({ winnerIntent: 'class_answers' }) === 'class answers',
-  '12 snake_case topic'
-);
+var emptyIntent = run_([agefieldRow_({ humanDecision: ASSET_HUMAN_DECISION.APPROVE })]);
+assert(emptyIntent.created === 1, '8 empty WinnerIntent still creates');
+assert(emptyIntent.jobsToCreate[0].job.topic.indexOf('WinnerIntent=(empty)') >= 0, '8 empty intent in topic');
 
-// 13. topic：assetTitle 优先
+var ageTopic = emptyIntent.jobsToCreate[0].job.topic;
+assert(ageTopic.indexOf('ResearchType=ASSET_RESEARCH') >= 0, '9 ResearchType');
+assert(ageTopic.indexOf('/agefield-high-rock-the-school/classes/') >= 0, '9 path');
+assert(/classes/i.test(ageTopic) && /subjects/i.test(ageTopic), '9 classes/subjects');
+assert(/observed answers|正确答案/.test(ageTopic), '9 answers');
+assert(/reward|money|score/.test(ageTopic), '9 reward');
+assert(/Answer Database|结构化/.test(ageTopic), '9 structured');
 assert(
-  buildWinnerAssetResearchTopic_({
-    assetTitle: 'Beta progress carry-over matrix',
-    winnerIntent: 'save_progress'
-  }) === 'Beta progress carry-over matrix',
-  '13 assetTitle wins over intent'
+  emptyIntent.jobsToCreate[0].job.existing_page === '/agefield-high-rock-the-school/classes/',
+  '9 pathname'
+);
+assert(emptyIntent.jobsToCreate[0].job.job_id === 'asset-agefield-classes-20260817', '9 job id');
+
+var ageQuery = String(emptyIntent.jobsToCreate[0].job.source_query || '').trim();
+assert(!!ageQuery, 'Agefield source_query non-empty');
+assert(ageQuery.indexOf('/') < 0, 'Agefield source_query is not a pathname');
+assert(ageQuery.charAt(0) !== '/', 'Agefield source_query does not start with /');
+assert(/agefield/i.test(ageQuery) && /classes/i.test(ageQuery), 'Agefield source_query has agefield + classes');
+assert(/answer/i.test(ageQuery), 'Agefield source_query has answers semantics');
+
+var msTopic = approve.jobsToCreate[0].job.topic;
+assert(/Carry Over|carry over/i.test(msTopic) && /reset/i.test(msTopic), '10 carry/reset');
+assert(/Flayed Harbinger/.test(msTopic) && /Marrow Keep/.test(msTopic), '10 names');
+assert(/COMPARISON_MATRIX/.test(msTopic), '10 matrix');
+assert(
+  approve.jobsToCreate[0].job.existing_page === '/mortal-shell-ii/beta-progress-carry-over/',
+  '10 pathname'
 );
 assert(
-  buildWinnerAssetResearchTopic_({ assetType: ASSET_TYPE.VERIFIED_GUIDE }) ===
-    'verified guide evidence',
-  '13 VERIFIED_GUIDE fallback topic'
+  approve.jobsToCreate[0].job.job_id === 'asset-ms2-beta-progress-carry-over-20260817',
+  '10 job id'
 );
 
-// 14. page / site / HIGH / RESEARCH_EXPAND_EXISTING / PENDING
-var jobBuilt = approvePartial.jobsToCreate[0];
-assert(jobBuilt.job.game === 'Mortal Shell II', '14 game = site');
+var msQuery = String(approve.jobsToCreate[0].job.source_query || '').trim();
+assert(!!msQuery, 'MS2 source_query non-empty');
+assert(msQuery.indexOf('/') < 0, 'MS2 source_query is not a pathname');
+assert(msQuery.charAt(0) !== '/', 'MS2 source_query does not start with /');
+assert(/mortal shell/i.test(msQuery), 'MS2 source_query has mortal shell');
+assert(/carry|progress/i.test(msQuery), 'MS2 source_query has carry/progress');
+assert(/reward/i.test(msQuery), 'MS2 source_query has reward semantics');
+assert(ageTopic.indexOf('ResearchType=ASSET_RESEARCH') >= 0, 'topic remains full brief');
+assert(msTopic.indexOf('ResearchType=ASSET_RESEARCH') >= 0, 'MS2 topic remains full brief');
 assert(
-  jobBuilt.job.existing_page === '/mortal-shell-ii/beta-progress-carry-over/',
-  '14 page = winner page'
-);
-assert(jobBuilt.job.opportunity_level === 'HIGH', '14 HIGH');
-assert(jobBuilt.job.recommended_action === 'RESEARCH_EXPAND_EXISTING', '14 RESEARCH_EXPAND_EXISTING');
-assert(jobBuilt.job.source_query === jobBuilt.job.topic, '14 source_query = topic');
-assert(jobBuilt.job.related_queries === '', '14 related_queries empty');
-assert(jobBuilt.row[2] === 'Mortal Shell II', '14 sheet 站点');
-assert(jobBuilt.row[3] === 'Mortal Shell II', '14 sheet 游戏');
-assert(jobBuilt.row[5] === '/mortal-shell-ii/beta-progress-carry-over/', '14 sheet 页面路径');
-assert(jobBuilt.row[6] === '高', '14 sheet 机会等级 高');
-assert(jobBuilt.row[7] === '研究并扩充现有页面', '14 sheet 建议动作');
-assert(jobBuilt.row[9] === '待处理', '14 sheet 任务状态 PENDING');
-assert(jobBuilt.row.length === RESEARCH_JOB_HEADERS.length, '14 job row matches 21-col contract');
-assert(jobBuilt.row[10] === '', '14 sheet 关联搜索词 empty');
-
-// 15. human note / asset title 不被覆盖
-var preserved = run_([
-  assetRow_({
-    humanDecision: ASSET_HUMAN_DECISION.APPROVE,
-    evidenceStatus: ASSET_EVIDENCE_STATUS.PARTIAL,
-    humanNote: 'keep this note',
-    assetTitle: 'Keep this title'
-  })
-]);
-assert(preserved.assets[0][9] === 'Keep this title', '15 asset title preserved');
-assert(preserved.assets[0][15] === 'keep this note', '15 human note preserved');
-assert(
-  preserved.jobsToCreate[0].job.topic === 'Keep this title',
-  '15 job topic uses asset title'
+  String(approve.jobsToCreate[0].job.related_queries || '').indexOf('Flayed Harbinger') >= 0,
+  'related_queries kept'
 );
 
-// Chinese dropdown maps to enum
-var zhApprove = run_([assetRow_({ humanDecision: '批准研究' })]);
-assert(zhApprove.jobsToCreate.length === 1, '中文 批准研究 → APPROVE');
-var zhHold = run_([assetRow_({ humanDecision: '暂缓' })]);
-assert(zhHold.summary.held === 1 && zhHold.assets[0][16] === ASSET_STATUS.CANDIDATE, '中文 暂缓 → HOLD');
-var zhSkip = run_([assetRow_({ humanDecision: '跳过' })]);
-assert(zhSkip.assets[0][16] === ASSET_STATUS.ARCHIVED, '中文 跳过 → SKIP');
-var zhTodo = run_([assetRow_({ humanDecision: '待处理' })]);
-assert(zhTodo.jobsToCreate.length === 0, '中文 待处理 → TODO');
-
-// Source wiring
+assert(approve.assets[0][2].indexOf('/beta-progress-carry-over/') >= 0, '11 WinnerPage unchanged');
 var winnerSrc = fs.readFileSync(path.join(__dirname, '..', 'WinnerAsset.gs'), 'utf8');
+assert(
+  !/PORTFOLIO_ACTION|经营动作|RecommendedAction|DomainScore/.test(winnerSrc),
+  '11 no PortfolioAction/DomainScore'
+);
+
+var zhApprove = run_([assetRow_({ humanDecision: '批准研究' })]);
+assert(zhApprove.created === 1 && zhApprove.assets[0][14] === '批准研究', '中文批准研究');
+
 var configSrc = fs.readFileSync(path.join(__dirname, '..', 'Config.gs'), 'utf8');
 var codeSrc = fs.readFileSync(path.join(__dirname, '..', 'Code.gs'), 'utf8');
+var dailyStart = codeSrc.indexOf('function runDailyUnlocked_');
+var dailyEnd = codeSrc.indexOf('\nfunction ', dailyStart + 1);
+var dailySrc = codeSrc.slice(dailyStart, dailyEnd === -1 ? undefined : dailyEnd);
+assert(codeSrc.indexOf("addItem('处理内容资产决定', 'processWinnerAssetDecisions')") >= 0, 'menu');
+assert(dailySrc.indexOf('processWinnerAssetDecisions') < 0, 'not on runDaily');
+assert(configSrc.indexOf("'研究类型'") >= 0 && configSrc.indexOf('RESEARCH_TYPE') >= 0, '研究类型 field');
 var researchSrc = fs.readFileSync(path.join(__dirname, '..', 'ResearchJobs.gs'), 'utf8');
-var dailySrc = codeSrc.slice(codeSrc.indexOf('function runDaily'), codeSrc.indexOf('function runDailyUnlocked_'));
+assert(researchSrc.indexOf("cell_(row, col, '研究类型')") < 0, 'API payload does not pass research_type yet');
+assert(winnerSrc.indexOf('function buildAssetResearchSourceQuery_') >= 0, 'source_query helper exists');
 
-assert(winnerSrc.indexOf('function processWinnerAssetDecisions()') >= 0, 'processWinnerAssetDecisions exists');
-assert(winnerSrc.indexOf('function buildWinnerAssetResearchTopic_(') >= 0, 'topic helper exists');
-assert(winnerSrc.indexOf('researchJobSheetRow_') >= 0, 'reuses researchJobSheetRow_');
-assert(codeSrc.indexOf("addItem('处理内容资产决定', 'processWinnerAssetDecisions')") >= 0, 'menu item');
-assert(dailySrc.indexOf('processWinnerAssetDecisions') < 0, 'runDaily must not call processWinnerAssetDecisions');
-assert(configSrc.indexOf("'审核时间'") >= 0, 'research job headers keep 审核时间');
-assert(!/RESEARCH_TYPE/.test(configSrc), 'must not add RESEARCH_TYPE contract field');
-assert(
-  /var RESEARCH_JOB_HEADERS = \[[\s\S]*?'审核时间'\s*\];/.test(configSrc),
-  'RESEARCH_JOB_HEADERS still ends at 审核时间'
+console.log(
+  JSON.stringify(
+    {
+      agefieldJobId: emptyIntent.jobsToCreate[0].job.job_id,
+      ms2JobId: approve.jobsToCreate[0].job.job_id,
+      agefieldPage: emptyIntent.jobsToCreate[0].job.existing_page,
+      ms2Page: approve.jobsToCreate[0].job.existing_page,
+      agefieldSourceQuery: ageQuery,
+      ms2SourceQuery: msQuery
+    },
+    null,
+    2
+  )
 );
-assert(researchSrc.indexOf("jobId && /^asset-/.test(jobId)") >= 0, 'opportunity cluster skips asset- jobs');
-assert(
-  winnerSrc.indexOf('function createResearchJobs') < 0,
-  'WinnerAsset must not redefine createResearchJobs'
-);
-
 console.log('PASS scripts/test-winner-asset-research.js');

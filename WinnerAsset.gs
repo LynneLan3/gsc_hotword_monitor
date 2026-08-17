@@ -496,11 +496,11 @@ function processWinnerAssetDecisions() {
     jobRows = jobSheet.getRange(2, 1, jobSheet.getLastRow() - 1, jobLastCol).getValues();
   }
 
-  var existingIds = loadExistingWinnerAssetJobIds_(jobRows, jobHeaders);
+  var existingAssetResearch = loadExistingAssetResearchIndex_(jobRows, jobHeaders);
   var result = processWinnerAssetDecisionRows_(assetRows, {
     nowTs: nowTs,
     assetHeaders: assetHeaders,
-    existingJobIds: existingIds
+    existingAssetResearch: existingAssetResearch
   });
 
   if (result.jobsToCreate && result.jobsToCreate.length) {
@@ -620,9 +620,25 @@ function isWinnerAssetResearchJobId_(jobId) {
   return /^asset-/.test(String(jobId || '').trim());
 }
 
-function makeWinnerAssetResearchJobId_(siteName, winnerPage) {
+function winnerAssetPagePath_(value) {
+  var path = winnerAssetPathname_(value);
+  if (!path) return '';
+  if (path !== '/' && path.charAt(path.length - 1) !== '/') path += '/';
+  return path;
+}
+
+function compactYmdFromRecordedAt_(ts) {
+  var s = String(ts || '').trim();
+  var m = /(\d{4})-(\d{2})-(\d{2})/.exec(s);
+  if (m) return m[1] + m[2] + m[3];
+  var digits = s.replace(/\D/g, '');
+  if (digits.length >= 8) return digits.substring(0, 8);
+  return '';
+}
+
+function makeWinnerAssetResearchJobId_(siteName, winnerPage, ymd) {
   var prefix = RESEARCH_GAME_SLUGS[siteName] || slugifyResearch_(siteName);
-  var path = winnerAssetPathname_(winnerPage);
+  var path = winnerAssetPagePath_(winnerPage);
   var slug = '';
   if (path && path !== '/') {
     var segments = String(path).split('/').filter(function (s) {
@@ -632,35 +648,178 @@ function makeWinnerAssetResearchJobId_(siteName, winnerPage) {
   }
   if (!slug) slug = 'page';
   if (slug.length > 40) slug = slug.substring(0, 40).replace(/-+$/, '');
-  return ('asset-' + prefix + '-' + slug).replace(/-+/g, '-').replace(/^-|-$/g, '');
+  var datePart = String(ymd || '').replace(/\D/g, '').substring(0, 8);
+  var id = 'asset-' + prefix + '-' + slug;
+  if (datePart) id += '-' + datePart;
+  return id.replace(/-+/g, '-').replace(/^-|-$/g, '');
+}
+
+function winnerAssetResearchDedupeKey_(siteName, winnerPage) {
+  return String(siteName || '').trim().toLowerCase() + '|' + winnerAssetPagePath_(winnerPage);
+}
+
+function normalizeResearchType_(value) {
+  var raw = String(value || '').trim();
+  if (!raw) return RESEARCH_TYPE.CONTENT_RESEARCH;
+  return raw;
+}
+
+function winnerAssetResearchGoal_(opts) {
+  opts = opts || {};
+  var page = winnerAssetPagePath_(opts.winnerPage);
+  var intent = String(opts.winnerIntent || '').trim();
+  var assetType = String(opts.assetType || '').trim();
+  var site = String(opts.siteName || '');
+
+  if (
+    /\/classes\/?$/i.test(page) ||
+    (/agefield/i.test(site) && assetType === ASSET_TYPE.VERIFIED_GUIDE && intent !== 'save_progress')
+  ) {
+    return [
+      '页面：' + page,
+      '目标：确认这个 Winner Page 还缺哪些可验证的一手信息和结构化答案，重点围绕：',
+      '- Classes / subjects 的完整列表',
+      '- 各课程实际玩法',
+      '- 正确答案 / observed answers',
+      '- reward / money / score 等可验证结果',
+      '- 哪些内容可以形成结构化 Answer Database',
+      '不要只做泛泛页面综述。'
+    ].join('\n');
+  }
+
+  if (
+    intent === 'save_progress' ||
+    /carry-over|carry_over/i.test(page) ||
+    assetType === ASSET_TYPE.COMPARISON_MATRIX
+  ) {
+    return [
+      '页面：' + page,
+      '目标：补齐 Carry Over / Reset / Reward 对照证据，重点确认：',
+      '- 哪些 beta progress 会 reset',
+      '- 哪些不会 carry over',
+      '- Flayed Harbinger reward',
+      '- Marrow Keep / Prologue skip',
+      '- save / inventory / weapon / Shell / collectible 等状态',
+      '- 官方或第一手来源',
+      '- 是否存在版本差异或过时信息',
+      '目标是支撑 COMPARISON_MATRIX，而不是重新泛泛研究 Mortal Shell II。'
+    ].join('\n');
+  }
+
+  return [
+    '页面：' + page,
+    '目标：确认这个 Winner Page 还缺哪些可验证的一手证据，按 AssetType=' +
+      (assetType || 'UNKNOWN') +
+      ' 补齐 MissingEvidence，形成可执行的内容资产研究结论。',
+    '不要只写“研究这个页面”。'
+  ].join('\n');
+}
+
+/**
+ * ASSET_RESEARCH 的核心搜索查询。
+ * 给 hotword-engine request_topic_terms / 检索用，必须是自然语言查询，不能是 pathname。
+ * 组合：Site + 页面主题（末段）+ Asset intent；确定性，不调用 AI。
+ */
+function buildAssetResearchSourceQuery_(asset) {
+  asset = asset || {};
+  var site = String(asset.siteName || '')
+    .toLowerCase()
+    .replace(/\bii\b/g, '2')
+    .replace(/\biii\b/g, '3')
+    .replace(/[^a-z0-9]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  var path = winnerAssetPagePath_(asset.winnerPage);
+  var segments = String(path || '').split('/').filter(function (s) {
+    return !!s;
+  });
+  var pageTheme = '';
+  if (segments.length) {
+    pageTheme = slugifyResearch_(segments[segments.length - 1]).replace(/-/g, ' ');
+  }
+  var intent = String(asset.winnerIntent || '').trim();
+  var assetType = String(asset.assetType || '').trim();
+  var extra = '';
+  if (intent === 'save_progress' || assetType === ASSET_TYPE.COMPARISON_MATRIX) {
+    extra = 'rewards';
+  } else if (assetType === ASSET_TYPE.VERIFIED_GUIDE) {
+    extra = 'answers';
+  } else if (intent) {
+    extra = intent.replace(/_/g, ' ');
+  }
+
+  var words = [];
+  var seen = {};
+  var blob = [site, pageTheme, extra].join(' ').replace(/\s+/g, ' ').trim();
+  var parts = blob.split(' ');
+  for (var i = 0; i < parts.length; i++) {
+    var w = parts[i];
+    if (!w || seen[w]) continue;
+    seen[w] = true;
+    words.push(w);
+  }
+  var query = words.join(' ');
+  if (!query || query.charAt(0) === '/') return 'winner page evidence';
+  return query;
+}
+
+function buildWinnerAssetRelatedQueries_(opts) {
+  opts = opts || {};
+  var page = winnerAssetPagePath_(opts.winnerPage);
+  var intent = String(opts.winnerIntent || '').trim();
+  var assetType = String(opts.assetType || '').trim();
+  var site = String(opts.siteName || '');
+  if (
+    /\/classes\/?$/i.test(page) ||
+    (/agefield/i.test(site) && assetType === ASSET_TYPE.VERIFIED_GUIDE && intent !== 'save_progress')
+  ) {
+    return 'classes|subjects|answers|observed answers|reward|score|Answer Database';
+  }
+  if (
+    intent === 'save_progress' ||
+    /carry-over|carry_over/i.test(page) ||
+    assetType === ASSET_TYPE.COMPARISON_MATRIX
+  ) {
+    return 'carry over|reset|rewards|Flayed Harbinger|Marrow Keep|Prologue skip|save|inventory';
+  }
+  return '';
 }
 
 function buildWinnerAssetResearchTopic_(opts) {
   opts = opts || {};
-  var title = String(opts.assetTitle || '').trim();
-  if (title) return title;
   var intent = String(opts.winnerIntent || '').trim();
-  if (intent === 'save_progress') return 'save progress / carry over / reset / rewards';
-  if (intent === 'platform') return 'platform availability / console / PC';
-  if (intent) return intent.replace(/_/g, ' ');
-  var assetType = String(opts.assetType || '').trim();
-  if (assetType === ASSET_TYPE.VERIFIED_GUIDE) return 'verified guide evidence';
-  if (assetType) return assetType.replace(/_/g, ' ').toLowerCase();
-  return 'winner page evidence';
+  return [
+    'ResearchType=ASSET_RESEARCH',
+    'Site=' + String(opts.siteName || '').trim(),
+    'WinnerPage=' + winnerAssetPagePath_(opts.winnerPage),
+    'WinnerIntent=' + (intent || '(empty)'),
+    'AssetType=' + String(opts.assetType || '').trim(),
+    'AssetLevel=' + String(opts.assetLevel || '').trim(),
+    'EvidenceStatus=' + String(opts.evidenceStatus || '').trim(),
+    'MissingEvidence=' + (String(opts.missingEvidence || '').trim() || '(empty)')
+  ].join(' | ') + '\n\n' + winnerAssetResearchGoal_(opts);
 }
 
 function buildWinnerAssetResearchJob_(asset, createdAt) {
+  var page = winnerAssetPagePath_(asset.winnerPage);
   var topic = buildWinnerAssetResearchTopic_(asset);
   var job = {
-    job_id: makeWinnerAssetResearchJobId_(asset.siteName, asset.winnerPage),
+    job_id: makeWinnerAssetResearchJobId_(
+      asset.siteName,
+      asset.winnerPage,
+      compactYmdFromRecordedAt_(createdAt)
+    ),
     game: asset.siteName,
     topic: topic,
-    existing_page: String(asset.winnerPage || '').trim(),
+    existing_page: page,
     opportunity_level: OPPORTUNITY_LEVELS.HIGH,
     recommended_action: OPPORTUNITY_ACTIONS.RESEARCH_EXPAND_EXISTING,
-    source_query: topic,
-    related_queries: '',
-    created_at: createdAt
+    source_query: buildAssetResearchSourceQuery_(asset),
+    related_queries: buildWinnerAssetRelatedQueries_(asset),
+    created_at: createdAt,
+    // Sheet 保存 ASSET_RESEARCH。当前 fetch_pending_jobs 不把 research_type
+    // 写入 research_job.json；runner 不依赖该字段。B2-B2 若要区分类型再做 passthrough。
+    research_type: RESEARCH_TYPE.ASSET_RESEARCH
   };
   return {
     job: job,
@@ -682,6 +841,35 @@ function loadExistingWinnerAssetJobIds_(jobRows, jobHeaders) {
     if (jobId) ids[jobId] = true;
   }
   return ids;
+}
+
+function loadExistingAssetResearchIndex_(jobRows, jobHeaders) {
+  var headers = jobHeaders && jobHeaders.length ? jobHeaders : RESEARCH_JOB_HEADERS;
+  var map = {};
+  for (var i = 0; i < headers.length; i++) {
+    var name = String(headers[i] || '').trim();
+    if (name && map[name] === undefined) map[name] = i;
+  }
+  var idIdx = map['任务ID'] !== undefined ? map['任务ID'] : 0;
+  var siteIdx = map['站点'] !== undefined ? map['站点'] : 2;
+  var pageIdx = map['页面路径'] !== undefined ? map['页面路径'] : 5;
+  var typeIdx = map['研究类型'] !== undefined ? map['研究类型'] : 21;
+  var index = {};
+  for (var r = 0; r < (jobRows || []).length; r++) {
+    if (normalizeResearchType_(cellAt_(jobRows[r], typeIdx)) !== RESEARCH_TYPE.ASSET_RESEARCH) {
+      continue;
+    }
+    var site = String(cellAt_(jobRows[r], siteIdx) || '').trim();
+    var page = String(cellAt_(jobRows[r], pageIdx) || '').trim();
+    var key = winnerAssetResearchDedupeKey_(site, page);
+    if (!key || key === '|') continue;
+    if (!index[key]) {
+      index[key] = {
+        jobId: String(cellAt_(jobRows[r], idIdx) || '').trim()
+      };
+    }
+  }
+  return index;
 }
 
 function padWinnerAssetRow_(row) {
@@ -728,16 +916,19 @@ function revertCreatedWinnerAssetJobs_(originalRows, result, assetHeaders) {
 
 /**
  * 纯函数：Human Gate → 标准 Research Job。
- * 只处理 CANDIDATE；LOCKED 状态不重跑。
+ * 只处理 HumanDecision=APPROVE 且 Status=CANDIDATE。
+ * HOLD / SKIP / TODO 不创建任务，也不改 Status。
+ * 已有同一 Site+WinnerPage 的 ASSET_RESEARCH 不重复创建。
+ * 同页 CONTENT_RESEARCH 不阻塞。
  */
 function processWinnerAssetDecisionRows_(assetRows, opts) {
   opts = opts || {};
   var nowTs = opts.nowTs || '';
   var col = winnerAssetDecisionCol_(opts.assetHeaders);
-  var existingJobIds = opts.existingJobIds || {};
+  var existingAssetResearch = opts.existingAssetResearch || {};
   var summary = emptyWinnerAssetDecisionSummary_();
   var jobsToCreate = [];
-  var claimedIds = {};
+  var claimedKeys = {};
   var outAssets = [];
   var changed = false;
 
@@ -746,8 +937,6 @@ function processWinnerAssetDecisionRows_(assetRows, opts) {
     outAssets.push(row);
     var status = String(cellAt_(row, col.status) || '').trim() || ASSET_STATUS.CANDIDATE;
     var decision = normalizeAssetHumanDecision_(cellAt_(row, col.humanDecision));
-    var note = String(cellAt_(row, col.humanNote) || '');
-    var title = String(cellAt_(row, col.assetTitle) || '');
 
     if (ASSET_LOCKED_STATUSES[status]) {
       summary.skipped += 1;
@@ -769,12 +958,7 @@ function processWinnerAssetDecisionRows_(assetRows, opts) {
       continue;
     }
     if (decision === ASSET_HUMAN_DECISION.SKIP) {
-      row[col.status] = ASSET_STATUS.ARCHIVED;
-      row[col.updatedAt] = nowTs;
-      row[col.humanNote] = note;
-      row[col.assetTitle] = title;
-      summary.archived += 1;
-      changed = true;
+      summary.skipped += 1;
       continue;
     }
     if (decision !== ASSET_HUMAN_DECISION.APPROVE) {
@@ -782,33 +966,18 @@ function processWinnerAssetDecisionRows_(assetRows, opts) {
       continue;
     }
 
-    var evidence = String(cellAt_(row, col.evidenceStatus) || '').trim();
-    if (evidence === ASSET_EVIDENCE_STATUS.READY) {
-      row[col.status] = ASSET_STATUS.READY;
-      row[col.updatedAt] = nowTs;
-      row[col.humanNote] = note;
-      row[col.assetTitle] = title;
-      summary.ready += 1;
-      changed = true;
-      continue;
-    }
-
     var siteName = String(cellAt_(row, col.siteName) || '').trim();
     var winnerPage = String(cellAt_(row, col.winnerPage) || '').trim();
-    var stableId = makeWinnerAssetResearchJobId_(siteName, winnerPage);
-    var existingId = String(cellAt_(row, col.researchJobId) || '').trim();
-    var alreadyInSheet = !!(existingJobIds[stableId] || claimedIds[stableId]);
+    var dedupeKey = winnerAssetResearchDedupeKey_(siteName, winnerPage);
+    var existing = existingAssetResearch[dedupeKey] || claimedKeys[dedupeKey];
 
-    if (existingId || alreadyInSheet) {
-      var reuseId = existingId || stableId;
-      row[col.researchJobId] = reuseId;
+    if (existing) {
+      if (existing.jobId) row[col.researchJobId] = existing.jobId;
       if (!String(cellAt_(row, col.researchRequestedAt) || '').trim()) {
         row[col.researchRequestedAt] = nowTs;
       }
       row[col.status] = ASSET_STATUS.RESEARCH;
       row[col.updatedAt] = nowTs;
-      row[col.humanNote] = note;
-      row[col.assetTitle] = title;
       summary.researchExisting += 1;
       changed = true;
       continue;
@@ -820,18 +989,19 @@ function processWinnerAssetDecisionRows_(assetRows, opts) {
         winnerPage: winnerPage,
         winnerIntent: String(cellAt_(row, col.winnerIntent) || '').trim(),
         assetType: String(cellAt_(row, col.assetType) || '').trim(),
-        assetTitle: title
+        assetLevel: String(cellAt_(row, col.assetLevel) || '').trim(),
+        evidenceStatus: String(cellAt_(row, col.evidenceStatus) || '').trim(),
+        missingEvidence: String(cellAt_(row, col.missingEvidence) || '').trim(),
+        assetTitle: String(cellAt_(row, col.assetTitle) || '').trim()
       },
       nowTs
     );
     jobsToCreate.push(built);
-    claimedIds[stableId] = true;
+    claimedKeys[dedupeKey] = { jobId: built.job.job_id };
     row[col.researchJobId] = built.job.job_id;
     row[col.researchRequestedAt] = nowTs;
     row[col.status] = ASSET_STATUS.RESEARCH;
     row[col.updatedAt] = nowTs;
-    row[col.humanNote] = note;
-    row[col.assetTitle] = title;
     summary.researchCreated += 1;
     changed = true;
   }
@@ -845,9 +1015,51 @@ function processWinnerAssetDecisionRows_(assetRows, opts) {
 }
 
 /**
- * 人工菜单：把「研究任务」终态同步回「内容资产」。
- * 不挂 runDaily；不调用研究审核处理或开发任务创建。
+ * 测试 / 生产共用：先落 Research Job，成功后再接受 Asset Status=RESEARCH。
+ * writeJobs 抛错时返回原始 Asset 行，不把 Status 写成 RESEARCH。
  */
+function runWinnerAssetDecisionPipeline_(assetRows, jobRows, opts) {
+  opts = opts || {};
+  var originals = [];
+  for (var i = 0; i < (assetRows || []).length; i++) {
+    originals.push(padWinnerAssetRow_(assetRows[i]));
+  }
+  var index = loadExistingAssetResearchIndex_(jobRows, opts.jobHeaders);
+  var plan = processWinnerAssetDecisionRows_(originals, {
+    nowTs: opts.nowTs,
+    assetHeaders: opts.assetHeaders,
+    existingAssetResearch: index
+  });
+  if (plan.jobsToCreate && plan.jobsToCreate.length) {
+    try {
+      if (typeof opts.writeJobs === 'function') opts.writeJobs(plan.jobsToCreate);
+    } catch (e) {
+      var failedSummary = emptyWinnerAssetDecisionSummary_();
+      failedSummary.error = String((e && e.message) || e || 'write_failed');
+      return {
+        assets: originals,
+        jobs: jobRows || [],
+        created: 0,
+        jobsToCreate: [],
+        error: failedSummary.error,
+        summary: failedSummary
+      };
+    }
+  }
+  var jobs = (jobRows || []).slice();
+  for (var j = 0; j < (plan.jobsToCreate || []).length; j++) {
+    jobs.push(plan.jobsToCreate[j].row);
+  }
+  return {
+    assets: plan.assets,
+    jobs: jobs,
+    created: plan.summary.researchCreated,
+    jobsToCreate: plan.jobsToCreate,
+    error: '',
+    summary: plan.summary
+  };
+}
+
 function syncWinnerAssetResearchResults() {
   ensureSheet_(SHEET_NAMES.WINNER_ASSETS, WINNER_ASSET_HEADERS);
   ensureWinnerAssetHeader_();

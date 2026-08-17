@@ -506,6 +506,8 @@ function researchJobRowToApi_(row, col) {
     source_query: String(cell_(row, col, 'source_query') || '').trim(),
     related_queries: related,
     created_at: createdAt
+    // 有意不输出 research_type：当前 fetch_pending_jobs / runner 不消费该字段。
+    // Sheet 仍保存「研究类型」；B2-B2 若需区分 ASSET_RESEARCH 再做 passthrough。
   };
 }
 
@@ -1336,7 +1338,8 @@ function researchJobSheetRow_(job, site, createdAt) {
     '',
     '',
     '',
-    ''
+    '',
+    job.research_type || RESEARCH_TYPE.CONTENT_RESEARCH
   ];
 }
 
@@ -1498,6 +1501,7 @@ function debugResearchJobsSelfCheck() {
   assert(sheetRow[18] === '', '审核决定 empty on create');
   assert(sheetRow[19] === '', '审核备注 empty on create');
   assert(sheetRow[20] === '', '审核时间 empty on create');
+  assert(sheetRow[21] === RESEARCH_TYPE.CONTENT_RESEARCH, '内容机会 Job 研究类型 CONTENT_RESEARCH');
   assert(
     opportunityLabel_(RESEARCH_JOB_STATUS_LABELS, 'REVIEW') === '待审核',
     'REVIEW → 待审核'
@@ -1572,10 +1576,11 @@ function debugResearchJobsSelfCheck() {
     '研究任务 has review gate columns'
   );
   assert(
-    RESEARCH_JOB_HEADERS[RESEARCH_JOB_HEADERS.length - 3] === '审核决定' &&
-      RESEARCH_JOB_HEADERS[RESEARCH_JOB_HEADERS.length - 2] === '审核备注' &&
-      RESEARCH_JOB_HEADERS[RESEARCH_JOB_HEADERS.length - 1] === '审核时间',
-    '审核字段追加在末尾'
+    RESEARCH_JOB_HEADERS[RESEARCH_JOB_HEADERS.length - 4] === '审核决定' &&
+      RESEARCH_JOB_HEADERS[RESEARCH_JOB_HEADERS.length - 3] === '审核备注' &&
+      RESEARCH_JOB_HEADERS[RESEARCH_JOB_HEADERS.length - 2] === '审核时间' &&
+      RESEARCH_JOB_HEADERS[RESEARCH_JOB_HEADERS.length - 1] === '研究类型',
+    '研究类型追加在末尾，不移动审核字段'
   );
 
   var apiJob = researchJobRowToApi_(sheetRow, headerIndexMap_(RESEARCH_JOB_HEADERS));
