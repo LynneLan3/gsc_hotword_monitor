@@ -310,7 +310,7 @@ function getUsageGuideLines_() {
     '每日快照：快速看站点健康、曝光/点击概况与异常 Status',
     '内容机会：把真实 GSC Query 转成可执行的内容机会（不是随便想话题）',
     '需求雷达：记录 GSC Query 尚未充分暴露、但系统检测到值得进一步调查的需求信号。DISCOVERED 只是发现，不代表内容机会成立。CrossValidated 只有在至少两个独立 Source Family 指向同一需求时才成立。当前 QUERY_BLIND_SPOT 属于 GSC 单来源信号，不应直接触发内容开发。',
-    '实时Query监控：用 GSC hourly 数据看最近 24 小时突然爆发的 Query，并观察落地页承接。只用于热词发现和爆量提醒，不进入 Decision / D7 / 效果评价。数据可能仍不完整。',
+    '实时Query监控：用 GSC hourly 数据看最近 24 小时突然爆发的 Query，并观察落地页承接。只用于热词发现和爆量提醒，不进入 Decision / D7 / 效果评价。百分比增长还需近24h展现≥10。Mortal Shell II 的 skip prologue 若仍落在旧页，记为旧页承接、观察新页切换。数据可能仍不完整。',
     '研究任务：需要外部 Research 的任务队列',
     '研究审核：Human Gate，人工核对证据后再决定是否批准开发/继续观察/无需处理',
     '站点状态：解释 Decision Engine 为什么给出当前判断（分数、阶段、理由）',

@@ -294,7 +294,12 @@ function evaluateFreshQueryBurst_(metrics) {
 
   if (impressions >= cfg.IMPRESSIONS_BURST) reasons.push('展现≥30');
   if (clicks >= cfg.CLICKS_BURST) reasons.push('点击≥3');
-  if (prevImpr > 0 && growthRatio !== null && growthRatio >= cfg.GROWTH_RATIO) {
+  if (
+    prevImpr > 0 &&
+    impressions >= cfg.GROWTH_MIN_IMPRESSIONS &&
+    growthRatio !== null &&
+    growthRatio >= cfg.GROWTH_RATIO
+  ) {
     reasons.push('展现增长≥100%');
   }
   if (
@@ -346,6 +351,11 @@ function classifyFreshQueryLanding_(query, pages, site) {
     return b.impressions - a.impressions;
   });
   var primary = viewed[0];
+
+  // Skip-prologue 新旧页观察必须先于通用“单一内容页=正常承接”。
+  var ms2 = classifyMs2SkipPrologueLanding_(query, viewed, site);
+  if (ms2) return ms2;
+
   var contentPages = [];
   for (var c = 0; c < viewed.length; c++) {
     if (!viewed[c].isHub) contentPages.push(viewed[c]);
@@ -353,8 +363,6 @@ function classifyFreshQueryLanding_(query, pages, site) {
   var competing = listCompetingFreshContentPages_(contentPages, sumFreshPageImpressions_(viewed));
 
   if (competing.length >= 2) {
-    var ms2Compete = classifyMs2SkipPrologueLanding_(query, viewed);
-    if (ms2Compete && ms2Compete.status === '可能页面竞争') return ms2Compete;
     return {
       status: '可能页面竞争',
       action: '检查页面意图与内链',
@@ -362,9 +370,6 @@ function classifyFreshQueryLanding_(query, pages, site) {
       primaryPath: primary.path
     };
   }
-
-  var ms2 = classifyMs2SkipPrologueLanding_(query, viewed);
-  if (ms2) return ms2;
 
   var specificIntent = freshQueryHasSpecificIntent_(query, site);
   if (primary.isHub && specificIntent) {
@@ -385,18 +390,16 @@ function classifyFreshQueryLanding_(query, pages, site) {
   };
 }
 
-function classifyMs2SkipPrologueLanding_(query, pages) {
-  var spec = FRESH_QUERY_MS2_SKIP_PROLOGUE;
-  if (normalizeFreshQueryText_(query) !== spec.query) return null;
+function classifyMs2SkipPrologueLanding_(query, pages, site) {
+  if (!isMs2SkipPrologueQuery_(query)) return null;
 
-  var oldPath = normalizeFreshQueryPath_(spec.oldPath);
-  var newPath = normalizeFreshQueryPath_(spec.newPath);
+  var spec = FRESH_QUERY_MS2_SKIP_PROLOGUE;
   var oldPage = null;
   var newPage = null;
-  for (var i = 0; i < pages.length; i++) {
-    var path = pages[i].path;
-    if (path === oldPath) oldPage = pages[i];
-    if (path === newPath) newPage = pages[i];
+  for (var i = 0; i < (pages || []).length; i++) {
+    var path = pages[i].path || pages[i].page || pages[i].pageUrl || '';
+    if (freshQueryIsConfiguredPath_(path, spec.oldPath)) oldPage = pages[i];
+    if (freshQueryIsConfiguredPath_(path, spec.newPath)) newPage = pages[i];
   }
 
   var queryImpr = sumFreshPageImpressions_(pages);
@@ -419,6 +422,7 @@ function classifyMs2SkipPrologueLanding_(query, pages) {
     };
   }
   if (oldPage) {
+    // 专门新页存在于配置规则中，不要求它已出现在当前 hourly 行。
     return {
       status: '旧页承接，观察新页切换',
       action: '继续观察',
@@ -427,6 +431,37 @@ function classifyMs2SkipPrologueLanding_(query, pages) {
     };
   }
   return null;
+}
+
+function isMs2SkipPrologueQuery_(query) {
+  var spec = FRESH_QUERY_MS2_SKIP_PROLOGUE;
+  var normalized = normalizeFreshQueryText_(query);
+  if (!normalized) return false;
+  if (normalized === spec.query) return true;
+  var tokens = tokenizeFreshQuery_(normalized);
+  var required = spec.intentTokens || ['skip', 'prologue'];
+  var found = {};
+  for (var i = 0; i < tokens.length; i++) found[tokens[i]] = true;
+  for (var r = 0; r < required.length; r++) {
+    if (!found[required[r]]) return false;
+  }
+  return true;
+}
+
+function freshQueryIsConfiguredPath_(path, specPath) {
+  var a = normalizeFreshQueryPath_(path).toLowerCase();
+  var b = normalizeFreshQueryPath_(specPath).toLowerCase();
+  if (!a || !b) return false;
+  if (a === b) return true;
+  var specSegs = b.split('/').filter(function (s) {
+    return !!s;
+  });
+  var slug = specSegs.length ? specSegs[specSegs.length - 1] : '';
+  if (!slug) return false;
+  var segs = a.split('/').filter(function (s) {
+    return !!s;
+  });
+  return segs.indexOf(slug) >= 0;
 }
 
 function listCompetingFreshContentPages_(contentPages, queryImpressions) {

@@ -206,6 +206,10 @@ assert(
   byName['展现增长率 / 是否新搜索词 / 页面承接状态'][2] === '实验规则',
   'burst rules are experimental'
 );
+assert(
+  /近24h展现≥10/.test(byName['展现增长率 / 是否新搜索词 / 页面承接状态'][7]),
+  'growth rule has min impressions floor'
+);
 
 // Code consistency checks (read-only)
 assert(/function safeGrowth_/.test(decisionSrc), 'safeGrowth_ exists');

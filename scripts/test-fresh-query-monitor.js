@@ -65,6 +65,7 @@ assert(FRESH_QUERY_MONITOR_HEADERS.indexOf('页面承接状态') >= 0, '页面�
 
 var FRESH_QUERY_MONITOR_V1 = extractAssign(configSrc, 'FRESH_QUERY_MONITOR_V1');
 var FRESH_QUERY_MS2_SKIP_PROLOGUE = extractAssign(configSrc, 'FRESH_QUERY_MS2_SKIP_PROLOGUE');
+assert(FRESH_QUERY_MONITOR_V1.GROWTH_MIN_IMPRESSIONS === 10, 'growth min impressions');
 assert(FRESH_QUERY_MS2_SKIP_PROLOGUE.query === 'mortal shell 2 skip prologue', 'ms2 query text only');
 assert(
   !/85|11 clicks|12\.94/.test(JSON.stringify(FRESH_QUERY_MS2_SKIP_PROLOGUE)),
@@ -317,6 +318,67 @@ var relatedWatch = sandbox.classifyFreshQueryLanding_(
   mortal
 );
 assert(relatedWatch.status === '新页已承接', 'matched new page');
+
+// 9b) production reproduction: path-only old URL, skip-prologue intent variants
+var prodOld = sandbox.classifyFreshQueryLanding_(
+  'mortal shell 2 skip prologue',
+  [{ page: '/mortal-shell-ii/beta-progress-carry-over/', impressions: 196, clicks: 14 }],
+  mortal
+);
+assert(prodOld.status === '旧页承接，观察新页切换', 'path-only old page status');
+assert(prodOld.action === '继续观察', 'path-only old page action');
+
+var howToSkip = sandbox.classifyFreshQueryLanding_(
+  'mortal shell 2 how to skip prologue',
+  [{ page: '/mortal-shell-ii/beta-progress-carry-over/', impressions: 50, clicks: 4 }],
+  mortal
+);
+assert(howToSkip.status === '旧页承接，观察新页切换', 'how-to variant still skip-prologue intent');
+assert(howToSkip.action === '继续观察', 'how-to variant action');
+
+var onlyNewPath = sandbox.classifyFreshQueryLanding_(
+  'mortal shell 2 skip prologue',
+  [{ page: '/mortal-shell-ii/skip-prologue/', impressions: 40, clicks: 5 }],
+  mortal
+);
+assert(onlyNewPath.status === '新页已承接', 'path-only new page');
+assert(onlyNewPath.action === '继续观察', 'new page keep watching');
+
+var bothPages = sandbox.classifyFreshQueryLanding_(
+  'mortal shell 2 skip prologue',
+  [
+    { page: '/mortal-shell-ii/beta-progress-carry-over/', impressions: 40, clicks: 4 },
+    { page: '/mortal-shell-ii/skip-prologue/', impressions: 30, clicks: 3 }
+  ],
+  mortal
+);
+assert(bothPages.status === '可能页面竞争', 'both significant pages compete');
+assert(bothPages.action === '检查页面意图与内链', 'compete action');
+
+var classifySrc = extractFn(freshSrc, 'classifyFreshQueryLanding_');
+assert(
+  classifySrc.indexOf('classifyMs2SkipPrologueLanding_') < classifySrc.indexOf("status: '正常承接'"),
+  'ms2 special case runs before generic 正常承接'
+);
+
+// 9c) low-volume growth noise vs real growth
+function growthCase(prevImpr, recentImpr) {
+  var rows = sandbox.normalizeHourlyQueryPageRows_([
+    hourRow('2026-08-18T14:00:00-07:00', 'quiet growth ' + recentImpr, HUB_PAGE, 0, recentImpr, 20),
+    hourRow('2026-08-17T14:00:00-07:00', 'quiet growth ' + recentImpr, HUB_PAGE, 0, prevImpr, 21)
+  ]);
+  return sandbox.evaluateFreshQueryBurst_(sandbox.aggregateFreshQueryWindows_(
+    sandbox.splitFreshQueryWindows_(rows).recent,
+    sandbox.splitFreshQueryWindows_(rows).previous
+  )[0]);
+}
+assert(growthCase(1, 2).triggered === false, '1→2 must not trigger on growth');
+assert(growthCase(3, 6).triggered === false, '3→6 must not trigger on growth');
+var grow12 = growthCase(6, 12);
+assert(grow12.triggered === true, '6→12 triggers');
+assert(grow12.reasonText.indexOf('展现增长≥100%') >= 0, '6→12 growth reason');
+assert(grow12.reasonText.indexOf('展现≥30') < 0, '6→12 not the 30-impr rule');
+assert(grow12.reasonText.indexOf('点击≥3') < 0, '6→12 not the clicks rule');
 
 // 10) pagination helper exists and existing daily fetch unchanged
 assert(/startRow/.test(extractFn(searchSrc, 'searchAnalyticsQueryAllRows_')), 'hourly paginates');

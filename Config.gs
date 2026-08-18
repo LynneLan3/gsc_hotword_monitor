@@ -1111,6 +1111,7 @@ var FRESH_QUERY_MONITOR_V1 = {
   IMPRESSIONS_BURST: 30,
   CLICKS_BURST: 3,
   GROWTH_RATIO: 1,
+  GROWTH_MIN_IMPRESSIONS: 10,
   NEW_QUERY_MIN_IMPRESSIONS: 10,
   NEW_QUERY_MAX_POSITION: 10,
   COMPETING_PAGE_MIN_IMPRESSIONS: 10,
@@ -1118,10 +1119,12 @@ var FRESH_QUERY_MONITOR_V1 = {
 };
 
 /**
- * Mortal Shell II skip-prologue 承接观察：只匹配 URL path，不写死曝光/点击。
+ * Mortal Shell II skip-prologue 承接观察：按 intent + URL path，不写死曝光/点击。
+ * 专门新页是否存在看本配置，不要求它已经出现在当前 hourly 行里。
  */
 var FRESH_QUERY_MS2_SKIP_PROLOGUE = {
   query: 'mortal shell 2 skip prologue',
+  intentTokens: ['skip', 'prologue'],
   oldPath: '/mortal-shell-ii/beta-progress-carry-over/',
   newPath: '/mortal-shell-ii/skip-prologue/'
 };
@@ -2272,10 +2275,10 @@ function getMetricGuideRows_() {
       '实时Query监控',
       '实验规则',
       '由 hourly 聚合派生；承接状态看 Query×Page',
-      '新搜索词=前24h展现为0；增长率=(近24h−前24h)/前24h；爆量：展现≥30 或 点击≥3 或 增长≥100% 或（新Query且排名≤10且展现≥10）。承接：单内容页=正常承接；Hub+独立意图=可能需要新页；两内容页=可能页面竞争。',
+      '新搜索词=前24h展现为0；增长率=(近24h−前24h)/前24h；爆量：展现≥30 或 点击≥3 或（前24h展现>0 且近24h展现≥10 且增长≥100%）或（新Query且排名≤10且展现≥10）。Skip prologue 旧页/新页判断先于通用“正常承接”。承接：单内容页=正常承接；Hub+独立意图=可能需要新页；两内容页=可能页面竞争。',
       '标记爆量 Query 并提示观察/扩页/补新页/检查竞争，不自动改站',
       '否',
-      'FRESH_QUERY_MONITOR_V1：展现≥30；点击≥3；增长≥100%；新Query Top10（展现≥10 且排名≤10）',
+      'FRESH_QUERY_MONITOR_V1：展现≥30；点击≥3；增长≥100%且近24h展现≥10；新Query Top10（展现≥10 且排名≤10）',
       '热词站项目实验规则，不是 Google / SEO 官方标准',
       '实验中',
       '达到阈值不等于必须新建页面。Mortal Shell II 的 skip prologue 只按落地 URL 观察新旧页切换，不写死指标。'
