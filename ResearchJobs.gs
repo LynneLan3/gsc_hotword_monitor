@@ -121,11 +121,13 @@ function topClustersToDiscoverySummary_(topClusters) {
 
 function validateDemandDiscoveryJobIdentity_(jobRow, jobCol, payload) {
   var radarId = String(payload.radar_id || '').trim();
-  var cycleDate = String(payload.discovery_cycle_date || '').trim();
+  var cycleDate = normalizeDemandDiscoveryDate_(payload.discovery_cycle_date);
 
   var jobResearchType = String(cell_(jobRow, jobCol, '研究类型') || '').trim();
   var jobRadarId = String(cell_(jobRow, jobCol, '雷达ID') || '').trim();
-  var jobCycleDate = String(cell_(jobRow, jobCol, '发现周期日期') || '').trim();
+  var jobCycleDate = normalizeDemandDiscoveryDate_(
+    cell_(jobRow, jobCol, '发现周期日期')
+  );
 
   if (jobResearchType !== RESEARCH_TYPE.DEMAND_DISCOVERY) {
     return { ok: false, error: 'job_research_type_mismatch' };
@@ -861,6 +863,43 @@ function normalizeDiscoveryCycleDate_(value) {
   return '';
 }
 
+function normalizeDemandDiscoveryDate_(value) {
+  if (value === null || value === undefined || value === '') return '';
+  if (
+    Object.prototype.toString.call(value) === '[object Date]' &&
+    !isNaN(value.getTime())
+  ) {
+    try {
+      return Utilities.formatDate(
+        value,
+        Session.getScriptTimeZone(),
+        'yyyy-MM-dd'
+      );
+    } catch (e) {
+      return normalizeDiscoveryCycleDate_(value.toISOString());
+    }
+  }
+
+  var s = String(value || '').trim();
+  if (!s) return '';
+  var direct = normalizeDiscoveryCycleDate_(s);
+  if (direct) return direct;
+
+  var parsed = new Date(s);
+  if (!isNaN(parsed.getTime())) {
+    try {
+      return Utilities.formatDate(
+        parsed,
+        Session.getScriptTimeZone(),
+        'yyyy-MM-dd'
+      );
+    } catch (e2) {
+      return normalizeDiscoveryCycleDate_(parsed.toISOString());
+    }
+  }
+  return '';
+}
+
 function discoveryCycleDateToYmd_(cycleDate) {
   return normalizeDiscoveryCycleDate_(cycleDate).replace(/-/g, '');
 }
@@ -938,8 +977,10 @@ function buildDemandDiscoveryJobContract_(radar, createdAt, cycleDate) {
 function isDemandDiscoveryEligible_(radar, opts) {
   opts = opts || {};
   var runDate = opts.runDate || '';
-  var recentFound = String(radar.recent_found || radar.recentFound || radar.runDate || '').trim();
-  if (runDate && recentFound && recentFound !== runDate) return false;
+  var recentFoundRaw = radar.recent_found || radar.recentFound || radar.runDate || '';
+  var runDateDate = normalizeDemandDiscoveryDate_(runDate);
+  var recentFoundDate = normalizeDemandDiscoveryDate_(recentFoundRaw);
+  if (runDateDate && recentFoundDate && recentFoundDate !== runDateDate) return false;
 
   if (String(radar.trigger_type || radar.triggerType || '') !== QUERY_BLIND_SPOT_TRIGGER) return false;
   if (String(radar.signal_status || radar.signalStatus || '') !== RADAR_SIGNAL_STATUS.ACTIVE) return false;

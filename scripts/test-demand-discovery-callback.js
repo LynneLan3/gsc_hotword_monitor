@@ -42,6 +42,19 @@ var RESEARCH_JOB_STATUS_LABELS = extractAssign(configSrc, 'RESEARCH_JOB_STATUS_L
 var DEMAND_RADAR_HEADERS = extractAssign(configSrc, 'DEMAND_RADAR_HEADERS');
 var RESEARCH_JOB_HEADERS = extractAssign(configSrc, 'RESEARCH_JOB_HEADERS');
 
+function pad2_(n) {
+  return n < 10 ? '0' + n : '' + n;
+}
+
+function formatYmdInTz_(date, tz) {
+  var d = new Date(date);
+  if (tz === 'Asia/Shanghai') {
+    d = new Date(d.getTime() + 8 * 3600 * 1000);
+    return d.getUTCFullYear() + '-' + pad2_(d.getUTCMonth() + 1) + '-' + pad2_(d.getUTCDate());
+  }
+  return d.getUTCFullYear() + '-' + pad2_(d.getUTCMonth() + 1) + '-' + pad2_(d.getUTCDate());
+}
+
 // Provide minimal stubs used by helper functions / file load-time.
 var sandbox = {
   SOURCE_FAMILY: SOURCE_FAMILY,
@@ -53,7 +66,36 @@ var sandbox = {
   RESEARCH_JOB_STATUS: RESEARCH_JOB_STATUS,
   RESEARCH_JOB_STATUS_LABELS: RESEARCH_JOB_STATUS_LABELS,
   DEMAND_RADAR_HEADERS: DEMAND_RADAR_HEADERS,
-  RESEARCH_JOB_HEADERS: RESEARCH_JOB_HEADERS
+  RESEARCH_JOB_HEADERS: RESEARCH_JOB_HEADERS,
+  Session: {
+    getScriptTimeZone: function () {
+      return 'Asia/Shanghai';
+    }
+  },
+  Utilities: {
+    formatDate: function (date, tz, fmt) {
+      if (fmt === 'yyyy-MM-dd') return formatYmdInTz_(date, tz);
+      var d = new Date(date);
+      if (tz === 'Asia/Shanghai') d = new Date(d.getTime() + 8 * 3600 * 1000);
+      if (fmt === 'Z') return 'Z';
+      if (fmt && fmt.indexOf('yyyy-MM-dd') === 0) {
+        return (
+          d.getUTCFullYear() +
+          '-' +
+          pad2_(d.getUTCMonth() + 1) +
+          '-' +
+          pad2_(d.getUTCDate()) +
+          'T' +
+          pad2_(d.getUTCHours()) +
+          ':' +
+          pad2_(d.getUTCMinutes()) +
+          ':' +
+          pad2_(d.getUTCSeconds())
+        );
+      }
+      return d.toISOString();
+    }
+  }
 };
 
 vm.createContext(sandbox);
@@ -391,6 +433,7 @@ var completedAt = new Date('2026-08-18T10:00:00+08:00');
   });
   var ok = sandbox.validateDemandDiscoveryJobIdentity_(jobRow, jobCol, payload);
   assert(ok.ok === false, 'case9 must reject');
+  assert(ok.error === 'radar_id_mismatch', 'case9 radar_id_mismatch');
 }
 
 // Case 10 — identity mismatch: discovery_cycle_date mismatch => validate fails.
@@ -403,6 +446,45 @@ var completedAt = new Date('2026-08-18T10:00:00+08:00');
   });
   var ok = sandbox.validateDemandDiscoveryJobIdentity_(jobRow, jobCol, payload);
   assert(ok.ok === false, 'case10 must reject');
+  assert(ok.error === 'discovery_cycle_date_mismatch', 'case10 discovery_cycle_date_mismatch');
+}
+
+// Case 13 — Sheet cycle Date object 2026-08-18 vs payload "2026-08-18" => accepted.
+{
+  var sheetDate = new Date('2026-08-18T00:00:00+08:00');
+  var jobRow = makeJobRow(jobId, radarId, sheetDate, {});
+  var payload = discoveryPayload({
+    jobId: jobId,
+    radarId: radarId,
+    cycleDate: '2026-08-18'
+  });
+  var ok = sandbox.validateDemandDiscoveryJobIdentity_(jobRow, jobCol, payload);
+  assert(ok.ok === true, 'case13 Date vs YYYY-MM-DD must accept');
+}
+
+// Case 14 — Sheet cycle string 2026-08-18 vs payload "2026-08-18" => accepted.
+{
+  var jobRow = makeJobRow(jobId, radarId, '2026-08-18', {});
+  var payload = discoveryPayload({
+    jobId: jobId,
+    radarId: radarId,
+    cycleDate: '2026-08-18'
+  });
+  var ok = sandbox.validateDemandDiscoveryJobIdentity_(jobRow, jobCol, payload);
+  assert(ok.ok === true, 'case14 string vs string must accept');
+}
+
+// Case 15 — Sheet cycle 2026-08-17 vs payload "2026-08-18" => discovery_cycle_date_mismatch.
+{
+  var jobRow = makeJobRow(jobId, radarId, new Date('2026-08-17T00:00:00+08:00'), {});
+  var payload = discoveryPayload({
+    jobId: jobId,
+    radarId: radarId,
+    cycleDate: '2026-08-18'
+  });
+  var ok = sandbox.validateDemandDiscoveryJobIdentity_(jobRow, jobCol, payload);
+  assert(ok.ok === false, 'case15 different dates must reject');
+  assert(ok.error === 'discovery_cycle_date_mismatch', 'case15 discovery_cycle_date_mismatch');
 }
 
 // Case 11 — FAILED: update research job only, radar unaffected.

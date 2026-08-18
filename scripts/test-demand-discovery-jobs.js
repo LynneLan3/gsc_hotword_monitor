@@ -59,6 +59,15 @@ var sandbox = {
         return n < 10 ? '0' + n : '' + n;
       }
       if (fmt === 'Z') return 'Z';
+      if (fmt === 'yyyy-MM-dd') {
+        return (
+          d.getUTCFullYear() +
+          '-' +
+          pad(d.getUTCMonth() + 1) +
+          '-' +
+          pad(d.getUTCDate())
+        );
+      }
       // "yyyy-MM-dd'T'HH:mm:ss"
       if (fmt.indexOf('yyyy-MM-dd') === 0) {
         return (
@@ -119,6 +128,33 @@ var radar1 = {
 };
 
 assert(sandbox.isDemandDiscoveryEligible_(radar1, { runDate: RUN_DATE }) === true, 'Case1 eligible');
+assert(
+  sandbox.isDemandDiscoveryEligible_(
+    Object.assign({}, radar1, {
+      recent_found: new Date('2026-08-18T08:00:00+08:00')
+    }),
+    { runDate: RUN_DATE }
+  ) === true,
+  'Case1b Date object same day eligible'
+);
+assert(
+  sandbox.isDemandDiscoveryEligible_(
+    Object.assign({}, radar1, {
+      recent_found: new Date('2026-08-17T23:00:00+08:00')
+    }),
+    { runDate: RUN_DATE }
+  ) === false,
+  'Case1c Date object previous day ineligible'
+);
+assert(
+  sandbox.isDemandDiscoveryEligible_(
+    Object.assign({}, radar1, {
+      recent_found: '2026-08-18T08:00:00+08:00'
+    }),
+    { runDate: RUN_DATE }
+  ) === true,
+  'Case1d time string same day eligible'
+);
 
 var created = new Date('2026-08-18T00:00:00Z');
 var contract1 = sandbox.buildDemandDiscoveryJobContract_(radar1, created, RUN_DATE);
@@ -208,6 +244,20 @@ assert(sandbox.isDemandDiscoveryEligible_(radar4, { runDate: RUN_DATE }) === fal
 // Case 5: CrossValidated=true → not eligible
 var radar5 = Object.assign({}, radar1, { cross_validated: true });
 assert(sandbox.isDemandDiscoveryEligible_(radar5, { runDate: RUN_DATE }) === false, 'Case5 CrossValidated true');
+assert(
+  sandbox.isDemandDiscoveryEligible_(
+    Object.assign({}, radar1, { cross_validated: false }),
+    { runDate: RUN_DATE }
+  ) === true,
+  'Case5b boolean false remains eligible'
+);
+assert(
+  sandbox.isDemandDiscoveryEligible_(
+    Object.assign({}, radar1, { cross_validated: 'FALSE' }),
+    { runDate: RUN_DATE }
+  ) === true,
+  'Case5c string FALSE remains eligible'
+);
 
 // Case 6: SignalStatus=RESOLVED → not eligible
 var radar6 = Object.assign({}, radar1, { signal_status: RADAR_SIGNAL_STATUS.RESOLVED });

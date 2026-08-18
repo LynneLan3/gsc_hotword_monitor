@@ -239,15 +239,9 @@ function parseBlindSpotQueryPageRow_(row, site, startDate, endDate) {
 function blindSpotPageKey_(pageUrl, pagePath) {
   var fromUrl = String(pageUrl || '').trim();
   var fromPath = String(pagePath || '').trim();
-  if (typeof normalizeOpportunityPath_ === 'function') {
-    if (fromUrl) {
-      var urlKey = normalizeOpportunityPath_(fromUrl);
-      if (urlKey) return urlKey;
-    }
-    if (fromPath) return normalizeOpportunityPath_(fromPath);
-    return '';
-  }
-  return normalizeBlindSpotPathFallback_(fromUrl || fromPath);
+  var key = canonicalRadarPathname_(fromUrl || fromPath);
+  if (key) return key;
+  return '';
 }
 
 function normalizeBlindSpotPathFallback_(value) {
@@ -271,6 +265,53 @@ function normalizeBlindSpotPathFallback_(value) {
     p = p.substring(0, p.length - 1);
   }
   return p || '/';
+}
+
+/**
+ * Demand Radar 统一 pathname 归一：
+ * - absolute http/https URL 只取 pathname
+ * - 去 query/hash
+ * - 保证 leading slash
+ * - canonical trailing slash（root 保持 `/`）
+ */
+function canonicalRadarPathname_(value) {
+  var raw = String(value || '').trim();
+  if (!raw) return '';
+
+  // 修复历史坏值：`/https://example.com/foo` 先去掉多余前导 `/`
+  if (/^\/+https?:\/\//i.test(raw)) {
+    raw = raw.replace(/^\/+/, '');
+  }
+
+  var path = '';
+  var abs = /^https?:\/\//i.test(raw);
+  if (abs) {
+    if (typeof pagePathFromUrl_ === 'function') {
+      path = String(pagePathFromUrl_(raw) || '').trim();
+    }
+    if (!path || /^https?:\/\//i.test(path)) {
+      var m = /^https?:\/\/[^\/?#]+(\/[^?#]*)?/i.exec(raw);
+      path = m ? m[1] || '/' : '';
+    }
+  } else {
+    path = raw;
+  }
+
+  if (!path) path = '/';
+  if (path.charAt(0) !== '/') path = '/' + path;
+
+  var cut = path.length;
+  var q = path.indexOf('?');
+  var h = path.indexOf('#');
+  if (q >= 0 && q < cut) cut = q;
+  if (h >= 0 && h < cut) cut = h;
+  path = path.substring(0, cut) || '/';
+
+  // 清理双斜杠（保留 root）
+  path = path.replace(/\/{2,}/g, '/');
+
+  if (path !== '/' && path.charAt(path.length - 1) !== '/') path += '/';
+  return path || '/';
 }
 
 function buildBlindSpotReason_(m, clickPath, impressionPath) {
@@ -496,10 +537,9 @@ function radarSiteSlug_(siteName) {
 }
 
 function radarCanonicalPagePath_(pageUrl, pagePath) {
-  var p = blindSpotPageKey_(pageUrl, pagePath);
-  if (!p) return '';
-  if (p !== '/' && p.charAt(p.length - 1) !== '/') p += '/';
-  return p;
+  var p = canonicalRadarPathname_(pageUrl);
+  if (!p) p = canonicalRadarPathname_(pagePath);
+  return p || '';
 }
 
 /**
@@ -569,6 +609,12 @@ function reconcileDemandRadarRows_(existingRows, detections, opts) {
     var radarId = buildRadarId_(detSite, det.pageUrl, det.pagePath, trigger);
     if (!radarId) continue;
     activeIds[radarId] = det;
+    if (!byId[radarId]) {
+      var legacyId = findLegacyRadarIdMatch_(byId, radarId, detSite, trigger);
+      if (legacyId) {
+        byId = migrateRadarRowKey_(byId, order, legacyId, radarId);
+      }
+    }
     if (byId[radarId]) {
       byId[radarId] = mergeRadarActiveRow_(byId[radarId], det, {
         site: detSite,
@@ -603,6 +649,41 @@ function reconcileDemandRadarRows_(existingRows, detections, opts) {
     if (byId[order[k]]) out.push(byId[order[k]]);
   }
   return { rows: out, skipped: false };
+}
+
+function findLegacyRadarIdMatch_(byId, canonicalRadarId, site, trigger) {
+  var ids = Object.keys(byId || {});
+  var targetSite = String(site || '').trim();
+  var targetTrigger = String(trigger || '').trim();
+  for (var i = 0; i < ids.length; i++) {
+    var id = ids[i];
+    var row = byId[id];
+    if (!row) continue;
+    var rowSite = String(row[5] || '').trim();
+    var rowTrigger = String(row[8] || '').trim();
+    if (targetSite && rowSite && rowSite !== targetSite) continue;
+    if (targetTrigger && rowTrigger && rowTrigger !== targetTrigger) continue;
+    var rowCanonicalId = buildRadarId_(rowSite || targetSite, '', row[7], rowTrigger || targetTrigger);
+    if (rowCanonicalId && rowCanonicalId === canonicalRadarId) return id;
+  }
+  return '';
+}
+
+function migrateRadarRowKey_(byId, order, fromId, toId) {
+  if (!byId || !fromId || !toId || fromId === toId) return byId;
+  if (!byId[fromId]) return byId;
+  var row = byId[fromId];
+  row[0] = toId;
+  row[7] = radarCanonicalPagePath_('', row[7]) || row[7];
+  delete byId[fromId];
+  byId[toId] = row;
+  for (var i = 0; i < (order || []).length; i++) {
+    if (order[i] === fromId) {
+      order[i] = toId;
+      break;
+    }
+  }
+  return byId;
 }
 
 function radarCollectionFailed_(opts) {

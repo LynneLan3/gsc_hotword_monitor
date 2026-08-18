@@ -289,6 +289,56 @@ var slashMerge = sandbox.reconcileDemandRadarRows_(day1.rows, [
 });
 assert(slashMerge.rows.length === 1, 'slash reconcile no extra row');
 
+// --- Case 8 canonical pathname helper ---
+assert(
+  sandbox.canonicalRadarPathname_(
+    'https://agefield-high-rock-the-school.vercel.app/agefield-high-rock-the-school/classes/'
+  ) === '/agefield-high-rock-the-school/classes/',
+  'absolute URL canonical pathname'
+);
+assert(
+  sandbox.canonicalRadarPathname_('https://approximately-up.vercel.app/') === '/',
+  'root URL canonical pathname'
+);
+assert(
+  sandbox.canonicalRadarPathname_('https://example.com/foo/?a=1#x') === '/foo/',
+  'query/hash removed'
+);
+assert(
+  sandbox.canonicalRadarPathname_('/mortal-shell-ii/beta-progress-carry-over/') ===
+    '/mortal-shell-ii/beta-progress-carry-over/',
+  'path input unchanged'
+);
+assert(
+  sandbox.canonicalRadarPathname_('foo/bar/') === '/foo/bar/',
+  'relative path canonicalized'
+);
+
+// --- Case 9 malformed existing row should be canonicalized in-place ---
+var malformedId =
+  'agefield|/https://agefield-high-rock-the-school.vercel.app/agefield-high-rock-the-school/classes/|QUERY_BLIND_SPOT';
+var malformedRow = day1.rows[0].slice();
+malformedRow[col('雷达ID')] = malformedId;
+malformedRow[col('锚点页面')] =
+  '/https://agefield-high-rock-the-school.vercel.app/agefield-high-rock-the-school/classes/';
+malformedRow[col('首次发现')] = '2026-08-17';
+malformedRow[col('最近发现')] = '2026-08-17';
+
+var fixMalformed = sandbox.reconcileDemandRadarRows_([malformedRow], [detection_()], {
+  site: AGEFIELD,
+  runDate: '2026-08-18',
+  nowTs: '2026-08-18 10:00:00'
+});
+assert(fixMalformed.rows.length === 1, 'malformed row fixed without duplicate');
+var fixed = fixMalformed.rows[0];
+assert(fixed[col('雷达ID')] === radarId, 'malformed id rewritten to canonical id');
+assert(
+  fixed[col('锚点页面')] === '/agefield-high-rock-the-school/classes/',
+  'malformed anchor rewritten to canonical path'
+);
+assert(fixed[col('首次发现')] === '2026-08-17', 'malformed row keeps first seen');
+assert(fixed[col('最近发现')] === '2026-08-18', 'malformed row updates last seen');
+
 console.log(
   JSON.stringify(
     {
