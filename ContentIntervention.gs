@@ -10,6 +10,7 @@
 function ensureContentUpdateHeader_() {
   var sheet = getSpreadsheet_().getSheetByName(SHEET_NAMES.CONTENT_UPDATES);
   if (!sheet) return;
+  ensureSheetGrid_(sheet, 1, CONTENT_UPDATE_HEADERS.length);
   var lastCol = Math.max(sheet.getLastColumn(), CONTENT_UPDATE_HEADERS.length);
   var header = sheet.getRange(1, 1, 1, lastCol).getValues()[0];
   var actual = [];

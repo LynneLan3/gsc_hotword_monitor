@@ -8,6 +8,7 @@ function onOpen() {
     .addItem('初始化表格', 'setup')
     .addItem('整理工作表视图', 'organizeSheetUi')
     .addItem('立即运行一次', 'runDaily')
+    .addItem('重试每日后处理', 'runDailyFinalizer')
     .addItem('运行决策引擎', 'runDecisionEngine')
     .addItem('重建站点经营', 'runPortfolioEngine')
     .addItem('重建内容资产候选', 'runWinnerAssetEngine')
@@ -38,7 +39,7 @@ function onOpen() {
     .addToUi();
 }
 
-/** 初始化全部工作表并预填 7 个站点 */
+/** 初始化全部工作表；DEFAULT_SITES 仅在「站点配置」为空时预填，不覆盖已有行 */
 function setup() {
   setupSheets();
   SpreadsheetApp.getUi().alert('初始化完成。请在「站点配置」填写各站 Day0（可选），然后运行 testGscAccess / runDaily。');
@@ -57,29 +58,60 @@ function sortMonitoringSheetsNewestFirst() {
  * 每日主流程：逐站执行 Performance / 快照，单站失败不影响其他站。
  * 不做全量 URL Inspection（由 runIndexAuditBatch 分批负责）。
  * IndexedURLCount 使用「URL索引」历史最新 Verdict 去重统计。
- * GSC 采集与排序全部成功后，再运行 Decision Engine 与 Content Opportunity Engine；
+ * 采集可能分批续跑（时间预算）；全部站点采集完成后，再运行 Decision / Opportunity。
  * 决策/机会引擎失败不回滚已采集数据。
+ * GSC Property URL 每次都从当前「站点配置」读取，不从历史快照或默认配置恢复。
  */
 function runDaily() {
+  return runDailyWithLock_(false);
+}
+
+/** 分批续跑入口：不重置当日进度，不创建新的每日 trigger。 */
+function runDailyContinuation_() {
+  deleteDailyContinuationTriggers_();
+  return runDailyWithLock_(true);
+}
+
+function runDailyWithLock_(isContinuation) {
   var lock = LockService.getScriptLock();
   if (!lock.tryLock(15000)) {
-    writeLog_('WARN', '', 'runDaily 跳过：已有实例在运行（LockService）');
-    Logger.log('runDaily skipped: lock busy');
-    return 'runDaily skipped: lock busy';
+    var skipMsg = isContinuation
+      ? 'runDaily 续跑跳过：已有实例在运行（LockService）'
+      : 'runDaily 跳过：已有实例在运行（LockService）';
+    writeLog_('WARN', '', skipMsg);
+    Logger.log(isContinuation ? 'runDaily continuation skipped: lock busy' : 'runDaily skipped: lock busy');
+    if (isContinuation) {
+      scheduleDailyContinuation_();
+    }
+    return isContinuation
+      ? 'runDaily continuation skipped: lock busy'
+      : 'runDaily skipped: lock busy';
   }
 
   try {
-    return runDailyUnlocked_();
+    return runDailyUnlocked_(!!isContinuation);
   } finally {
     lock.releaseLock();
   }
 }
 
 /** runDaily 主体（已持锁） */
-function runDailyUnlocked_() {
-  setupSheets(); // 确保表存在，不覆盖已有数据
+function runDailyUnlocked_(isContinuation) {
+  var startedAt = Date.now();
+  isContinuation = !!isContinuation;
+
+  if (!isContinuation) {
+    setupSheets(); // 确保表存在，不覆盖已有「站点配置」数据
+  }
+
   var sites = getEnabledSites();
   var runDate = todayStr_();
+  ensureDailyRunDay_(runDate, isContinuation);
+
+  var phase = getDailyRunPhase_();
+  var doneNames = getDailyDoneSiteNames_();
+  var pending = nextDailyPendingSites_(sites, doneNames);
+
   writeLog_(
     'INFO',
     '',
@@ -91,47 +123,219 @@ function runDailyUnlocked_() {
       gscTodayStr_() +
       ' (' +
       GSC_TIMEZONE +
-      ')'
+      ')' +
+      ' phase=' +
+      phase +
+      ' continuation=' +
+      (isContinuation ? 'yes' : 'no') +
+      ' done=' +
+      doneNames.length +
+      ' pending=' +
+      pending.length +
+      ' sites=' +
+      formatDailySiteList_(sites)
   );
 
-  if (!sites.length) {
-    writeLog_('INFO', '', 'runDaily 采集结束：无启用站点');
-  } else {
-    for (var i = 0; i < sites.length; i++) {
-      try {
-        processSiteDaily_(sites[i], runDate);
-      } catch (e) {
-        var errMsg = String(e.message || e);
-        writeLog_('ERROR', sites[i].name, errMsg);
-        appendSnapshotRow_([
-          runDate, '', sites[i].name, sites[i].propertyUrl, '',
-          '', '', '', '', '', '', '', '', '',
-          '', '', '', '🔴 需要检查', errMsg
-        ]);
+  var processedThisRun = 0;
+
+  if (phase === 'collect') {
+    if (!sites.length) {
+      writeLog_('INFO', '', 'runDaily 采集结束：无启用站点');
+      setDailyRunPhase_('engines');
+      phase = 'engines';
+    } else {
+      for (var i = 0; i < sites.length; i++) {
+        var site = sites[i];
+        if (doneNames.indexOf(site.name) >= 0) continue;
+        if (shouldPauseDailyRun_(processedThisRun, startedAt)) {
+          scheduleDailyContinuation_();
+          var pauseMsg =
+            'runDaily 分批暂停 ' +
+            doneNames.length +
+            '/' +
+            sites.length +
+            ' 待续=' +
+            formatDailySiteList_(nextDailyPendingSites_(sites, doneNames));
+          writeLog_('INFO', '', pauseMsg);
+          Logger.log(pauseMsg);
+          return pauseMsg;
+        }
+        try {
+          processSiteDaily_(site, runDate);
+        } catch (e) {
+          var errMsg = String(e.message || e);
+          writeLog_('ERROR', site.name, errMsg);
+          appendSnapshotRow_([
+            runDate, '', site.name, site.propertyUrl, '',
+            '', '', '', '', '', '', '', '', '',
+            '', '', '', '🔴 需要检查', errMsg
+          ]);
+        }
+        markDailySiteDone_(site.name);
+        doneNames.push(site.name);
+        processedThisRun += 1;
       }
+      writeLog_('INFO', '', 'runDaily 采集结束');
+      setDailyRunPhase_('engines');
+      phase = 'engines';
     }
-    writeLog_('INFO', '', 'runDaily 采集结束');
   }
 
-  // 全部 GSC 写入完成后再排序，再跑决策与内容机会；失败不得回滚已采集数据
-  sortMonitoringSheetsNewestFirst_();
-  try {
-    runDecisionEngine();
-  } catch (e) {
-    writeLog_('ERROR', '', 'Decision Engine 失败: ' + e.message);
-    Logger.log('DECISION_ENGINE_FAILED | ' + e.message);
+  if (phase === 'engines') {
+    if (shouldPauseDailyRun_(processedThisRun, startedAt)) {
+      scheduleDailyContinuation_();
+      var enginePause = 'runDaily 分批暂停，待跑 Decision/Opportunity 引擎';
+      writeLog_('INFO', '', enginePause);
+      Logger.log(enginePause);
+      return enginePause;
+    }
+    return runDailyFinalizerUnlocked_(sites, runDate);
   }
-  try {
-    runContentOpportunityEngine();
-  } catch (e) {
-    writeLog_('ERROR', '', 'Content Opportunity Engine 失败: ' + e.message);
-    Logger.log('OPPORTUNITY_ENGINE_FAILED | ' + e.message);
-  }
-  sortSheetsNewestFirst_([SHEET_NAMES.LOG]);
+
   var summary =
     'runDaily done sites=' + sites.length + ' runDate=' + runDate;
   Logger.log(summary);
   return summary;
+}
+
+/**
+ * 单独重试采集之后的排序 / Decision / Opportunity。
+ * 不重置分批采集进度，不重跑已完成站点。
+ */
+function runDailyFinalizer() {
+  var lock = LockService.getScriptLock();
+  if (!lock.tryLock(15000)) {
+    writeLog_('WARN', '', 'runDailyFinalizer 跳过：已有实例在运行（LockService）');
+    Logger.log('runDailyFinalizer skipped: lock busy');
+    return 'runDailyFinalizer skipped: lock busy';
+  }
+  try {
+    setupSheets();
+    var sites = getEnabledSites();
+    var runDate = todayStr_();
+    return runDailyFinalizerUnlocked_(sites, runDate);
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+function runDailyFinalizerUnlocked_(sites, runDate) {
+  try {
+    sortMonitoringSheetsNewestFirst_();
+    runDecisionEngine();
+    runContentOpportunityEngine();
+    sortSheetsNewestFirst_([SHEET_NAMES.LOG]);
+    setDailyRunPhase_('done');
+    deleteDailyContinuationTriggers_();
+    var summary =
+      'runDaily done sites=' + (sites ? sites.length : 0) + ' runDate=' + runDate;
+    writeLog_('INFO', '', summary);
+    Logger.log(summary);
+    return summary;
+  } catch (e) {
+    var detail = formatErrorWithStack_(e);
+    writeLog_('ERROR', '', 'DAILY_FINALIZER_FAILED | ' + detail);
+    Logger.log('DAILY_FINALIZER_FAILED | ' + detail);
+    Logger.log('DECISION_ENGINE_FAILED | ' + detail);
+    throw e;
+  }
+}
+
+function nextDailyPendingSites_(sites, doneNames) {
+  var pending = [];
+  var done = doneNames || [];
+  for (var i = 0; i < (sites || []).length; i++) {
+    if (done.indexOf(sites[i].name) < 0) pending.push(sites[i]);
+  }
+  return pending;
+}
+
+function formatDailySiteList_(sites) {
+  var parts = [];
+  for (var i = 0; i < (sites || []).length; i++) {
+    parts.push(sites[i].name + '|' + sites[i].propertyUrl);
+  }
+  return parts.join(', ');
+}
+
+function shouldPauseDailyRun_(processedThisRun, startedAt, nowMs, maxMs) {
+  var now = nowMs == null ? Date.now() : nowMs;
+  var limit = maxMs == null ? DAILY_RUN_MAX_MS : maxMs;
+  return processedThisRun > 0 && now - startedAt > limit;
+}
+
+function ensureDailyRunDay_(today, isContinuation) {
+  var props = PropertiesService.getScriptProperties();
+  var stored = props.getProperty(DAILY_RUN_DATE_PROP);
+  if (stored !== today) {
+    props.setProperty(DAILY_RUN_DATE_PROP, today);
+    props.setProperty(DAILY_DONE_SITES_PROP, '[]');
+    props.setProperty(DAILY_RUN_PHASE_PROP, 'collect');
+    return;
+  }
+  if (!isContinuation && getDailyRunPhase_() === 'done') {
+    props.setProperty(DAILY_DONE_SITES_PROP, '[]');
+    props.setProperty(DAILY_RUN_PHASE_PROP, 'collect');
+  }
+}
+
+function getDailyRunPhase_() {
+  var raw = PropertiesService.getScriptProperties().getProperty(DAILY_RUN_PHASE_PROP);
+  if (raw === 'engines' || raw === 'done' || raw === 'collect') return raw;
+  return 'collect';
+}
+
+function setDailyRunPhase_(phase) {
+  PropertiesService.getScriptProperties().setProperty(DAILY_RUN_PHASE_PROP, phase);
+}
+
+function getDailyDoneSiteNames_() {
+  var raw = PropertiesService.getScriptProperties().getProperty(DAILY_DONE_SITES_PROP);
+  if (!raw) return [];
+  try {
+    var parsed = JSON.parse(raw);
+    if (!parsed || !parsed.length) return [];
+    var names = [];
+    for (var i = 0; i < parsed.length; i++) {
+      var name = String(parsed[i] || '').trim();
+      if (name) names.push(name);
+    }
+    return names;
+  } catch (e) {
+    return [];
+  }
+}
+
+function markDailySiteDone_(siteName) {
+  var names = getDailyDoneSiteNames_();
+  if (names.indexOf(siteName) >= 0) return;
+  names.push(siteName);
+  PropertiesService.getScriptProperties().setProperty(
+    DAILY_DONE_SITES_PROP,
+    JSON.stringify(names)
+  );
+}
+
+function scheduleDailyContinuation_() {
+  deleteDailyContinuationTriggers_();
+  ScriptApp.newTrigger(DAILY_CONTINUE_HANDLER)
+    .timeBased()
+    .after(DAILY_CONTINUE_AFTER_MS)
+    .create();
+  writeLog_(
+    'INFO',
+    '',
+    '已安排 runDaily 续跑 afterMs=' + DAILY_CONTINUE_AFTER_MS
+  );
+}
+
+function deleteDailyContinuationTriggers_() {
+  var triggers = ScriptApp.getProjectTriggers();
+  for (var i = 0; i < triggers.length; i++) {
+    if (triggers[i].getHandlerFunction() === DAILY_CONTINUE_HANDLER) {
+      ScriptApp.deleteTrigger(triggers[i]);
+    }
+  }
 }
 
 /**
@@ -266,6 +470,7 @@ function processSiteDaily_(site, runDate) {
   var propertyUrl = site.propertyUrl;
   var siteName = site.name;
   var permissionBlocked = false;
+  writeLog_('INFO', siteName, '开始采集 propertyUrl=' + propertyUrl);
 
   // 1) 最新有数据日期（GSC / America/Los_Angeles）
   var latestDate = '';
@@ -1064,27 +1269,36 @@ function createDailyTrigger() {
   SpreadsheetApp.getUi().alert(messages.join('\n') + '\n时区 Asia/Shanghai');
 }
 
-/** 删除 runDaily 与 runIndexAuditBatch 的全部 trigger */
+/** 删除 runDaily、续跑与 runIndexAuditBatch 的全部 trigger */
 function removeDailyTrigger() {
   var triggers = ScriptApp.getProjectTriggers();
   var removedDaily = 0;
   var removedAudit = 0;
+  var removedContinue = 0;
   for (var i = 0; i < triggers.length; i++) {
     var fn = triggers[i].getHandlerFunction();
     if (fn === 'runDaily') {
       ScriptApp.deleteTrigger(triggers[i]);
       removedDaily++;
+    } else if (fn === DAILY_CONTINUE_HANDLER) {
+      ScriptApp.deleteTrigger(triggers[i]);
+      removedContinue++;
     } else if (fn === 'runIndexAuditBatch') {
       ScriptApp.deleteTrigger(triggers[i]);
       removedAudit++;
     }
   }
-  if (!removedDaily && !removedAudit) {
+  if (!removedDaily && !removedAudit && !removedContinue) {
     SpreadsheetApp.getUi().alert('没有找到相关自动任务。');
     return;
   }
   SpreadsheetApp.getUi().alert(
-    '已删除：runDaily×' + removedDaily + '，runIndexAuditBatch×' + removedAudit
+    '已删除：runDaily×' +
+      removedDaily +
+      '，续跑×' +
+      removedContinue +
+      '，runIndexAuditBatch×' +
+      removedAudit
   );
 }
 
@@ -1384,10 +1598,12 @@ function updateAgent64CanonicalDomainConfig() {
 
 /**
  * 回读 Agent 64 短域名配置、近期日志，以及今日 Query 行数（用于幂等核对）。
+ * 只读：不改「站点配置」、不改写 2026-08-14 长域名历史快照。
  */
 function readAgent64ShortDomainStatus_() {
   var TARGET_NAME = 'Agent 64: Spies Never Die';
   var SHORT = 'https://agent-64.vercel.app/';
+  var LONG_HOST = 'agent-64-spies-never-die';
   var ss = SpreadsheetApp.getActiveSpreadsheet();
   if (!ss) throw new Error('No active spreadsheet');
 
@@ -1411,20 +1627,25 @@ function readAgent64ShortDomainStatus_() {
   }
 
   var logHits = [];
+  var longDomainLogHits = [];
   var logSheet = ss.getSheetByName(SHEET_NAMES.LOG);
   if (logSheet && logSheet.getLastRow() >= 2) {
     var logLast = logSheet.getLastRow();
-    // 日志已按「最新在前」排序，从顶部读取
-    var end = Math.min(logLast, 2 + 100);
+    var end = Math.min(logLast, 2 + 400);
     var logs = logSheet.getRange(2, 1, end, Math.min(6, logSheet.getLastColumn())).getValues();
-    for (var l = 0; l < logs.length && logHits.length < 20; l++) {
+    for (var l = 0; l < logs.length; l++) {
       var line = logs[l].join(' | ');
+      if (line.indexOf(LONG_HOST) >= 0) {
+        longDomainLogHits.push(line);
+      }
       if (
-        line.indexOf('Agent 64') >= 0 ||
-        line.indexOf('agent-64') >= 0 ||
-        line.indexOf('runDaily') >= 0 ||
-        line.indexOf('站点数量') >= 0 ||
-        line.indexOf('采集结束') >= 0
+        logHits.length < 20 &&
+        (line.indexOf('Agent 64') >= 0 ||
+          line.indexOf('agent-64') >= 0 ||
+          line.indexOf('runDaily') >= 0 ||
+          line.indexOf('站点数量') >= 0 ||
+          line.indexOf('采集结束') >= 0 ||
+          line.indexOf('分批暂停') >= 0)
       ) {
         logHits.push(line);
       }
@@ -1432,16 +1653,29 @@ function readAgent64ShortDomainStatus_() {
   }
 
   var snapshotHits = [];
+  var latestAgent64Snapshot = null;
+  var historicalLongSnapshots = [];
   var snap = ss.getSheetByName(SHEET_NAMES.SNAPSHOT);
   if (snap && snap.getLastRow() >= 2) {
-    var snapEnd = Math.min(snap.getLastRow(), 2 + 40);
-    var snaps = snap.getRange(2, 1, snapEnd, Math.min(6, snap.getLastColumn())).getValues();
+    var colCount = Math.min(6, snap.getLastColumn());
+    var snaps = snap.getRange(2, 1, snap.getLastRow(), colCount).getValues();
     for (var s = 0; s < snaps.length; s++) {
       var site = String(snaps[s][2] || '');
       var prop = String(snaps[s][3] || '');
-      if (site.indexOf('Agent 64') >= 0 || prop.indexOf('agent-64') >= 0) {
-        snapshotHits.push(snaps[s].slice(0, 5).join(' | '));
-        if (snapshotHits.length >= 5) break;
+      if (site.indexOf('Agent 64') < 0 && prop.indexOf('agent-64') < 0) continue;
+      var runD = toDateStr_(snaps[s][0]);
+      if (!latestAgent64Snapshot) {
+        latestAgent64Snapshot = {
+          runDate: runD,
+          propertyUrl: prop,
+          sitemapUrlCount: snaps[s][5]
+        };
+      }
+      if (snapshotHits.length < 5) {
+        snapshotHits.push(snaps[s].slice(0, 6).join(' | '));
+      }
+      if (runD === '2026-08-14' && String(prop).indexOf(LONG_HOST) >= 0) {
+        historicalLongSnapshots.push(snaps[s].slice(0, 6).join(' | '));
       }
     }
   }
@@ -1477,7 +1711,11 @@ function readAgent64ShortDomainStatus_() {
       String(siteRow.propertyUrl).indexOf(SHORT) === 0 &&
       String(siteRow.sitemapUrl).indexOf('https://agent-64.vercel.app/sitemap-index.xml') === 0,
     recentLogs: logHits,
+    longDomainLogHits: longDomainLogHits,
     recentSnapshots: snapshotHits,
+    latestAgent64Snapshot: latestAgent64Snapshot,
+    historicalLongSnapshots: historicalLongSnapshots,
+    historicalLongSnapshotKept: historicalLongSnapshots.length > 0,
     queryCountToday: queryCountToday,
     queryDuplicateKeysToday: dupKeys,
     runDate: runDate

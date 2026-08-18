@@ -397,6 +397,7 @@ function ensureResearchReviewHeader_(sheet) {
   if (String(header[header.length - 1] || '').trim() === '') {
     startCol = lastCol;
   }
+  ensureSheetGrid_(sheet, 1, startCol + toAdd.length - 1);
   sheet.getRange(1, startCol, 1, toAdd.length).setValues([toAdd]);
   sheet.getRange(1, startCol, 1, toAdd.length).setFontWeight('bold');
 }
@@ -768,6 +769,7 @@ function ensureResearchJobResultColumns_(sheet) {
   if (String(header[header.length - 1] || '').trim() === '') {
     startCol = lastCol;
   }
+  ensureSheetGrid_(sheet, 1, startCol + toAdd.length - 1);
   sheet.getRange(1, startCol, 1, toAdd.length).setValues([toAdd]);
   sheet.getRange(1, startCol, 1, toAdd.length).setFontWeight('bold');
 }
@@ -1016,6 +1018,7 @@ function ensureOpportunityResearchColumns_(sheet) {
   if (String(header[header.length - 1] || '').trim() === '') {
     startCol = lastCol;
   }
+  ensureSheetGrid_(sheet, 1, startCol + toAdd.length - 1);
   sheet.getRange(1, startCol, 1, toAdd.length).setValues([toAdd]);
   sheet.getRange(1, startCol, 1, toAdd.length).setFontWeight('bold');
 }

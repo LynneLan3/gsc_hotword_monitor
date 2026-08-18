@@ -136,7 +136,9 @@ function runDecisionEngine() {
   try {
     runPortfolioEngine();
   } catch (e) {
-    writeLog_('ERROR', '', 'Portfolio Engine 失败: ' + e.message);
+    writeLog_('ERROR', '', 'Portfolio Engine 失败: ' + formatErrorWithStack_(e));
+    Logger.log('PORTFOLIO_ENGINE_FAILED | ' + formatErrorWithStack_(e));
+    throw e;
   }
 
   writeLog_('INFO', '', 'runDecisionEngine 结束 ' + summaries.join(' | '));
@@ -160,6 +162,7 @@ function ensureDecisionSheets_() {
 function ensureDecisionHistoryHeader_() {
   var sheet = getSpreadsheet_().getSheetByName(SHEET_NAMES.DECISION_HISTORY);
   if (!sheet) return;
+  ensureSheetGrid_(sheet, 1, DECISION_HISTORY_HEADERS.length);
   var lastCol = Math.max(sheet.getLastColumn(), DECISION_HISTORY_HEADERS.length);
   var header = sheet.getRange(1, 1, 1, lastCol).getValues()[0];
   var actual = [];
@@ -175,6 +178,7 @@ function ensureDecisionHistoryHeader_() {
 function ensureTodayActionHeader_() {
   var sheet = getSpreadsheet_().getSheetByName(SHEET_NAMES.TODAY_ACTIONS);
   if (!sheet) return;
+  ensureSheetGrid_(sheet, 1, TODAY_ACTION_HEADERS.length);
   var lastCol = Math.max(sheet.getLastColumn(), TODAY_ACTION_HEADERS.length);
   var header = sheet.getRange(1, 1, 1, lastCol).getValues()[0];
   var actual = [];
@@ -190,6 +194,7 @@ function ensureTodayActionHeader_() {
 function ensureSiteStatusHeader_() {
   var sheet = getSpreadsheet_().getSheetByName(SHEET_NAMES.SITE_STATUS);
   if (!sheet) return;
+  ensureSheetGrid_(sheet, 1, SITE_STATUS_HEADERS.length);
   var lastCol = Math.max(sheet.getLastColumn(), SITE_STATUS_HEADERS.length);
   var header = sheet.getRange(1, 1, 1, lastCol).getValues()[0];
   var actual = [];
@@ -221,6 +226,7 @@ function seedMissingDecisionRules_() {
     if (!existing[rule[0]]) toAdd.push(rule.slice());
   }
   if (!toAdd.length) return;
+  ensureSheetGrid_(sheet, lastRow + toAdd.length, RULE_HEADERS.length);
   sheet.getRange(lastRow + 1, 1, toAdd.length, RULE_HEADERS.length).setValues(toAdd);
 }
 
@@ -236,8 +242,9 @@ function getDecisionRules_() {
 
   var sheet = getSpreadsheet_().getSheetByName(SHEET_NAMES.RULES);
   var current = {};
-  if (sheet && sheet.getLastRow() >= 2) {
-    var values = sheet.getRange(2, 1, sheet.getLastRow() - 1, RULE_HEADERS.length).getValues();
+  var ruleRange = getSheetDataRange_(sheet, RULE_HEADERS.length);
+  if (ruleRange) {
+    var values = ruleRange.getValues();
     for (var r = 0; r < values.length; r++) {
       var key = String(values[r][0] || '').trim();
       if (!key) continue;
@@ -285,7 +292,9 @@ function groupSheetRowsBySite_(sheetName, headers, siteCol) {
   var sheet = getSpreadsheet_().getSheetByName(sheetName);
   if (!sheet || sheet.getLastRow() < 2) return map;
 
-  var values = sheet.getRange(2, 1, sheet.getLastRow() - 1, headers.length).getValues();
+  var range = getSheetDataRange_(sheet, headers.length);
+  if (!range) return map;
+  var values = range.getValues();
   for (var i = 0; i < values.length; i++) {
     var site = String(values[i][siteCol] || '').trim();
     if (!site) continue;
@@ -300,7 +309,9 @@ function loadLatestSnapshotBySite_() {
   var sheet = getSpreadsheet_().getSheetByName(SHEET_NAMES.SNAPSHOT);
   if (!sheet || sheet.getLastRow() < 2) return map;
 
-  var values = sheet.getRange(2, 1, sheet.getLastRow() - 1, SNAPSHOT_HEADERS.length).getValues();
+  var range = getSheetDataRange_(sheet, SNAPSHOT_HEADERS.length);
+  if (!range) return map;
+  var values = range.getValues();
   for (var i = 0; i < values.length; i++) {
     var site = String(values[i][2] || '').trim();
     if (!site) continue;
@@ -836,8 +847,8 @@ function siteStatusRow_(runDate, siteName, metrics, scores, decision, reason) {
 
 function loadTodayActionHistory_() {
   var sheet = getSpreadsheet_().getSheetByName(SHEET_NAMES.TODAY_ACTIONS);
-  if (!sheet || sheet.getLastRow() < 2) return [];
-  return sheet.getRange(2, 1, sheet.getLastRow() - 1, TODAY_ACTION_HEADERS.length).getValues();
+  var range = getSheetDataRange_(sheet, TODAY_ACTION_HEADERS.length);
+  return range ? range.getValues() : [];
 }
 
 function shouldWriteTodayAction_(action, cooldown) {
@@ -977,8 +988,9 @@ function selectDecisionHistoryAppends_(existingIdSet, candidateRows) {
 function loadDecisionHistoryIdSet_() {
   var sheet = getSpreadsheet_().getSheetByName(SHEET_NAMES.DECISION_HISTORY);
   var set = {};
-  if (!sheet || sheet.getLastRow() < 2) return set;
-  var ids = sheet.getRange(2, 1, sheet.getLastRow() - 1, 1).getValues();
+  var range = getSheetDataRange_(sheet, 1);
+  if (!range) return set;
+  var ids = range.getValues();
   for (var i = 0; i < ids.length; i++) {
     var id = String(ids[i][0] || '').trim();
     if (id) set[id] = true;
@@ -999,6 +1011,11 @@ function appendDecisionHistoryRows_(candidateRows) {
   if (!toAppend.length) return 0;
   var sheet = getSpreadsheet_().getSheetByName(SHEET_NAMES.DECISION_HISTORY);
   var start = sheet.getLastRow() + 1;
+  ensureSheetGrid_(
+    sheet,
+    start + toAppend.length - 1,
+    DECISION_HISTORY_HEADERS.length
+  );
   sheet
     .getRange(start, 1, toAppend.length, DECISION_HISTORY_HEADERS.length)
     .setValues(toAppend);
@@ -1119,10 +1136,8 @@ function getContentUpdateCooldownStatus(site, pagePath, asOfDate, rules) {
 
 function loadContentUpdateRows_() {
   var sheet = getSpreadsheet_().getSheetByName(SHEET_NAMES.CONTENT_UPDATES);
-  if (!sheet || sheet.getLastRow() < 2) return [];
-  return sheet
-    .getRange(2, 1, sheet.getLastRow() - 1, CONTENT_UPDATE_HEADERS.length)
-    .getValues();
+  var range = getSheetDataRange_(sheet, CONTENT_UPDATE_HEADERS.length);
+  return range ? range.getValues() : [];
 }
 
 function getLatestContentUpdate_(site, pagePath, rows) {
@@ -1219,9 +1234,8 @@ function refreshTodayActions_(runDate, actionRows) {
   var sheet = ensureSheet_(SHEET_NAMES.TODAY_ACTIONS, TODAY_ACTION_HEADERS);
   ensureTodayActionHeader_();
   var existing = [];
-  if (sheet.getLastRow() >= 2) {
-    existing = sheet.getRange(2, 1, sheet.getLastRow() - 1, TODAY_ACTION_HEADERS.length).getValues();
-  }
+  var existingRange = getSheetDataRange_(sheet, TODAY_ACTION_HEADERS.length);
+  if (existingRange) existing = existingRange.getValues();
   var merged = mergeTodayActionRows_(runDate, existing, actionRows);
   replaceSheetDataRows_(SHEET_NAMES.TODAY_ACTIONS, TODAY_ACTION_HEADERS, merged);
 }
@@ -1323,6 +1337,7 @@ function compareTodayAction_(a, b) {
 function applyTodayActionValidation_() {
   var sheet = getSpreadsheet_().getSheetByName(SHEET_NAMES.TODAY_ACTIONS);
   if (!sheet) return;
+  ensureSheetGrid_(sheet, Math.max(2, sheet.getMaxRows()), 8);
   var rule = SpreadsheetApp.newDataValidation()
     .requireValueInList(TODAY_ACTION_STATUSES, true)
     .setAllowInvalid(false)
@@ -1332,13 +1347,20 @@ function applyTodayActionValidation_() {
 
 function replaceSheetDataRows_(sheetName, headers, rows) {
   var sheet = ensureSheet_(sheetName, headers);
-  var lastRow = sheet.getLastRow();
-  var lastCol = Math.max(sheet.getLastColumn(), headers.length);
-  if (lastRow > 1) {
-    sheet.getRange(2, 1, lastRow - 1, lastCol).clearContent();
+  var colCount = Math.max(headers.length, 1);
+  var existingLast = sheet.getLastRow();
+  var writeRows = rows && rows.length ? rows.length : 0;
+  ensureSheetGrid_(sheet, Math.max(existingLast, 1 + writeRows), colCount);
+
+  if (existingLast > 1) {
+    var clearRows = existingLast - 1;
+    var clearCols = Math.max(sheet.getLastColumn(), colCount);
+    ensureSheetGrid_(sheet, existingLast, clearCols);
+    sheet.getRange(2, 1, clearRows, clearCols).clearContent();
   }
-  if (rows && rows.length) {
-    sheet.getRange(2, 1, rows.length, headers.length).setValues(rows);
+  if (writeRows) {
+    ensureSheetGrid_(sheet, 1 + writeRows, headers.length);
+    sheet.getRange(2, 1, writeRows, headers.length).setValues(rows);
   }
 }
 

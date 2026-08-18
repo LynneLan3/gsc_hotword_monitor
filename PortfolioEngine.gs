@@ -8,6 +8,7 @@
 function ensurePortfolioHeader_() {
   var sheet = getSpreadsheet_().getSheetByName(SHEET_NAMES.PORTFOLIO);
   if (!sheet) return;
+  ensureSheetGrid_(sheet, 1, PORTFOLIO_HEADERS.length);
   var lastCol = Math.max(sheet.getLastColumn(), PORTFOLIO_HEADERS.length);
   var header = sheet.getRange(1, 1, 1, lastCol).getValues()[0];
   var actual = [];
@@ -96,10 +97,9 @@ function runPortfolioEngine() {
 function loadPortfolioManualBySite_() {
   var map = {};
   var sheet = getSpreadsheet_().getSheetByName(SHEET_NAMES.PORTFOLIO);
-  if (!sheet || sheet.getLastRow() < 2) return map;
-  var values = sheet
-    .getRange(2, 1, sheet.getLastRow() - 1, PORTFOLIO_HEADERS.length)
-    .getValues();
+  var range = getSheetDataRange_(sheet, PORTFOLIO_HEADERS.length);
+  if (!range) return map;
+  var values = range.getValues();
   var siteCol = 1;
   var decisionCol = 15;
   var reasonCol = 16;

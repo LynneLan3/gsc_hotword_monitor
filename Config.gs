@@ -1056,6 +1056,18 @@ var INDEX_AUDIT_BATCH_SIZE = 2;
 var INDEX_AUDIT_TRIGGER_HOURS = [9, 12, 15, 20];
 
 /**
+ * runDaily 分批续跑：Apps Script 单次约 6 分钟上限，预留收尾时间。
+ * 续跑状态只存站点名称与 phase，不存 Property URL；
+ * 每次 execution 都从当前「站点配置」重读短域名。
+ */
+var DAILY_RUN_MAX_MS = 4.5 * 60 * 1000;
+var DAILY_CONTINUE_AFTER_MS = 30 * 1000;
+var DAILY_CONTINUE_HANDLER = 'runDailyContinuation_';
+var DAILY_RUN_DATE_PROP = 'DAILY_RUN_DATE';
+var DAILY_RUN_PHASE_PROP = 'DAILY_RUN_PHASE';
+var DAILY_DONE_SITES_PROP = 'DAILY_DONE_SITES';
+
+/**
  * 「指标说明」数据字典行（只解释，不参与计算）。
  * 列顺序同 METRIC_GUIDE_HEADERS。
  * @return {Array<Array<string>>}

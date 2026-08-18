@@ -7,6 +7,43 @@ function getSpreadsheet_() {
 }
 
 /**
+ * 写入/读取前把网格扩到至少 requiredRows × requiredCols。
+ * 默认新表常为 1000×26；站点状态 27 列、决策历史 38 列会越界。
+ */
+function ensureSheetGrid_(sheet, requiredRows, requiredCols) {
+  if (!sheet) return sheet;
+  var needRows = Math.max(1, parseInt(requiredRows, 10) || 1);
+  var needCols = Math.max(1, parseInt(requiredCols, 10) || 1);
+  var maxRows = sheet.getMaxRows();
+  var maxCols = sheet.getMaxColumns();
+  if (needCols > maxCols) {
+    sheet.insertColumnsAfter(maxCols, needCols - maxCols);
+  }
+  if (needRows > maxRows) {
+    sheet.insertRowsAfter(maxRows, needRows - maxRows);
+  }
+  return sheet;
+}
+
+function sheetDataRowCount_(sheet) {
+  if (!sheet) return 0;
+  var last = sheet.getLastRow();
+  return last >= 2 ? last - 1 : 0;
+}
+
+/**
+ * 数据区 Range（从第 2 行起）。无数据行时返回 null，不请求 0 行范围。
+ * numRows = lastRow - 1，不是 lastRow。
+ */
+function getSheetDataRange_(sheet, numCols) {
+  var n = sheetDataRowCount_(sheet);
+  if (n < 1) return null;
+  var cols = Math.max(1, parseInt(numCols, 10) || 1);
+  ensureSheetGrid_(sheet, sheet.getLastRow(), cols);
+  return sheet.getRange(2, 1, n, cols);
+}
+
+/**
  * 若 sheet 不存在则创建并设置表头与基础格式；已存在则不改动数据。
  */
 function ensureSheet_(name, headers) {
@@ -16,9 +53,13 @@ function ensureSheet_(name, headers) {
 
   var ss = getSpreadsheet_();
   var sheet = ss.getSheetByName(name);
-  if (sheet) return sheet;
+  if (sheet) {
+    if (headers && headers.length) ensureSheetGrid_(sheet, 1, headers.length);
+    return sheet;
+  }
 
   sheet = ss.insertSheet(name);
+  ensureSheetGrid_(sheet, 1, headers.length);
   sheet.getRange(1, 1, 1, headers.length).setValues([headers]);
   sheet.setFrozenRows(1);
   sheet.getRange(1, 1, 1, headers.length).setFontWeight('bold');
@@ -299,11 +340,15 @@ function ensureUsageGuideSheet_() {
     sheet.getFilter().remove();
   }
   sheet.setFrozenRows(0);
+  ensureSheetGrid_(sheet, values.length, 1);
   sheet.getRange(1, 1, values.length, 1).setValues(values);
   sheet.setColumnWidth(1, 900);
   sheet.getRange(1, 1).setFontWeight('bold').setFontSize(14);
   if (values.length > 1) {
-    sheet.getRange(2, 1, values.length, 1).setFontWeight('normal').setFontSize(11);
+    sheet
+      .getRange(2, 1, values.length - 1, 1)
+      .setFontWeight('normal')
+      .setFontSize(11);
   }
   sheet.setTabColor('4285F4');
 }
@@ -327,6 +372,7 @@ function ensureMetricGuideSheet_() {
   if (sheet.getFilter()) {
     sheet.getFilter().remove();
   }
+  ensureSheetGrid_(sheet, values.length, headers.length);
   sheet.getRange(1, 1, values.length, headers.length).setValues(values);
   sheet.setFrozenRows(1);
   sheet
@@ -862,7 +908,9 @@ function sortSheetByHeaders_(sheetName, sortSpecs) {
   }
 
   if (!keys.length) return;
-  sheet.getRange(2, 1, lastRow, lastCol).sort(keys);
+  var numRows = lastRow - 1;
+  ensureSheetGrid_(sheet, lastRow, lastCol);
+  sheet.getRange(2, 1, numRows, lastCol).sort(keys);
 }
 
 /** 监控历史表「最新在前」的默认排序规格（不含站点配置等人工表） */
@@ -906,7 +954,7 @@ function getMonitoringSortSpecs_() {
 
 /**
  * 对指定监控 Sheet（或全部监控历史表）按「最新在前」排序一次。
- * 单表失败只 Logger，不 throw，不影响数据采集 Status。
+ * 单表失败记录完整 stack 后 throw，避免后处理带着坏范围继续写。
  * @param {Array<string>=} sheetNames 省略则排序全部监控历史表
  */
 function sortSheetsNewestFirst_(sheetNames) {
@@ -934,7 +982,8 @@ function sortSheetsNewestFirst_(sheetNames) {
       sortSheetByHeaders_(name, specs);
       Logger.log('SORT_OK | ' + name);
     } catch (e) {
-      Logger.log('SORT_FAILED | ' + name + ' | ' + e.message);
+      Logger.log('SORT_FAILED | ' + name + ' | ' + formatErrorWithStack_(e));
+      throw e;
     }
   }
 }

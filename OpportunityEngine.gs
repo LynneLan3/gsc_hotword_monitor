@@ -87,6 +87,7 @@ function ensureOpportunitySheets_() {
 function ensureOpportunityHeader_() {
   var sheet = getSpreadsheet_().getSheetByName(SHEET_NAMES.OPPORTUNITIES);
   if (!sheet) return;
+  ensureSheetGrid_(sheet, 1, OPPORTUNITY_HEADERS.length);
   var lastCol = Math.max(sheet.getLastColumn(), OPPORTUNITY_HEADERS.length);
   var header = sheet.getRange(1, 1, 1, lastCol).getValues()[0];
   var actual = [];
@@ -103,8 +104,8 @@ function ensureOpportunityHeader_() {
  */
 function loadAllQueryPageRows_() {
   var sheet = getSpreadsheet_().getSheetByName(SHEET_NAMES.QUERY_PAGES);
-  if (!sheet || sheet.getLastRow() < 2) return [];
-  return sheet.getRange(2, 1, sheet.getLastRow(), QUERY_PAGE_HEADERS.length).getValues();
+  var range = getSheetDataRange_(sheet, QUERY_PAGE_HEADERS.length);
+  return range ? range.getValues() : [];
 }
 
 function groupQueryPageRowsBySite_(rows) {

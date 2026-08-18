@@ -323,6 +323,15 @@ function formatTopList_(rows, nameKey, limit) {
   return parts.join(' | ');
 }
 
+/** 日志用完整错误：message + stack，避免只看到笼统的 range 文案。 */
+function formatErrorWithStack_(err) {
+  var msg = String((err && err.message) || err || '');
+  var stack = err && err.stack ? String(err.stack) : '';
+  if (!stack) return msg;
+  if (stack.indexOf(msg) >= 0) return stack;
+  return msg + '\n' + stack;
+}
+
 function writeLog_(level, site, message) {
   try {
     var ss = SpreadsheetApp.getActiveSpreadsheet();
