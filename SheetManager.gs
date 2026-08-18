@@ -256,6 +256,7 @@ function applyNumberFormats_(sheet, name) {
     sheet.getRange('B:E').setNumberFormat('yyyy-mm-dd');
     sheet.getRange('O:P').setNumberFormat('0.00%');
     sheet.getRange('Z:Z').setNumberFormat('yyyy-mm-dd hh:mm:ss');
+    sheet.getRange('AH:AH').setNumberFormat('yyyy-mm-dd hh:mm:ss');
   } else if (name === SHEET_NAMES.RESEARCH_JOBS) {
     sheet.getRange('B:B').setNumberFormat('yyyy-mm-dd hh:mm:ss');
     sheet.getRange('O:O').setNumberFormat('yyyy-mm-dd hh:mm:ss');

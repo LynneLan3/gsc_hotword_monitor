@@ -490,6 +490,25 @@ function isCrossValidated_(input) {
   return countIndependentSourceFamilies_(input) >= 2;
 }
 
+/**
+ * OpportunityConfidence 只升不降的比较序。
+ * SEARCH_CONFIRMED 高于 CROSS_VALIDATED；本阶段不得写入 OPPORTUNITY_VALIDATED。
+ */
+function opportunityConfidenceRank_(value) {
+  var v = String(value || '').trim();
+  if (v === OPPORTUNITY_CONFIDENCE.OPPORTUNITY_VALIDATED) return 4;
+  if (v === OPPORTUNITY_CONFIDENCE.SEARCH_CONFIRMED) return 3;
+  if (v === OPPORTUNITY_CONFIDENCE.CROSS_VALIDATED) return 2;
+  if (v === OPPORTUNITY_CONFIDENCE.DISCOVERY_ONLY) return 1;
+  return 0;
+}
+
+function maxOpportunityConfidence_(current, next) {
+  return opportunityConfidenceRank_(next) > opportunityConfidenceRank_(current)
+    ? next
+    : current || next || '';
+}
+
 function flattenRadarSourceInput_(input) {
   if (input === null || input === undefined || input === '') return [];
   if (Object.prototype.toString.call(input) === '[object Array]') {

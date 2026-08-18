@@ -48,6 +48,7 @@ assert(!/createResearchJobs|createResearchJob/.test(radarSrc), 'must not create 
 assert(!/QUERY_BLIND_SPOT/.test(opportunitySrc), 'opportunity engine unchanged');
 assert(!/DEMAND_RADAR|refreshDemandRadar_/.test(decisionSrc), 'decision engine unchanged');
 assert(!/createDemandDiscoveryJobs/.test(radarSrc), 'refreshDemandRadar does not create discovery jobs');
+assert(!/createSearchDemandJobs/.test(radarSrc), 'refreshDemandRadar does not create search jobs');
 
 var QUERY_BLIND_SPOT_V1 = extractAssign(configSrc, 'QUERY_BLIND_SPOT_V1');
 var SOURCE_FAMILY = extractAssign(configSrc, 'SOURCE_FAMILY');
@@ -64,7 +65,16 @@ var DEMAND_RADAR_HEADERS = extractAssign(configSrc, 'DEMAND_RADAR_HEADERS');
 assert(DEMAND_RADAR_HEADERS.indexOf('雷达ID') === 0, 'RadarID header');
 assert(DEMAND_RADAR_HEADERS.indexOf('交叉验证') >= 0, 'CrossValidated header');
 assert(DEMAND_RADAR_HEADERS.indexOf('独立来源族数') >= 0, 'family count header');
-assert(DEMAND_RADAR_HEADERS.length === 32, 'header count');
+assert(DEMAND_RADAR_HEADERS.indexOf('研究任务ID') === 24, 'R2 ResearchJobID column unmoved');
+assert(
+  DEMAND_RADAR_HEADERS[DEMAND_RADAR_HEADERS.length - 2] === '搜索需求任务ID',
+  'search job id appended'
+);
+assert(
+  DEMAND_RADAR_HEADERS[DEMAND_RADAR_HEADERS.length - 1] === '最近搜索需求时间',
+  'search job time appended'
+);
+assert(DEMAND_RADAR_HEADERS.length === 34, 'header count');
 
 function pagePathFromUrl_(pageUrl) {
   var raw = String(pageUrl || '').trim();
@@ -170,6 +180,20 @@ assert(sandbox.countIndependentSourceFamilies_(['GSC', 'COMMUNITY']) === 2, 'gsc
 assert(sandbox.isCrossValidated_(['GSC', 'COMMUNITY']) === true, 'gsc+community true');
 assert(sandbox.countIndependentSourceFamilies_(['COMMUNITY', 'VIDEO']) === 2, 'community+video 2');
 assert(sandbox.isCrossValidated_(['COMMUNITY', 'VIDEO']) === true, 'community+video true');
+assert(
+  sandbox.normalizeSourceFamilies_(['GOOGLE_AUTOCOMPLETE', 'BING_AUTOCOMPLETE']).join(',') ===
+    'SEARCH',
+  'google+bing autocomplete is one SEARCH family'
+);
+assert(
+  sandbox.countIndependentSourceFamilies_(['GSC', 'GOOGLE_AUTOCOMPLETE', 'BING_AUTOCOMPLETE']) === 2,
+  'GSC + google + bing count 2'
+);
+assert(
+  sandbox.opportunityConfidenceRank_('SEARCH_CONFIRMED') >
+    sandbox.opportunityConfidenceRank_('CROSS_VALIDATED'),
+  'SEARCH_CONFIRMED ranks above CROSS_VALIDATED'
+);
 
 // --- Case 1 first discover ---
 var day1 = sandbox.reconcileDemandRadarRows_([], [detection_()], {

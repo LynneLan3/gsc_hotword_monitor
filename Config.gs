@@ -749,7 +749,7 @@ var RESEARCH_JOB_HEADERS = [
   '审核摘要', '审核链接',
   '审核决定', '审核备注', '审核时间',
   '研究类型',
-  // DEMAND_DISCOVERY（仅在 research_type=DEMAND_DISCOVERY 时使用）
+  // DEMAND_DISCOVERY / SEARCH_DEMAND 元数据（按 research_type 解释；append-only）
   '雷达ID', '触发类型', '锚点页面', '发现范围', '种子词', '来源族请求', '信号摘要',
   '发现周期日期'
 ];
@@ -758,7 +758,8 @@ var RESEARCH_JOB_HEADERS = [
 var RESEARCH_TYPE = {
   CONTENT_RESEARCH: 'CONTENT_RESEARCH',
   ASSET_RESEARCH: 'ASSET_RESEARCH',
-  DEMAND_DISCOVERY: 'DEMAND_DISCOVERY'
+  DEMAND_DISCOVERY: 'DEMAND_DISCOVERY',
+  SEARCH_DEMAND: 'SEARCH_DEMAND'
 };
 
 /**
@@ -788,6 +789,9 @@ var RESEARCH_JOB_STATUS = {
   READY_FOR_DISCOVERY_RUNNER: 'READY_FOR_DISCOVERY_RUNNER',
   DISCOVERY_DONE: 'DISCOVERY_DONE',
   DISCOVERY_NO_SIGNAL: 'DISCOVERY_NO_SIGNAL',
+  READY_FOR_SEARCH_RUNNER: 'READY_FOR_SEARCH_RUNNER',
+  SEARCH_CONFIRMED: 'SEARCH_CONFIRMED',
+  SEARCH_NO_SIGNAL: 'SEARCH_NO_SIGNAL',
   FAILED: 'FAILED',
   APPROVED: 'APPROVED',
   ARCHIVED: 'ARCHIVED'
@@ -800,6 +804,9 @@ var RESEARCH_JOB_STATUS_LABELS = {
   READY_FOR_DISCOVERY_RUNNER: '待需求发现执行',
   DISCOVERY_DONE: '需求发现完成',
   DISCOVERY_NO_SIGNAL: '需求发现无有效信号',
+  READY_FOR_SEARCH_RUNNER: '待搜索需求执行',
+  SEARCH_CONFIRMED: '搜索需求已确认',
+  SEARCH_NO_SIGNAL: '搜索需求无有效信号',
   FAILED: '失败',
   APPROVED: '已批准',
   ARCHIVED: '已归档'
@@ -1113,7 +1120,10 @@ var DEMAND_RADAR_HEADERS = [
   '外部证据数',
   '发现主题',
   '代表问题',
-  '研究结果路径'
+  '研究结果路径',
+  // R3A search demand job binding (append-only, do not shift existing indices)
+  '搜索需求任务ID',
+  '最近搜索需求时间'
 ];
 
 var SOURCE_FAMILY = {
@@ -1153,6 +1163,11 @@ var SOURCE_FAMILY_ALIASES = {
   autocomplete: SOURCE_FAMILY.SEARCH,
   paa: SOURCE_FAMILY.SEARCH,
   'related searches': SOURCE_FAMILY.SEARCH,
+  'google autocomplete': SOURCE_FAMILY.SEARCH,
+  'google paa': SOURCE_FAMILY.SEARCH,
+  'google related': SOURCE_FAMILY.SEARCH,
+  'google related searches': SOURCE_FAMILY.SEARCH,
+  'bing autocomplete': SOURCE_FAMILY.SEARCH,
   community: SOURCE_FAMILY.COMMUNITY,
   reddit: SOURCE_FAMILY.COMMUNITY,
   steam: SOURCE_FAMILY.COMMUNITY,
@@ -1184,8 +1199,27 @@ var RADAR_STATUS = {
 var SEARCH_DEMAND_STATUS = {
   UNKNOWN: 'UNKNOWN',
   FOUND: 'FOUND',
-  WEAK: 'WEAK'
+  WEAK: 'WEAK',
+  NO_SIGNAL: 'NO_SIGNAL',
+  CONFIRMED: 'CONFIRMED'
 };
+
+/**
+ * SEARCH family 内部信号源。Google + Bing 同属 SEARCH，不能算两个独立来源族。
+ */
+var SEARCH_SOURCES = {
+  GOOGLE_AUTOCOMPLETE: 'GOOGLE_AUTOCOMPLETE',
+  GOOGLE_PAA: 'GOOGLE_PAA',
+  GOOGLE_RELATED: 'GOOGLE_RELATED',
+  BING_AUTOCOMPLETE: 'BING_AUTOCOMPLETE'
+};
+
+var SEARCH_SOURCES_REQUESTED = [
+  'GOOGLE_AUTOCOMPLETE',
+  'GOOGLE_PAA',
+  'GOOGLE_RELATED',
+  'BING_AUTOCOMPLETE'
+];
 
 var SERP_GAP_STATUS = {
   UNKNOWN: 'UNKNOWN',

@@ -62,6 +62,8 @@ assert(!/setDailyRunPhase_\('done'\)/.test(unlocked), 'collect path does not mar
 var finalizerFn = extractFn(codeSrc, 'runDailyFinalizerUnlocked_');
 assert(/runDecisionEngine\(\)/.test(finalizerFn) && /runContentOpportunityEngine\(\)/.test(finalizerFn), 'finalizer runs engines');
 assert(/refreshDemandRadar_\(sites, runDate\)/.test(finalizerFn), 'finalizer refreshes demand radar');
+assert(!/createSearchDemandJobs/.test(finalizerFn), 'finalizer does not create search jobs');
+assert(!/createSearchDemandJobs/.test(unlocked), 'collect path does not create search jobs');
 assert(
   finalizerFn.indexOf('runContentOpportunityEngine') < finalizerFn.indexOf('refreshDemandRadar_'),
   'radar after GSC collect + opportunity'

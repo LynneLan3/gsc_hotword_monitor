@@ -287,6 +287,14 @@ assert(
   sandbox.isResearchJobPending_(RESEARCH_JOB_STATUS.READY_FOR_DISCOVERY_RUNNER) === false,
   'Case10 READY_FOR_DISCOVERY_RUNNER enum is NOT pending'
 );
+assert(
+  sandbox.isResearchJobPending_(RESEARCH_JOB_STATUS.READY_FOR_SEARCH_RUNNER) === false,
+  'READY_FOR_SEARCH_RUNNER enum is NOT pendingResearchJobs'
+);
+assert(
+  sandbox.isResearchJobPending_(RESEARCH_JOB_STATUS_LABELS.READY_FOR_SEARCH_RUNNER) === false,
+  '待搜索需求执行 is NOT pendingResearchJobs'
+);
 
 console.log('PASS scripts/test-demand-discovery-jobs.js');
 
