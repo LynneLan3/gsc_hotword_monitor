@@ -786,6 +786,8 @@ var RESEARCH_JOB_STATUS = {
   REVIEW: 'REVIEW',
   WATCH: 'WATCH',
   READY_FOR_DISCOVERY_RUNNER: 'READY_FOR_DISCOVERY_RUNNER',
+  DISCOVERY_DONE: 'DISCOVERY_DONE',
+  DISCOVERY_NO_SIGNAL: 'DISCOVERY_NO_SIGNAL',
   FAILED: 'FAILED',
   APPROVED: 'APPROVED',
   ARCHIVED: 'ARCHIVED'
@@ -796,6 +798,8 @@ var RESEARCH_JOB_STATUS_LABELS = {
   REVIEW: '待审核',
   WATCH: '继续观察',
   READY_FOR_DISCOVERY_RUNNER: '待需求发现执行',
+  DISCOVERY_DONE: '需求发现完成',
+  DISCOVERY_NO_SIGNAL: '需求发现无有效信号',
   FAILED: '失败',
   APPROVED: '已批准',
   ARCHIVED: '已归档'
@@ -1102,7 +1106,14 @@ var DEMAND_RADAR_HEADERS = [
   '信号状态',
   '雷达状态',
   '研究任务ID',
-  '最近报告时间'
+  '最近报告时间',
+  // R2C-A demand discovery callback summary fields (append-only, do not shift existing indices)
+  '发现状态',
+  '外部来源族',
+  '外部证据数',
+  '发现主题',
+  '代表问题',
+  '研究结果路径'
 ];
 
 var SOURCE_FAMILY = {
@@ -1166,6 +1177,7 @@ var RADAR_STATUS = {
   DISCOVERED: 'DISCOVERED',
   RESEARCH: 'RESEARCH',
   WATCH: 'WATCH',
+  VALIDATED: 'VALIDATED',
   ARCHIVED: 'ARCHIVED'
 };
 

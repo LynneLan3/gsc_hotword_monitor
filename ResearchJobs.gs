@@ -48,6 +48,10 @@ function doPost(e) {
     if (!checkResearchWriteToken_(e, body)) {
       return jsonOutput_({ ok: false, error: 'unauthorized' });
     }
+    var researchType = String((body && body.research_type) || '').trim();
+    if (researchType === RESEARCH_TYPE.DEMAND_DISCOVERY) {
+      return jsonOutput_(handleDemandDiscoveryCallback_(body));
+    }
     return jsonOutput_(writeResearchJobResult_(body));
   } catch (err) {
     return jsonOutput_({
@@ -55,6 +59,272 @@ function doPost(e) {
       error: String((err && err.message) || err || 'unknown_error')
     });
   }
+}
+
+// ---------------------------------------------------------------------------
+// R2C-A — DEMAND_DISCOVERY Callback Receiver
+// ---------------------------------------------------------------------------
+
+function normalizeDiscoveryScopeLabel_(v) {
+  var s = String(v || '').trim().toUpperCase();
+  if (s === 'ANCHOR') return 'ANCHOR';
+  if (s === 'GAME_WIDE') return 'GAME_WIDE';
+  return '';
+}
+
+function normalizeAllowedExternalFamilies_(familiesRaw) {
+  // R2C-A contract: only COMMUNITY / VIDEO are allowed as anchor-qualified families.
+  var allowed = {};
+  allowed['COMMUNITY'] = true;
+  allowed['VIDEO'] = true;
+
+  var list = familiesRaw;
+  if (list === null || list === undefined) list = [];
+  if (Object.prototype.toString.call(list) !== '[object Array]') list = [list];
+
+  var out = [];
+  for (var i = 0; i < list.length; i++) {
+    var fam = String(list[i] || '').trim().toUpperCase();
+    if (!fam) continue;
+    if (!allowed[fam]) {
+      throw new Error('invalid_external_source_family: ' + fam);
+    }
+    out.push(fam);
+  }
+  // DemandRadar normalizeSourceFamilies_ does stable dedupe/order.
+  return normalizeSourceFamilies_(out);
+}
+
+function topClustersToDiscoverySummary_(topClusters) {
+  var list =
+    topClusters && Object.prototype.toString.call(topClusters) === '[object Array]' ? topClusters : [];
+  var signals = [];
+  var questions = [];
+
+  for (
+    var i = 0;
+    i < list.length && (signals.length < 3 || questions.length < 3);
+    i++
+  ) {
+    var c = list[i] || {};
+    var sig = String(c.representative_signal || '').trim();
+    var q = String(c.representative_question || '').trim();
+    if (sig && signals.length < 3) signals.push(sig);
+    if (q && questions.length < 3) questions.push(q);
+  }
+
+  return {
+    discoveryThemes: signals.join(' | '),
+    representativeQuestions: questions.join(' | ')
+  };
+}
+
+function validateDemandDiscoveryJobIdentity_(jobRow, jobCol, payload) {
+  var radarId = String(payload.radar_id || '').trim();
+  var cycleDate = String(payload.discovery_cycle_date || '').trim();
+
+  var jobResearchType = String(cell_(jobRow, jobCol, '研究类型') || '').trim();
+  var jobRadarId = String(cell_(jobRow, jobCol, '雷达ID') || '').trim();
+  var jobCycleDate = String(cell_(jobRow, jobCol, '发现周期日期') || '').trim();
+
+  if (jobResearchType !== RESEARCH_TYPE.DEMAND_DISCOVERY) {
+    return { ok: false, error: 'job_research_type_mismatch' };
+  }
+  if (!jobRadarId || !jobCycleDate) {
+    return { ok: false, error: 'job_missing_identity_fields' };
+  }
+  if (jobRadarId !== radarId) return { ok: false, error: 'radar_id_mismatch' };
+  if (jobCycleDate !== cycleDate) {
+    return { ok: false, error: 'discovery_cycle_date_mismatch' };
+  }
+  return { ok: true };
+}
+
+function applyDemandDiscoveryCallbackToResearchJobRow_(
+  jobRow,
+  jobCol,
+  payload,
+  completedAt
+) {
+  var row = (jobRow || []).slice();
+
+  var executionStatus = String(payload.execution_status || '').trim().toUpperCase();
+  if (executionStatus === 'FAILED') {
+    row[jobCol['任务状态']] = RESEARCH_JOB_STATUS_LABELS[RESEARCH_JOB_STATUS.FAILED] || '失败';
+    row[jobCol['错误信息']] = String(payload.error || '').trim();
+    return row;
+  }
+
+  // COMPLETED
+  var discoveryStatus = String(payload.discovery_status || '').trim().toUpperCase();
+  var anchorCount = Number(payload.anchor_evidence_count || 0);
+  if (isNaN(anchorCount)) anchorCount = 0;
+  var resultPath = String(payload.result_path || '').trim();
+
+  var nextStatus =
+    discoveryStatus === 'NO_SIGNAL' ? RESEARCH_JOB_STATUS.DISCOVERY_NO_SIGNAL : RESEARCH_JOB_STATUS.DISCOVERY_DONE;
+
+  row[jobCol['任务状态']] = RESEARCH_JOB_STATUS_LABELS[nextStatus] || '';
+  if (jobCol['证据数量'] !== undefined) row[jobCol['证据数量']] = anchorCount;
+  if (jobCol['结果路径'] !== undefined) row[jobCol['结果路径']] = resultPath;
+  if (jobCol['完成时间'] !== undefined) row[jobCol['完成时间']] = completedAt;
+  if (jobCol['错误信息'] !== undefined) row[jobCol['错误信息']] = '';
+  return row;
+}
+
+function applyDemandDiscoveryCallbackToDemandRadarRow_(
+  radarRow,
+  radarCol,
+  payload,
+  completedAt
+) {
+  var row = (radarRow || []).slice();
+
+  var discoveryScope = normalizeDiscoveryScopeLabel_(payload.discovery_scope);
+  var discoveryStatus = String(payload.discovery_status || '').trim().toUpperCase();
+
+  // external_source_families: only anchor-qualified families.
+  var externalFamilies = normalizeAllowedExternalFamilies_(
+    payload.external_source_families || []
+  );
+
+  // Update discovery summary fields (append-only columns).
+  var summary = topClustersToDiscoverySummary_(payload.top_clusters || []);
+  if (radarCol['发现状态'] !== undefined) row[radarCol['发现状态']] = discoveryStatus;
+  if (radarCol['外部来源族'] !== undefined)
+    row[radarCol['外部来源族']] = externalFamilies.length ? externalFamilies.join(',') : '';
+  if (radarCol['外部证据数'] !== undefined) row[radarCol['外部证据数']] = Number(payload.anchor_evidence_count || 0) || 0;
+  if (radarCol['发现主题'] !== undefined) row[radarCol['发现主题']] = summary.discoveryThemes || '';
+  if (radarCol['代表问题'] !== undefined)
+    row[radarCol['代表问题']] = summary.representativeQuestions || '';
+  if (radarCol['研究结果路径'] !== undefined)
+    row[radarCol['研究结果路径']] = String(payload.result_path || '').trim();
+
+  // discovery_scope=GAME_WIDE: conservative.
+  if (discoveryScope !== 'ANCHOR') return row;
+
+  // Merge source families only for ANCHOR scope.
+  var existingFamiliesRaw = row[radarCol['来源族']] || '';
+  var mergedFamilies = normalizeSourceFamilies_([existingFamiliesRaw, externalFamilies]);
+
+  // Recompute independent families / cross validated / opportunity confidence.
+  var familyCount = mergedFamilies.length;
+  var crossValidated = isCrossValidated_(mergedFamilies);
+  var opportunityConfidence = crossValidated
+    ? OPPORTUNITY_CONFIDENCE.CROSS_VALIDATED
+    : OPPORTUNITY_CONFIDENCE.DISCOVERY_ONLY;
+
+  row[radarCol['来源族']] = formatRadarSourceFamilies_(mergedFamilies);
+  row[radarCol['独立来源族数']] = familyCount;
+  row[radarCol['交叉验证']] = crossValidated;
+  row[radarCol['机会置信度']] = opportunityConfidence;
+
+  // RadarStatus transitions: VALIDATED never downgrades.
+  var existingRadarStatus = String(row[radarCol['雷达状态']] || '').trim();
+  if (existingRadarStatus !== RADAR_STATUS.VALIDATED) {
+    if (discoveryStatus === 'NO_SIGNAL') {
+      row[radarCol['雷达状态']] = RADAR_STATUS.WATCH;
+    } else if (externalFamilies.length > 0) {
+      row[radarCol['雷达状态']] = RADAR_STATUS.VALIDATED;
+    }
+  }
+
+  row[radarCol['最近报告时间']] = completedAt;
+  return row;
+}
+
+function handleDemandDiscoveryCallback_(payload) {
+  payload = payload || {};
+  var jobId = String(payload.job_id || '').trim();
+  if (!jobId) return { ok: false, error: 'missing_job_id' };
+
+  var radarId = String(payload.radar_id || '').trim();
+  var cycleDate = String(payload.discovery_cycle_date || '').trim();
+  if (!radarId) return { ok: false, error: 'missing_radar_id' };
+  if (!cycleDate) return { ok: false, error: 'missing_discovery_cycle_date' };
+
+  var executionStatus = String(payload.execution_status || '').trim().toUpperCase();
+  if (executionStatus !== 'COMPLETED' && executionStatus !== 'FAILED') {
+    return { ok: false, error: 'invalid_execution_status' };
+  }
+
+  var discoveryStatus = String(payload.discovery_status || '').trim().toUpperCase();
+  if (executionStatus === 'COMPLETED') {
+    if (['NO_SIGNAL', 'DISCOVERED', 'CROSS_VALIDATED'].indexOf(discoveryStatus) < 0) {
+      return { ok: false, error: 'invalid_discovery_status' };
+    }
+  }
+
+  var discoveryScope = normalizeDiscoveryScopeLabel_(payload.discovery_scope);
+  if (executionStatus === 'COMPLETED' && !discoveryScope) {
+    return { ok: false, error: 'invalid_discovery_scope' };
+  }
+
+  // Pre-validate external_source_families to avoid partial updates (job written but radar fails).
+  if (executionStatus === 'COMPLETED') {
+    normalizeAllowedExternalFamilies_(payload.external_source_families || []);
+  }
+
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  if (!ss) return { ok: false, error: 'no_spreadsheet' };
+
+  var jobSheet = ss.getSheetByName(SHEET_NAMES.RESEARCH_JOBS);
+  if (!jobSheet) return { ok: false, error: 'research_jobs_missing' };
+  var radarSheet = ss.getSheetByName(SHEET_NAMES.DEMAND_RADAR);
+  if (!radarSheet) return { ok: false, error: 'demand_radar_missing' };
+
+  ensureResearchJobResultColumns_(jobSheet);
+  ensureDemandRadarHeader_();
+
+  var jobLastCol = Math.max(jobSheet.getLastColumn(), RESEARCH_JOB_HEADERS.length);
+  var jobHeader = jobSheet.getRange(1, 1, 1, jobLastCol).getValues()[0];
+  var jobCol = headerIndexMap_(jobHeader);
+
+  var found = findResearchJobRowById_(jobSheet, jobCol, jobId);
+  if (!found) return { ok: false, error: 'job_not_found', job_id: jobId };
+
+  var jobRow = jobSheet
+    .getRange(found.sheetRow, 1, 1, jobLastCol)
+    .getValues()[0];
+
+  var idCheck = validateDemandDiscoveryJobIdentity_(jobRow, jobCol, payload);
+  if (!idCheck.ok) return { ok: false, error: idCheck.error };
+
+  var completedAt = new Date();
+
+  // 1) Update research job row (幂等：覆盖，不追加）
+  var nextJobRow = applyDemandDiscoveryCallbackToResearchJobRow_(
+    jobRow,
+    jobCol,
+    payload,
+    completedAt
+  );
+  jobSheet.getRange(found.sheetRow, 1, 1, jobLastCol).setValues([nextJobRow]);
+
+  // 2) FAILED：只更新 research job，不改 radar
+  if (executionStatus === 'FAILED') return { ok: true, job_id: jobId, status: 'FAILED' };
+
+  // 3) COMPLETED：更新 radar（按 discovery_scope=ANCHOR only merge）
+  var radarLastCol = Math.max(radarSheet.getLastColumn(), DEMAND_RADAR_HEADERS.length);
+  var radarHeader = radarSheet.getRange(1, 1, 1, radarLastCol).getValues()[0];
+  var radarCol = headerIndexMap_(radarHeader);
+
+  var radarRows = radarSheet.getRange(2, 1, radarSheet.getLastRow() - 1, radarLastCol).getValues();
+  for (var i = 0; i < radarRows.length; i++) {
+    var r = radarRows[i];
+    if (String(r[radarCol['雷达ID']] || '').trim() !== radarId) continue;
+
+    var nextRadarRow = applyDemandDiscoveryCallbackToDemandRadarRow_(
+      r,
+      radarCol,
+      payload,
+      completedAt
+    );
+    radarSheet.getRange(i + 2, 1, 1, radarLastCol).setValues([nextRadarRow]);
+    break;
+  }
+
+  return { ok: true, job_id: jobId, status: 'COMPLETED', discovery_status: discoveryStatus };
 }
 
 function jsonOutput_(obj) {

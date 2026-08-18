@@ -64,7 +64,7 @@ var DEMAND_RADAR_HEADERS = extractAssign(configSrc, 'DEMAND_RADAR_HEADERS');
 assert(DEMAND_RADAR_HEADERS.indexOf('雷达ID') === 0, 'RadarID header');
 assert(DEMAND_RADAR_HEADERS.indexOf('交叉验证') >= 0, 'CrossValidated header');
 assert(DEMAND_RADAR_HEADERS.indexOf('独立来源族数') >= 0, 'family count header');
-assert(DEMAND_RADAR_HEADERS.length === 26, 'header count');
+assert(DEMAND_RADAR_HEADERS.length === 32, 'header count');
 
 function pagePathFromUrl_(pageUrl) {
   var raw = String(pageUrl || '').trim();

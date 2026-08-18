@@ -622,7 +622,7 @@ function buildRadarRowFromDetection_(detection, opts) {
   var site = String(detection.site || opts.site || '').trim();
   var families = normalizeSourceFamilies_([SOURCE_FAMILY.GSC]);
   var path = radarCanonicalPagePath_(detection.pageUrl, detection.pagePath);
-  return [
+  var row = [
     buildRadarId_(site, detection.pageUrl, detection.pagePath, QUERY_BLIND_SPOT_TRIGGER),
     opts.runDate || '',
     opts.runDate || '',
@@ -650,6 +650,8 @@ function buildRadarRowFromDetection_(detection, opts) {
     '',
     opts.nowTs || opts.runDate || ''
   ];
+  while (row.length < DEMAND_RADAR_HEADERS.length) row.push('');
+  return row;
 }
 
 function mergeRadarActiveRow_(existingRow, detection, opts) {
