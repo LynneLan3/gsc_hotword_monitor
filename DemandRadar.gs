@@ -417,3 +417,438 @@ function debugDetectQueryBlindSpots() {
   Logger.log(JSON.stringify(summary, null, 2));
   return summary;
 }
+
+/**
+ * 把原始 provider / 别名归一成独立 Source Family 列表。
+ * 稳定顺序：GSC → SEARCH → COMMUNITY → VIDEO → SERP → TREND。
+ * Reddit + Steam → 只保留一个 COMMUNITY。
+ * @param {string|Array=} input
+ * @return {string[]}
+ */
+function normalizeSourceFamilies_(input) {
+  var tokens = flattenRadarSourceInput_(input);
+  var seen = {};
+  for (var i = 0; i < tokens.length; i++) {
+    var family = normalizeSourceFamilyToken_(tokens[i]);
+    if (!family) continue;
+    seen[family] = true;
+  }
+  var out = [];
+  var order = SOURCE_FAMILY_ORDER || [];
+  for (var o = 0; o < order.length; o++) {
+    if (seen[order[o]]) out.push(order[o]);
+  }
+  return out;
+}
+
+function countIndependentSourceFamilies_(input) {
+  return normalizeSourceFamilies_(input).length;
+}
+
+function isCrossValidated_(input) {
+  return countIndependentSourceFamilies_(input) >= 2;
+}
+
+function flattenRadarSourceInput_(input) {
+  if (input === null || input === undefined || input === '') return [];
+  if (Object.prototype.toString.call(input) === '[object Array]') {
+    var out = [];
+    for (var i = 0; i < input.length; i++) {
+      var nested = flattenRadarSourceInput_(input[i]);
+      for (var j = 0; j < nested.length; j++) out.push(nested[j]);
+    }
+    return out;
+  }
+  return String(input)
+    .split(/[|,]/)
+    .map(function (s) {
+      return String(s || '').trim();
+    })
+    .filter(function (s) {
+      return !!s;
+    });
+}
+
+function normalizeSourceFamilyToken_(raw) {
+  var s = String(raw || '').trim();
+  if (!s) return '';
+  if (SOURCE_FAMILY && SOURCE_FAMILY[s]) return SOURCE_FAMILY[s];
+  var aliases = SOURCE_FAMILY_ALIASES || {};
+  var lower = s.toLowerCase().replace(/_/g, ' ').replace(/\s+/g, ' ').trim();
+  if (aliases[lower]) return aliases[lower];
+  var compact = lower.replace(/[\s×x-]+/g, '');
+  if (aliases[compact]) return aliases[compact];
+  if (compact === 'querypage' || compact === 'queryxpage') return SOURCE_FAMILY.GSC;
+  return '';
+}
+
+function radarSiteSlug_(siteName) {
+  var name = String(siteName || '').trim();
+  if (!name) return '';
+  if (typeof RESEARCH_GAME_SLUGS === 'object' && RESEARCH_GAME_SLUGS[name]) {
+    return RESEARCH_GAME_SLUGS[name];
+  }
+  if (typeof slugifyResearch_ === 'function') return slugifyResearch_(name);
+  return String(name)
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '');
+}
+
+function radarCanonicalPagePath_(pageUrl, pagePath) {
+  var p = blindSpotPageKey_(pageUrl, pagePath);
+  if (!p) return '';
+  if (p !== '/' && p.charAt(p.length - 1) !== '/') p += '/';
+  return p;
+}
+
+/**
+ * 稳定 RadarID：siteSlug|normalizedPath/|TriggerType
+ * /path 与 /path/ 不得生成两条。
+ */
+function buildRadarId_(siteName, pageUrl, pagePath, triggerType) {
+  var slug = radarSiteSlug_(siteName);
+  var path = radarCanonicalPagePath_(pageUrl, pagePath);
+  var trigger = String(triggerType || QUERY_BLIND_SPOT_TRIGGER || '').trim();
+  if (!slug || !path || !trigger) return '';
+  return slug + '|' + path + '|' + trigger;
+}
+
+function formatRadarSourceFamilies_(families) {
+  return normalizeSourceFamilies_(families).join(',');
+}
+
+function radarBool_(value) {
+  if (value === true || value === 1) return true;
+  var s = String(value || '').trim().toUpperCase();
+  return s === 'TRUE' || s === 'YES' || s === '1';
+}
+
+/**
+ * 纯计算：把当日 Blind Spot 检测结果与已有 Radar 行对账。
+ * collection failure 时原样返回 existing，不把 ACTIVE 改成 RESOLVED。
+ *
+ * @param {Array<Array>} existingRows
+ * @param {Array<Object>} detections detectQueryBlindSpots_ 结果（仅 isBlindSpot 也会被过滤）
+ * @param {Object} opts
+ * @return {{rows:Array<Array>, skipped:boolean}}
+ */
+function reconcileDemandRadarRows_(existingRows, detections, opts) {
+  opts = opts || {};
+  var existing = [];
+  var e;
+  for (e = 0; e < (existingRows || []).length; e++) {
+    existing.push((existingRows[e] || []).slice());
+  }
+
+  if (radarCollectionFailed_(opts)) {
+    return { rows: existing, skipped: true };
+  }
+
+  var site = String(opts.site || '').trim();
+  var runDate = String(opts.runDate || '').trim();
+  var nowTs = opts.nowTs || runDate;
+  var trigger = QUERY_BLIND_SPOT_TRIGGER;
+  var byId = {};
+  var order = [];
+
+  for (e = 0; e < existing.length; e++) {
+    var row = existing[e];
+    var id = String(row[0] || '').trim();
+    if (!id) continue;
+    if (!byId[id]) order.push(id);
+    byId[id] = row;
+  }
+
+  var activeIds = {};
+  for (var d = 0; d < (detections || []).length; d++) {
+    var det = detections[d];
+    if (!det || !det.isBlindSpot) continue;
+    var detSite = String(det.site || site).trim();
+    if (site && detSite && detSite !== site) continue;
+    var radarId = buildRadarId_(detSite, det.pageUrl, det.pagePath, trigger);
+    if (!radarId) continue;
+    activeIds[radarId] = det;
+    if (byId[radarId]) {
+      byId[radarId] = mergeRadarActiveRow_(byId[radarId], det, {
+        site: detSite,
+        runDate: runDate,
+        nowTs: nowTs,
+        dataEndDate: det.dataEndDate || opts.dataEndDate || ''
+      });
+    } else {
+      byId[radarId] = buildRadarRowFromDetection_(det, {
+        site: detSite,
+        runDate: runDate,
+        nowTs: nowTs,
+        dataEndDate: det.dataEndDate || opts.dataEndDate || '',
+        game: opts.game || detSite
+      });
+      order.push(radarId);
+    }
+  }
+
+  for (var i = 0; i < order.length; i++) {
+    var keepId = order[i];
+    var keep = byId[keepId];
+    if (!keep) continue;
+    if (site && String(keep[5] || '').trim() !== site) continue;
+    if (String(keep[8] || '').trim() !== trigger) continue;
+    if (activeIds[keepId]) continue;
+    byId[keepId] = markRadarResolvedRow_(keep, runDate, nowTs);
+  }
+
+  var out = [];
+  for (var k = 0; k < order.length; k++) {
+    if (byId[order[k]]) out.push(byId[order[k]]);
+  }
+  return { rows: out, skipped: false };
+}
+
+function radarCollectionFailed_(opts) {
+  opts = opts || {};
+  if (opts.collectionFailed === true) return true;
+  if (opts.queryPageCollectionOk === false) return true;
+  var error = String(opts.snapshotError || opts.logMessage || '');
+  if (/QUERY_PAGE_FAILED|QUERY_PAGE_PERMISSION|PAGE_FAILED|PAGE_PERMISSION/.test(error)) {
+    return true;
+  }
+  return shouldSkipBlindSpotSite_(opts);
+}
+
+function buildRadarRowFromDetection_(detection, opts) {
+  opts = opts || {};
+  detection = detection || {};
+  var site = String(detection.site || opts.site || '').trim();
+  var families = normalizeSourceFamilies_([SOURCE_FAMILY.GSC]);
+  var path = radarCanonicalPagePath_(detection.pageUrl, detection.pagePath);
+  return [
+    buildRadarId_(site, detection.pageUrl, detection.pagePath, QUERY_BLIND_SPOT_TRIGGER),
+    opts.runDate || '',
+    opts.runDate || '',
+    opts.runDate || '',
+    detection.dataEndDate || opts.dataEndDate || '',
+    site,
+    opts.game || site,
+    path,
+    QUERY_BLIND_SPOT_TRIGGER,
+    detection.triggerReason || '',
+    blindSpotNum_(detection.pageClicks7D),
+    blindSpotNum_(detection.pageImpressions7D),
+    blindSpotNum_(detection.visibleQueryClicks7D),
+    blindSpotNum_(detection.visibleQueryImpressions7D),
+    blindSpotCoverage_(detection.visibleQueryClicks7D, detection.pageClicks7D),
+    blindSpotCoverage_(detection.visibleQueryImpressions7D, detection.pageImpressions7D),
+    formatRadarSourceFamilies_(families),
+    families.length,
+    false,
+    SEARCH_DEMAND_STATUS.UNKNOWN,
+    SERP_GAP_STATUS.UNKNOWN,
+    OPPORTUNITY_CONFIDENCE.DISCOVERY_ONLY,
+    RADAR_SIGNAL_STATUS.ACTIVE,
+    RADAR_STATUS.DISCOVERED,
+    '',
+    opts.nowTs || opts.runDate || ''
+  ];
+}
+
+function mergeRadarActiveRow_(existingRow, detection, opts) {
+  var row = (existingRow || []).slice();
+  while (row.length < DEMAND_RADAR_HEADERS.length) row.push('');
+  detection = detection || {};
+  opts = opts || {};
+  var families = normalizeSourceFamilies_(row[16] || [SOURCE_FAMILY.GSC]);
+  if (!families.length) families = [SOURCE_FAMILY.GSC];
+  row[2] = opts.runDate || row[2];
+  row[3] = opts.runDate || row[3];
+  row[4] = detection.dataEndDate || opts.dataEndDate || row[4];
+  if (detection.pagePath || detection.pageUrl) {
+    row[7] = radarCanonicalPagePath_(detection.pageUrl, detection.pagePath) || row[7];
+  }
+  row[8] = QUERY_BLIND_SPOT_TRIGGER;
+  if (detection.triggerReason) row[9] = detection.triggerReason;
+  row[10] = blindSpotNum_(detection.pageClicks7D);
+  row[11] = blindSpotNum_(detection.pageImpressions7D);
+  row[12] = blindSpotNum_(detection.visibleQueryClicks7D);
+  row[13] = blindSpotNum_(detection.visibleQueryImpressions7D);
+  row[14] = blindSpotCoverage_(detection.visibleQueryClicks7D, detection.pageClicks7D);
+  row[15] = blindSpotCoverage_(detection.visibleQueryImpressions7D, detection.pageImpressions7D);
+  row[16] = formatRadarSourceFamilies_(families);
+  row[17] = families.length;
+  row[18] = isCrossValidated_(families);
+  if (!String(row[19] || '').trim()) row[19] = SEARCH_DEMAND_STATUS.UNKNOWN;
+  if (!String(row[20] || '').trim()) row[20] = SERP_GAP_STATUS.UNKNOWN;
+  if (!String(row[21] || '').trim()) row[21] = OPPORTUNITY_CONFIDENCE.DISCOVERY_ONLY;
+  row[22] = RADAR_SIGNAL_STATUS.ACTIVE;
+  if (!String(row[23] || '').trim()) row[23] = RADAR_STATUS.DISCOVERED;
+  row[25] = opts.nowTs || opts.runDate || row[25];
+  return row;
+}
+
+function markRadarResolvedRow_(existingRow, runDate, nowTs) {
+  var row = (existingRow || []).slice();
+  while (row.length < DEMAND_RADAR_HEADERS.length) row.push('');
+  row[3] = runDate || row[3];
+  row[22] = RADAR_SIGNAL_STATUS.RESOLVED;
+  row[25] = nowTs || runDate || row[25];
+  return row;
+}
+
+function ensureDemandRadarHeader_() {
+  var sheet = getSpreadsheet_().getSheetByName(SHEET_NAMES.DEMAND_RADAR);
+  if (!sheet) return;
+  ensureSheetGrid_(sheet, 1, DEMAND_RADAR_HEADERS.length);
+  var lastCol = Math.max(sheet.getLastColumn(), DEMAND_RADAR_HEADERS.length);
+  var header = sheet.getRange(1, 1, 1, lastCol).getValues()[0];
+  var actual = [];
+  for (var i = 0; i < DEMAND_RADAR_HEADERS.length; i++) {
+    actual.push(String(header[i] || '').trim());
+  }
+  if (actual.join('|') === DEMAND_RADAR_HEADERS.join('|')) return;
+  sheet.getRange(1, 1, 1, DEMAND_RADAR_HEADERS.length).setValues([DEMAND_RADAR_HEADERS]);
+  sheet.getRange(1, 1, 1, DEMAND_RADAR_HEADERS.length).setFontWeight('bold');
+}
+
+function loadDemandRadarRows_() {
+  var sheet = getSpreadsheet_().getSheetByName(SHEET_NAMES.DEMAND_RADAR);
+  if (!sheet || sheet.getLastRow() < 2) return [];
+  var range = getSheetDataRange_(sheet, DEMAND_RADAR_HEADERS.length);
+  if (!range) return [];
+  return range.getValues();
+}
+
+/**
+ * 菜单 / clasp：只刷新需求雷达，不跑 Decision / Opportunity / Research。
+ */
+function refreshDemandRadar() {
+  setupSheets();
+  var sites = getEnabledSites();
+  var runDate = todayStr_();
+  return refreshDemandRadar_(sites, runDate);
+}
+
+/**
+ * 在当日 GSC Page / Query / Query×Page 已落表后更新「需求雷达」。
+ * 只处理 getEnabledSites()；collection failure 跳过该站并保留上一状态。
+ */
+function refreshDemandRadar_(sites, runDate) {
+  ensureSheet_(SHEET_NAMES.DEMAND_RADAR, DEMAND_RADAR_HEADERS);
+  ensureDemandRadarHeader_();
+
+  sites = sites || [];
+  runDate = runDate || todayStr_();
+  var existing = loadDemandRadarRows_();
+  var pageBySite = loadPageRowsBySite_();
+  var queryPageBySite = loadQueryPageRowsBySite_();
+  var dailyBySite = loadDailyRowsBySite_();
+  var queryBySite = loadQueryRowsBySite_();
+  var snapshotBySite = loadLatestSnapshotBySite_();
+  var failBySite = loadRadarCollectionFailuresBySite_(runDate);
+
+  var rows = existing;
+  var skipped = 0;
+  var activeCount = 0;
+  var nowTs = radarNowTs_();
+
+  for (var i = 0; i < sites.length; i++) {
+    var site = sites[i];
+    if (!site || !site.name) continue;
+    var snap = snapshotBySite[site.name] || [];
+    var snapshotStatus = String(snap[17] || '');
+    var snapshotError = String(snap[18] || '');
+    var logFail = failBySite[site.name] || '';
+    var collectionFailed = !!(
+      logFail ||
+      /QUERY_PAGE_FAILED|QUERY_PAGE_PERMISSION|PAGE_FAILED|PAGE_PERMISSION/.test(snapshotError)
+    );
+
+    var detectOpts = {
+      site: site.name,
+      pageRows: pageBySite[site.name] || [],
+      queryPageRows: queryPageBySite[site.name] || [],
+      dailyRows: dailyBySite[site.name] || [],
+      queryRows: queryBySite[site.name] || [],
+      snapshotStatus: snapshotStatus,
+      snapshotError: snapshotError || logFail,
+      queryPageCollectionOk: collectionFailed ? false : true,
+      collectionFailed: collectionFailed
+    };
+
+    var detections = [];
+    if (!radarCollectionFailed_(detectOpts)) {
+      detections = detectQueryBlindSpots_(detectOpts);
+    }
+
+    var result = reconcileDemandRadarRows_(rows, detections, {
+      site: site.name,
+      game: site.name,
+      runDate: runDate,
+      nowTs: nowTs,
+      snapshotStatus: snapshotStatus,
+      snapshotError: snapshotError || logFail,
+      queryPageCollectionOk: collectionFailed ? false : true,
+      collectionFailed: collectionFailed
+    });
+    rows = result.rows;
+    if (result.skipped) {
+      skipped += 1;
+      writeLog_(
+        'WARN',
+        site.name,
+        'DEMAND_RADAR_SKIP collection incomplete, keep previous radar state' +
+          (logFail ? ' | ' + logFail : '')
+      );
+    }
+  }
+
+  for (var r = 0; r < rows.length; r++) {
+    if (String(rows[r][22] || '').trim() === RADAR_SIGNAL_STATUS.ACTIVE) activeCount += 1;
+  }
+
+  replaceSheetDataRows_(SHEET_NAMES.DEMAND_RADAR, DEMAND_RADAR_HEADERS, rows);
+  var summary =
+    'refreshDemandRadar 结束 sites=' +
+    sites.length +
+    ' rows=' +
+    rows.length +
+    ' active=' +
+    activeCount +
+    ' skipped=' +
+    skipped;
+  writeLog_('INFO', '', summary);
+  Logger.log(summary);
+  return summary;
+}
+
+function radarNowTs_() {
+  try {
+    return Utilities.formatDate(
+      new Date(),
+      Session.getScriptTimeZone(),
+      'yyyy-MM-dd HH:mm:ss'
+    );
+  } catch (e) {
+    return todayStr_();
+  }
+}
+
+function loadRadarCollectionFailuresBySite_(runDate) {
+  var map = {};
+  var sheet = getSpreadsheet_().getSheetByName(SHEET_NAMES.LOG);
+  if (!sheet || sheet.getLastRow() < 2) return map;
+  var range = getSheetDataRange_(sheet, LOG_HEADERS.length);
+  if (!range) return map;
+  var values = range.getValues();
+  var start = Math.max(0, values.length - 300);
+  for (var i = start; i < values.length; i++) {
+    var site = String(values[i][2] || '').trim();
+    if (!site) continue;
+    var ts = blindSpotDataDate_(values[i][0]);
+    if (runDate && ts && ts !== runDate) continue;
+    var msg = String(values[i][3] || '');
+    if (/QUERY_PAGE_FAILED|QUERY_PAGE_PERMISSION|PAGE_FAILED|PAGE_PERMISSION/.test(msg)) {
+      map[site] = msg;
+    }
+  }
+  return map;
+}

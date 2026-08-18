@@ -27,6 +27,7 @@ var SHEET_NAMES = {
   WINNER_ASSETS: '内容资产',
   TODAY_ACTIONS: '今日行动',
   OPPORTUNITIES: '内容机会',
+  DEMAND_RADAR: '需求雷达',
   RESEARCH_JOBS: '研究任务',
   RESEARCH_REVIEW: '研究审核',
   DEVELOPMENT_TASKS: '开发任务',
@@ -51,6 +52,7 @@ var SHEET_UI_ORDER = [
   SHEET_NAMES.TODAY_ACTIONS,
   SHEET_NAMES.SNAPSHOT,
   SHEET_NAMES.OPPORTUNITIES,
+  SHEET_NAMES.DEMAND_RADAR,
   SHEET_NAMES.RESEARCH_JOBS,
   SHEET_NAMES.RESEARCH_REVIEW,
   SHEET_NAMES.SITE_STATUS,
@@ -1063,6 +1065,123 @@ var QUERY_BLIND_SPOT_V1 = {
 
 var QUERY_BLIND_SPOT_TRIGGER = 'QUERY_BLIND_SPOT';
 
+/**
+ * Demand Radar（R1）独立数据层。
+ * 保存尚未成为 GSC Query-driven「内容机会」、但值得继续调查的 Demand Signal。
+ * 中文表头；内部 enum 仍用英文。
+ */
+var DEMAND_RADAR_HEADERS = [
+  '雷达ID',
+  '首次发现',
+  '最近发现',
+  '运行日期',
+  '数据截止日期',
+  '站点',
+  '游戏',
+  '锚点页面',
+  '触发类型',
+  '触发原因',
+  '页面点击7日',
+  '页面曝光7日',
+  '可见Query点击7日',
+  '可见Query曝光7日',
+  'Query点击覆盖率',
+  'Query曝光覆盖率',
+  '来源族',
+  '独立来源族数',
+  '交叉验证',
+  '搜索需求状态',
+  'SERP缺口状态',
+  '机会置信度',
+  '信号状态',
+  '雷达状态',
+  '研究任务ID',
+  '最近报告时间'
+];
+
+var SOURCE_FAMILY = {
+  GSC: 'GSC',
+  SEARCH: 'SEARCH',
+  COMMUNITY: 'COMMUNITY',
+  VIDEO: 'VIDEO',
+  SERP: 'SERP',
+  TREND: 'TREND'
+};
+
+/** 稳定输出顺序；不是权重。 */
+var SOURCE_FAMILY_ORDER = [
+  SOURCE_FAMILY.GSC,
+  SOURCE_FAMILY.SEARCH,
+  SOURCE_FAMILY.COMMUNITY,
+  SOURCE_FAMILY.VIDEO,
+  SOURCE_FAMILY.SERP,
+  SOURCE_FAMILY.TREND
+];
+
+/**
+ * 原始 provider / 别名 → Source Family。
+ * Reddit 与 Steam 都映射 COMMUNITY，不能算两个独立 Family。
+ */
+var SOURCE_FAMILY_ALIASES = {
+  gsc: SOURCE_FAMILY.GSC,
+  page: SOURCE_FAMILY.GSC,
+  query: SOURCE_FAMILY.GSC,
+  'query×page': SOURCE_FAMILY.GSC,
+  'queryxpage': SOURCE_FAMILY.GSC,
+  'query-page': SOURCE_FAMILY.GSC,
+  'query page': SOURCE_FAMILY.GSC,
+  search: SOURCE_FAMILY.SEARCH,
+  google: SOURCE_FAMILY.SEARCH,
+  bing: SOURCE_FAMILY.SEARCH,
+  autocomplete: SOURCE_FAMILY.SEARCH,
+  paa: SOURCE_FAMILY.SEARCH,
+  'related searches': SOURCE_FAMILY.SEARCH,
+  community: SOURCE_FAMILY.COMMUNITY,
+  reddit: SOURCE_FAMILY.COMMUNITY,
+  steam: SOURCE_FAMILY.COMMUNITY,
+  'steam discussions': SOURCE_FAMILY.COMMUNITY,
+  video: SOURCE_FAMILY.VIDEO,
+  youtube: SOURCE_FAMILY.VIDEO,
+  serp: SOURCE_FAMILY.SERP,
+  'google top 10': SOURCE_FAMILY.SERP,
+  'bing top 10': SOURCE_FAMILY.SERP,
+  trend: SOURCE_FAMILY.TREND,
+  tiktok: SOURCE_FAMILY.TREND,
+  x: SOURCE_FAMILY.TREND,
+  twitter: SOURCE_FAMILY.TREND
+};
+
+var RADAR_SIGNAL_STATUS = {
+  ACTIVE: 'ACTIVE',
+  RESOLVED: 'RESOLVED'
+};
+
+var RADAR_STATUS = {
+  DISCOVERED: 'DISCOVERED',
+  WATCH: 'WATCH',
+  ARCHIVED: 'ARCHIVED'
+};
+
+var SEARCH_DEMAND_STATUS = {
+  UNKNOWN: 'UNKNOWN',
+  FOUND: 'FOUND',
+  WEAK: 'WEAK'
+};
+
+var SERP_GAP_STATUS = {
+  UNKNOWN: 'UNKNOWN',
+  STRONG: 'STRONG',
+  MEDIUM: 'MEDIUM',
+  WEAK: 'WEAK'
+};
+
+var OPPORTUNITY_CONFIDENCE = {
+  DISCOVERY_ONLY: 'DISCOVERY_ONLY',
+  CROSS_VALIDATED: 'CROSS_VALIDATED',
+  SEARCH_CONFIRMED: 'SEARCH_CONFIRMED',
+  OPPORTUNITY_VALIDATED: 'OPPORTUNITY_VALIDATED'
+};
+
 /** 每次 runIndexAuditBatch 最多完整 Inspection 的站点数 */
 var INDEX_AUDIT_BATCH_SIZE = 2;
 
@@ -1206,17 +1325,43 @@ function getMetricGuideRows_() {
       'Query×Page 行数少不等于页面没有点击。Winner Page 必须以 Page明细为准。'
     ],
     [
-      'QUERY_BLIND_SPOT / QueryClickCoverage',
-      '无独立 Sheet（R0 Detector 内存结果）',
+      'QUERY_BLIND_SPOT / QueryClickCoverage / QueryImpressionCoverage',
+      '需求雷达 / Detector 内存结果',
       '系统计算',
       'Page明细 vs Query页面明细（对齐完整 GSC 数据日的 7D 窗口）',
-      'QueryClickCoverage = VisibleQueryClicks7D / PageClicks7D；QueryImpressionCoverage 同理；分母为 0 时记 0，不写 Infinity/NaN。Click 路径：PageClicks7D≥3 且 coverage<0.50。Impression 路径：clicks 尚不足时 PageImpressions7D≥100 且 coverage<0.50',
-      '识别页面已有真实搜索表现、但可见 Query×Page 无法解释的 privacy truncation 盲区；只是事实信号',
-      '否（本阶段不接 Decision / Opportunity / Research / 今日行动）',
+      'QueryClickCoverage = VisibleQueryClicks7D / PageClicks7D；QueryImpressionCoverage = VisibleQueryImpressions7D / PageImpressions7D；分母为 0 时记 0，不写 Infinity/NaN。Click 路径：PageClicks7D≥3 且 coverage<0.50。Impression 路径：clicks 尚不足时 PageImpressions7D≥100 且 coverage<0.50',
+      '识别页面已有真实搜索表现、但可见 Query×Page 无法解释的 privacy truncation 盲区；写入「需求雷达」作为 DISCOVERY 信号',
+      '是（只写「需求雷达」，不写内容机会 / 今日行动 / Research）',
       'MIN_PAGE_CLICKS_7D=3；MIN_PAGE_IMPRESSIONS_7D=100；MAX_QUERY_COVERAGE=0.50；WINDOW_DAYS=7',
-      '热词站项目 R0 内部实验指标（非 Google 官方）',
+      '热词站项目内部实验指标（非 Google 官方 SEO 标准）',
       '实验中',
-      '不是 SEO 成功，也不等于该创建内容。窗口锚定完整 GSC 数据日，不是 RunDate / 当天 24H preliminary。不要把采集失败当成 privacy blind spot。'
+      '不是 SEO 成功，也不等于内容机会成立。QUERY_BLIND_SPOT ≠ VALIDATED_DEMAND / HIGH_OPPORTUNITY。窗口锚定完整 GSC 数据日，不是 RunDate / 当天 24H preliminary。不要把采集失败当成 privacy blind spot。'
+    ],
+    [
+      'IndependentSourceFamilyCount / 来源族',
+      '需求雷达',
+      '系统计算',
+      'normalizeSourceFamilies_（GSC / SEARCH / COMMUNITY / VIDEO / SERP / TREND）',
+      '把原始 provider 归一到 Source Family 后去重计数。GSC Page/Query/Query×Page 同属 GSC；Reddit 与 Steam 同属 COMMUNITY，计 1',
+      '衡量有多少个独立来源族指向同一需求；不是 Evidence 条数',
+      '是（CrossValidated 输入）',
+      '无最低条数；R1 QUERY_BLIND_SPOT 固定为 1（仅 GSC）',
+      '热词站项目内部实验规则（非 Google 官方）',
+      '实验中',
+      '不要用多条 GSC 指标假装交叉验证。Evidence 条数 ≠ 独立来源族数。'
+    ],
+    [
+      'CrossValidated',
+      '需求雷达',
+      '实验规则',
+      'isCrossValidated_（IndependentSourceFamilyCount）',
+      'IndependentSourceFamilyCount ≥ 2 则为 true；否则 false。Demand cross-source confirmation；R1 新 QUERY_BLIND_SPOT 只有 GSC，因此为 FALSE',
+      '标记是否已有至少两个独立 Source Family 指向同一需求',
+      '否（R1 不据此升级内容机会 / Research / 今日行动）',
+      '≥2 个独立 Source Family → true；否则 false',
+      '热词站项目 Gate 模型（非评分、非 Google 官方）',
+      '实验中',
+      'CrossValidated ≠ HIGH Opportunity。后续还需要 Search demand 与 SERP Gap 才能到 OPPORTUNITY_VALIDATED。QUERY_BLIND_SPOT 单来源不得直接开发内容。'
     ],
     [
       'RunDate',

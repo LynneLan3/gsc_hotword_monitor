@@ -136,6 +136,14 @@ function applyColumnWidths_(sheet, name) {
       16: 360, 17: 110, 18: 80, 19: 90, 20: 110, 21: 160,
       22: 220, 23: 160
     };
+  } else if (name === SHEET_NAMES.DEMAND_RADAR) {
+    widths = {
+      1: 280, 2: 100, 3: 100, 4: 100, 5: 110,
+      6: 180, 7: 180, 8: 280, 9: 160, 10: 360,
+      11: 90, 12: 90, 13: 110, 14: 110, 15: 110, 16: 110,
+      17: 120, 18: 110, 19: 80, 20: 110, 21: 110, 22: 140,
+      23: 90, 24: 110, 25: 220, 26: 150
+    };
   } else if (name === SHEET_NAMES.RESEARCH_JOBS) {
     widths = {
       1: 260, 2: 160, 3: 160, 4: 160,
@@ -244,6 +252,10 @@ function applyNumberFormats_(sheet, name) {
     sheet.getRange('K:K').setNumberFormat('0.0');
     sheet.getRange('Q:Q').setNumberFormat('yyyy-mm-dd');
     sheet.getRange('W:W').setNumberFormat('yyyy-mm-dd hh:mm:ss');
+  } else if (name === SHEET_NAMES.DEMAND_RADAR) {
+    sheet.getRange('B:E').setNumberFormat('yyyy-mm-dd');
+    sheet.getRange('O:P').setNumberFormat('0.00%');
+    sheet.getRange('Z:Z').setNumberFormat('yyyy-mm-dd hh:mm:ss');
   } else if (name === SHEET_NAMES.RESEARCH_JOBS) {
     sheet.getRange('B:B').setNumberFormat('yyyy-mm-dd hh:mm:ss');
     sheet.getRange('O:O').setNumberFormat('yyyy-mm-dd hh:mm:ss');
@@ -284,6 +296,7 @@ function getUsageGuideLines_() {
     '指标说明：数据字典；说明指标来自 Google、系统计算，还是热词站实验规则',
     '每日快照：快速看站点健康、曝光/点击概况与异常 Status',
     '内容机会：把真实 GSC Query 转成可执行的内容机会（不是随便想话题）',
+    '需求雷达：记录 GSC Query 尚未充分暴露、但系统检测到值得进一步调查的需求信号。DISCOVERED 只是发现，不代表内容机会成立。CrossValidated 只有在至少两个独立 Source Family 指向同一需求时才成立。当前 QUERY_BLIND_SPOT 属于 GSC 单来源信号，不应直接触发内容开发。',
     '研究任务：需要外部 Research 的任务队列',
     '研究审核：Human Gate，人工核对证据后再决定是否批准开发/继续观察/无需处理',
     '站点状态：解释 Decision Engine 为什么给出当前判断（分数、阶段、理由）',
@@ -543,6 +556,7 @@ function setupSheets() {
         SHEET_NAMES.WINNER_ASSETS,
         SHEET_NAMES.TODAY_ACTIONS,
         SHEET_NAMES.OPPORTUNITIES,
+        SHEET_NAMES.DEMAND_RADAR,
         SHEET_NAMES.RESEARCH_JOBS,
         SHEET_NAMES.RESEARCH_REVIEW,
         SHEET_NAMES.DEVELOPMENT_TASKS,
@@ -577,6 +591,8 @@ function setupSheets() {
   ensureSheet_(SHEET_NAMES.TODAY_ACTIONS, TODAY_ACTION_HEADERS);
   ensureTodayActionHeader_();
   ensureSheet_(SHEET_NAMES.OPPORTUNITIES, OPPORTUNITY_HEADERS);
+  ensureSheet_(SHEET_NAMES.DEMAND_RADAR, DEMAND_RADAR_HEADERS);
+  ensureDemandRadarHeader_();
   ensureSheet_(SHEET_NAMES.RESEARCH_JOBS, RESEARCH_JOB_HEADERS);
   ensureSheet_(SHEET_NAMES.RESEARCH_REVIEW, RESEARCH_REVIEW_HEADERS);
   ensureSheet_(SHEET_NAMES.DEVELOPMENT_TASKS, DEVELOPMENT_TASK_HEADERS);

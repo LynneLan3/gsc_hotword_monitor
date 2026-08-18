@@ -57,7 +57,7 @@ var rowsMatch = configSrc.match(
 );
 assert(rowsMatch, 'cannot parse getMetricGuideRows_ return array');
 var rows = eval(rowsMatch[1]);
-assert(rows.length === 70, 'metric count must stay 70, got ' + rows.length);
+assert(rows.length === 72, 'metric count must stay 72, got ' + rows.length);
 
 var ALLOWED_TYPES = {
   原始事实: true,
@@ -124,19 +124,32 @@ function mustHave(name) {
   'WinnerPage / WinnerIntent',
   'Winner Asset Candidate',
   'Page明细',
-  'QUERY_BLIND_SPOT / QueryClickCoverage',
+  'QUERY_BLIND_SPOT / QueryClickCoverage / QueryImpressionCoverage',
+  'IndependentSourceFamilyCount / 来源族',
+  'CrossValidated',
   '搜索意图 / Opportunity Level / 内容机会动作',
   '相关度 / 发现主题 / 玩家问题 / Research Recommendation',
   '研究审核（Human Gate）'
 ].forEach(mustHave);
 
 assert(
-  byName['QUERY_BLIND_SPOT / QueryClickCoverage'][2] === '系统计算',
+  byName['QUERY_BLIND_SPOT / QueryClickCoverage / QueryImpressionCoverage'][2] === '系统计算',
   'QUERY_BLIND_SPOT type'
 );
 assert(
-  /非 Google|不是 Google/.test(byName['QUERY_BLIND_SPOT / QueryClickCoverage'][8]),
+  /非 Google|不是 Google/.test(
+    byName['QUERY_BLIND_SPOT / QueryClickCoverage / QueryImpressionCoverage'][8]
+  ),
   'QUERY_BLIND_SPOT not Google official'
+);
+assert(byName.CrossValidated[2] === '实验规则', 'CrossValidated type');
+assert(
+  /IndependentSourceFamilyCount|独立来源/.test(byName.CrossValidated[4]),
+  'CrossValidated uses independent families'
+);
+assert(
+  /非 Google|不是 Google/.test(byName['IndependentSourceFamilyCount / 来源族'][8]),
+  'source family not Google official'
 );
 assert(/Google Search Console/.test(byName.Clicks[3]), 'Clicks source');
 assert(byName.Impressions[2] === '原始事实', 'Impressions type');

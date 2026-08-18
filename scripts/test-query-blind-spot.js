@@ -27,9 +27,20 @@ assert(/SHEET_NAMES\.PAGES|Page明细/.test(radarSrc), 'reads Page明细 concept
 assert(!/loadQueryRowsBySite_/.test(radarSrc.split('function debugDetectQueryBlindSpots')[0]),
   'detector compute path must not guess page from Query明细');
 
+function extractFn(src, name) {
+  var start = src.indexOf('function ' + name + '(');
+  assert(start >= 0, 'missing function ' + name);
+  var next = src.indexOf('\nfunction ', start + 1);
+  return next >= 0 ? src.slice(start, next) : src.slice(start);
+}
+
 assert(
-  !/detectQueryBlindSpots_/.test(codeSrc),
-  'not wired into Code.gs / runDaily this round'
+  !/detectQueryBlindSpots_/.test(extractFn(codeSrc, 'runDailyUnlocked_')),
+  'collect path must not inline detector'
+);
+assert(
+  /refreshDemandRadar_\(sites, runDate\)/.test(extractFn(codeSrc, 'runDailyFinalizerUnlocked_')),
+  'radar refresh runs in finalizer after GSC collect'
 );
 assert(!/runDecisionEngine|runContentOpportunityEngine|runPortfolioEngine/.test(radarSrc),
   'must not call engines');

@@ -23,6 +23,7 @@ function onOpen() {
     .addItem('重建效果变化', 'rebuildOutcomeDelta')
     .addItem('重建效果评价', 'rebuildEffectEvaluation')
     .addItem('运行内容机会引擎', 'runContentOpportunityEngine')
+    .addItem('刷新需求雷达', 'refreshDemandRadar')
     .addItem('创建研究任务', 'createResearchJobs')
     .addItem('重置并创建研究任务', 'resetAndCreateResearchJobs')
     .addItem('处理研究审核决定', 'processResearchReviewDecisions')
@@ -58,8 +59,8 @@ function sortMonitoringSheetsNewestFirst() {
  * 每日主流程：逐站执行 Performance / 快照，单站失败不影响其他站。
  * 不做全量 URL Inspection（由 runIndexAuditBatch 分批负责）。
  * IndexedURLCount 使用「URL索引」历史最新 Verdict 去重统计。
- * 采集可能分批续跑（时间预算）；全部站点采集完成后，再运行 Decision / Opportunity。
- * 决策/机会引擎失败不回滚已采集数据。
+ * 采集可能分批续跑（时间预算）；全部站点采集完成后，再运行 Decision / Opportunity / Demand Radar。
+ * 决策/机会/雷达失败不回滚已采集数据。
  * GSC Property URL 每次都从当前「站点配置」读取，不从历史快照或默认配置恢复。
  */
 function runDaily() {
@@ -199,7 +200,7 @@ function runDailyUnlocked_(isContinuation) {
 }
 
 /**
- * 单独重试采集之后的排序 / Decision / Opportunity。
+ * 单独重试采集之后的排序 / Decision / Opportunity / Demand Radar。
  * 不重置分批采集进度，不重跑已完成站点。
  */
 function runDailyFinalizer() {
@@ -224,6 +225,7 @@ function runDailyFinalizerUnlocked_(sites, runDate) {
     sortMonitoringSheetsNewestFirst_();
     runDecisionEngine();
     runContentOpportunityEngine();
+    refreshDemandRadar_(sites, runDate);
     sortSheetsNewestFirst_([SHEET_NAMES.LOG]);
     setDailyRunPhase_('done');
     deleteDailyContinuationTriggers_();

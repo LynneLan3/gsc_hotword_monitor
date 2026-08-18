@@ -61,6 +61,11 @@ assert(!/setDailyRunPhase_\('done'\)/.test(unlocked), 'collect path does not mar
 
 var finalizerFn = extractFn(codeSrc, 'runDailyFinalizerUnlocked_');
 assert(/runDecisionEngine\(\)/.test(finalizerFn) && /runContentOpportunityEngine\(\)/.test(finalizerFn), 'finalizer runs engines');
+assert(/refreshDemandRadar_\(sites, runDate\)/.test(finalizerFn), 'finalizer refreshes demand radar');
+assert(
+  finalizerFn.indexOf('runContentOpportunityEngine') < finalizerFn.indexOf('refreshDemandRadar_'),
+  'radar after GSC collect + opportunity'
+);
 assert(/setDailyRunPhase_\('done'\)/.test(finalizerFn), 'done only after finalizer success');
 assert(/formatErrorWithStack_/.test(finalizerFn), 'finalizer logs stack');
 assert(/throw e/.test(finalizerFn), 'finalizer does not swallow');
