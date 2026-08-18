@@ -1049,6 +1049,20 @@ var MAX_RETRIES = 3;
  */
 var FRESH_QUERY_DAYS = 5;
 
+/**
+ * Query Blind Spot Detector V1（热词站内部实验指标，不是 Google 官方指标）。
+ * 比较 Page明细 7D vs 可见 Query×Page 7D coverage。
+ * 只做事实检测，不创建内容机会 / Research / 今日行动。
+ */
+var QUERY_BLIND_SPOT_V1 = {
+  MIN_PAGE_CLICKS_7D: 3,
+  MIN_PAGE_IMPRESSIONS_7D: 100,
+  MAX_QUERY_COVERAGE: 0.50,
+  WINDOW_DAYS: 7
+};
+
+var QUERY_BLIND_SPOT_TRIGGER = 'QUERY_BLIND_SPOT';
+
 /** 每次 runIndexAuditBatch 最多完整 Inspection 的站点数 */
 var INDEX_AUDIT_BATCH_SIZE = 2;
 
@@ -1190,6 +1204,19 @@ function getMetricGuideRows_() {
       '外部事实（Google Search Console）',
       '实验中',
       'Query×Page 行数少不等于页面没有点击。Winner Page 必须以 Page明细为准。'
+    ],
+    [
+      'QUERY_BLIND_SPOT / QueryClickCoverage',
+      '无独立 Sheet（R0 Detector 内存结果）',
+      '系统计算',
+      'Page明细 vs Query页面明细（对齐完整 GSC 数据日的 7D 窗口）',
+      'QueryClickCoverage = VisibleQueryClicks7D / PageClicks7D；QueryImpressionCoverage 同理；分母为 0 时记 0，不写 Infinity/NaN。Click 路径：PageClicks7D≥3 且 coverage<0.50。Impression 路径：clicks 尚不足时 PageImpressions7D≥100 且 coverage<0.50',
+      '识别页面已有真实搜索表现、但可见 Query×Page 无法解释的 privacy truncation 盲区；只是事实信号',
+      '否（本阶段不接 Decision / Opportunity / Research / 今日行动）',
+      'MIN_PAGE_CLICKS_7D=3；MIN_PAGE_IMPRESSIONS_7D=100；MAX_QUERY_COVERAGE=0.50；WINDOW_DAYS=7',
+      '热词站项目 R0 内部实验指标（非 Google 官方）',
+      '实验中',
+      '不是 SEO 成功，也不等于该创建内容。窗口锚定完整 GSC 数据日，不是 RunDate / 当天 24H preliminary。不要把采集失败当成 privacy blind spot。'
     ],
     [
       'RunDate',
