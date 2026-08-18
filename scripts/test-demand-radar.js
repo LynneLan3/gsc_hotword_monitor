@@ -47,7 +47,7 @@ assert(!/SHEET_NAMES\.RESEARCH_JOBS/.test(radarSrc), 'must not write 研究任�
 assert(!/createResearchJobs|createResearchJob/.test(radarSrc), 'must not create research jobs');
 assert(!/QUERY_BLIND_SPOT/.test(opportunitySrc), 'opportunity engine unchanged');
 assert(!/DEMAND_RADAR|refreshDemandRadar_/.test(decisionSrc), 'decision engine unchanged');
-assert(!/DEMAND_RADAR|refreshDemandRadar_/.test(researchSrc), 'research jobs unchanged');
+assert(!/createDemandDiscoveryJobs/.test(radarSrc), 'refreshDemandRadar does not create discovery jobs');
 
 var QUERY_BLIND_SPOT_V1 = extractAssign(configSrc, 'QUERY_BLIND_SPOT_V1');
 var SOURCE_FAMILY = extractAssign(configSrc, 'SOURCE_FAMILY');

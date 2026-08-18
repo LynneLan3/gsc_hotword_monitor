@@ -24,6 +24,7 @@ function onOpen() {
     .addItem('重建效果评价', 'rebuildEffectEvaluation')
     .addItem('运行内容机会引擎', 'runContentOpportunityEngine')
     .addItem('刷新需求雷达', 'refreshDemandRadar')
+    .addItem('创建需求发现任务', 'createDemandDiscoveryJobs')
     .addItem('创建研究任务', 'createResearchJobs')
     .addItem('重置并创建研究任务', 'resetAndCreateResearchJobs')
     .addItem('处理研究审核决定', 'processResearchReviewDecisions')

@@ -427,7 +427,7 @@ assert(codeSrc.indexOf("addItem('处理内容资产决定', 'processWinnerAssetD
 assert(dailySrc.indexOf('processWinnerAssetDecisions') < 0, 'not on runDaily');
 assert(configSrc.indexOf("'研究类型'") >= 0 && configSrc.indexOf('RESEARCH_TYPE') >= 0, '研究类型 field');
 var researchSrc = fs.readFileSync(path.join(__dirname, '..', 'ResearchJobs.gs'), 'utf8');
-assert(researchSrc.indexOf("cell_(row, col, '研究类型')") < 0, 'API payload does not pass research_type yet');
+assert(researchSrc.indexOf("function loadDemandDiscoveryReadyJobs_") >= 0, 'demand discovery job loader exists');
 assert(winnerSrc.indexOf('function buildAssetResearchSourceQuery_') >= 0, 'source_query helper exists');
 
 console.log(

@@ -748,13 +748,17 @@ var RESEARCH_JOB_HEADERS = [
   '研究结果', '证据数量', '结果路径', '完成时间', '错误信息',
   '审核摘要', '审核链接',
   '审核决定', '审核备注', '审核时间',
-  '研究类型'
+  '研究类型',
+  // DEMAND_DISCOVERY（仅在 research_type=DEMAND_DISCOVERY 时使用）
+  '雷达ID', '触发类型', '锚点页面', '发现范围', '种子词', '来源族请求', '信号摘要',
+  '发现周期日期'
 ];
 
 /** 研究任务来源类型（单元格写英文；旧行空值视为 CONTENT_RESEARCH） */
 var RESEARCH_TYPE = {
   CONTENT_RESEARCH: 'CONTENT_RESEARCH',
-  ASSET_RESEARCH: 'ASSET_RESEARCH'
+  ASSET_RESEARCH: 'ASSET_RESEARCH',
+  DEMAND_DISCOVERY: 'DEMAND_DISCOVERY'
 };
 
 /**
@@ -781,6 +785,7 @@ var RESEARCH_JOB_STATUS = {
   PENDING: 'PENDING',
   REVIEW: 'REVIEW',
   WATCH: 'WATCH',
+  READY_FOR_DISCOVERY_RUNNER: 'READY_FOR_DISCOVERY_RUNNER',
   FAILED: 'FAILED',
   APPROVED: 'APPROVED',
   ARCHIVED: 'ARCHIVED'
@@ -790,6 +795,7 @@ var RESEARCH_JOB_STATUS_LABELS = {
   PENDING: '待处理',
   REVIEW: '待审核',
   WATCH: '继续观察',
+  READY_FOR_DISCOVERY_RUNNER: '待需求发现执行',
   FAILED: '失败',
   APPROVED: '已批准',
   ARCHIVED: '已归档'
@@ -1158,6 +1164,7 @@ var RADAR_SIGNAL_STATUS = {
 
 var RADAR_STATUS = {
   DISCOVERED: 'DISCOVERED',
+  RESEARCH: 'RESEARCH',
   WATCH: 'WATCH',
   ARCHIVED: 'ARCHIVED'
 };

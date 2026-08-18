@@ -21,6 +21,9 @@ function doGet(e) {
   if (action === 'pendingResearchJobs') {
     return jsonOutput_({ jobs: loadPendingResearchJobs_() });
   }
+  if (action === 'pendingDemandDiscoveryJobs') {
+    return jsonOutput_({ jobs: loadDemandDiscoveryReadyJobs_() });
+  }
   if (action === 'initResearchWriteToken') {
     return jsonOutput_(initResearchWriteToken_());
   }
@@ -524,6 +527,469 @@ function researchJobRowToApi_(row, col) {
     // 有意不输出 research_type：当前 fetch_pending_jobs / runner 不消费该字段。
     // Sheet 仍保存「研究类型」；B2-B2 若需区分 ASSET_RESEARCH 再做 passthrough。
   };
+}
+
+function safeJsonParse_(text, fallback) {
+  if (text === null || text === undefined) return fallback;
+  var raw = String(text || '').trim();
+  if (!raw) return fallback;
+  try {
+    return JSON.parse(raw);
+  } catch (e) {
+    return fallback;
+  }
+}
+
+function parseDemandDiscoveryPageTopicFromAnchorPage_(anchorPage) {
+  var p = String(anchorPage || '').trim();
+  if (!p) return '';
+  if (p.charAt(0) !== '/') p = '/' + p;
+  if (p.length > 1 && p.charAt(p.length - 1) === '/') p = p.substring(0, p.length - 1);
+  var seg = p.split('/').filter(function (s) {
+    return !!s;
+  });
+  if (!seg.length) return '';
+  var last = seg[seg.length - 1] || '';
+  // 保守：只做“路径最后一段 + '-'→空格”
+  last = last.split('?')[0];
+  last = last.replace(/-/g, ' ').trim();
+  return last || '';
+}
+
+function buildDemandDiscoverySeedTerms_(game, pageTopic) {
+  var g = String(game || '').trim();
+  var t = String(pageTopic || '').trim();
+  if (!g) return [];
+  var out = [g];
+  if (t) out.push(g + ' ' + t);
+  // 去重 + 限制 <=5（V1 只会是 1~2 个）
+  var seen = {};
+  var uniq = [];
+  for (var i = 0; i < out.length; i++) {
+    var x = String(out[i] || '').trim();
+    if (!x) continue;
+    if (seen[x]) continue;
+    seen[x] = true;
+    uniq.push(x);
+  }
+  return uniq.slice(0, 5);
+}
+
+function normalizeDiscoveryCycleDate_(value) {
+  var s = String(value || '').trim();
+  if (/^\d{4}-\d{2}-\d{2}/.test(s)) return s.substring(0, 10);
+  var compact = s.replace(/-/g, '');
+  if (/^\d{8}$/.test(compact)) {
+    return (
+      compact.substring(0, 4) +
+      '-' +
+      compact.substring(4, 6) +
+      '-' +
+      compact.substring(6, 8)
+    );
+  }
+  return '';
+}
+
+function discoveryCycleDateToYmd_(cycleDate) {
+  return normalizeDiscoveryCycleDate_(cycleDate).replace(/-/g, '');
+}
+
+/** Stable dedupe: ResearchType + RadarID + DiscoveryCycleDate */
+function demandDiscoveryDedupeKey_(radarId, cycleDate) {
+  return (
+    RESEARCH_TYPE.DEMAND_DISCOVERY +
+    '||' +
+    String(radarId || '').trim() +
+    '||' +
+    normalizeDiscoveryCycleDate_(cycleDate)
+  );
+}
+
+function buildDemandDiscoveryJobId_(radarId, cycleDate) {
+  var radar = String(radarId || '').trim();
+  var slug = slugifyResearch_(radar);
+  if (!slug) slug = 'unknown';
+  if (slug.length > 40) slug = slug.substring(0, 40).replace(/-+$/, '');
+  var ymd = discoveryCycleDateToYmd_(cycleDate);
+  if (!ymd) return 'demand-' + slug;
+  return 'demand-' + slug + '-' + ymd;
+}
+
+function buildDemandDiscoveryJobContract_(radar, createdAt, cycleDate) {
+  // radar：纯对象（用于测试/构建合同）；生产中由 DemandRadar 行解析而来
+  radar = radar || {};
+  createdAt = createdAt || new Date();
+
+  // created_at：尽量走 toIso8601_（Apps Script）；node 环境没有 toIso8601_ 时回退 String(date)
+  var createdAtIso = '';
+  if (typeof toIso8601_ === 'function') {
+    try {
+      createdAtIso = toIso8601_(createdAt);
+    } catch (e) {
+      createdAtIso = String(createdAt || '').trim();
+    }
+  } else {
+    createdAtIso = String(createdAt || '').trim();
+  }
+
+  var discoveryCycleDate = normalizeDiscoveryCycleDate_(
+    cycleDate ||
+      radar.discovery_cycle_date ||
+      radar.discoveryCycleDate ||
+      radar.runDate
+  );
+  var pageTopic = parseDemandDiscoveryPageTopicFromAnchorPage_(radar.anchor_page || radar.anchorPage);
+  var seedTerms = buildDemandDiscoverySeedTerms_(radar.game || radar.gameName, pageTopic);
+
+  return {
+    job_id:
+      String(radar.job_id || radar.jobId || '').trim() ||
+      buildDemandDiscoveryJobId_(radar.radar_id || radar.radarId, discoveryCycleDate),
+    research_type: RESEARCH_TYPE.DEMAND_DISCOVERY,
+    site: String(radar.site || '').trim(),
+    game: String(radar.game || radar.gameName || '').trim(),
+    radar_id: String(radar.radar_id || radar.radarId || '').trim(),
+    trigger_type: String(radar.trigger_type || radar.triggerType || '').trim(),
+    anchor_page: String(radar.anchor_page || radar.anchorPage || '').trim(),
+    source_signal_summary: String(
+      radar.source_signal_summary || radar.trigger_reason || radar.triggerReason || ''
+    ).trim(),
+    discovery_scope: {
+      page_topic: pageTopic
+    },
+    seed_terms: seedTerms,
+    source_families_requested: ['COMMUNITY', 'VIDEO'],
+    discovery_cycle_date: discoveryCycleDate,
+    created_at: createdAtIso
+  };
+}
+
+function isDemandDiscoveryEligible_(radar, opts) {
+  opts = opts || {};
+  var runDate = opts.runDate || '';
+  var recentFound = String(radar.recent_found || radar.recentFound || radar.runDate || '').trim();
+  if (runDate && recentFound && recentFound !== runDate) return false;
+
+  if (String(radar.trigger_type || radar.triggerType || '') !== QUERY_BLIND_SPOT_TRIGGER) return false;
+  if (String(radar.signal_status || radar.signalStatus || '') !== RADAR_SIGNAL_STATUS.ACTIVE) return false;
+  if (String(radar.radar_status || radar.radarStatus || '') !== RADAR_STATUS.DISCOVERED) return false;
+  if (String(radar.opportunity_confidence || radar.opportunityConfidence || '') !== OPPORTUNITY_CONFIDENCE.DISCOVERY_ONLY) return false;
+  var crossRaw =
+    radar.cross_validated !== undefined ? radar.cross_validated : radar.crossValidated;
+  var crossValidated =
+    crossRaw === true ||
+    String(crossRaw || '').trim().toLowerCase() === 'true' ||
+    crossRaw === 1;
+  if (crossValidated) return false;
+
+  if (String(radar.research_job_id || radar.researchJobId || '').trim()) return false;
+  return true;
+}
+
+function chooseBestDemandDiscoveryRadarForSite_(radars) {
+  if (!radars || !radars.length) return null;
+  var best = null;
+  var bestClicks = -1;
+  var bestImpr = -1;
+  for (var i = 0; i < radars.length; i++) {
+    var r = radars[i];
+    var c = Number(r.page_clicks7d || r.pageClicks7D || r.pageClicks7d || r.pageClicks || 0);
+    var im = Number(r.page_impressions7d || r.pageImpressions7D || r.pageImpressions7d || r.pageImpressions || 0);
+    if (isNaN(c)) c = 0;
+    if (isNaN(im)) im = 0;
+    if (!best) {
+      best = r;
+      bestClicks = c;
+      bestImpr = im;
+      continue;
+    }
+    if (c > bestClicks) {
+      best = r;
+      bestClicks = c;
+      bestImpr = im;
+      continue;
+    }
+    if (c === bestClicks && im > bestImpr) {
+      best = r;
+      bestClicks = c;
+      bestImpr = im;
+      continue;
+    }
+  }
+  return best;
+}
+
+function discoveryCycleDateFromJobId_(jobId) {
+  var m = /-(\d{8})$/.exec(String(jobId || '').trim());
+  if (!m) return '';
+  return normalizeDiscoveryCycleDate_(m[1]);
+}
+
+/** pendingDemandDiscoveryJobs payload（纯转换，便于测试）。 */
+function demandDiscoveryRowToApi_(row, col) {
+  var created = cell_(row, col, '创建时间');
+  var createdAt = '';
+  if (Object.prototype.toString.call(created) === '[object Date]' && !isNaN(created.getTime())) {
+    createdAt = typeof toIso8601_ === 'function' ? toIso8601_(created) : String(created);
+  } else {
+    createdAt = String(created || '').trim();
+  }
+
+  var jobId = String(cell_(row, col, '任务ID') || '').trim();
+  var cycleDate =
+    normalizeDiscoveryCycleDate_(cell_(row, col, '发现周期日期')) ||
+    discoveryCycleDateFromJobId_(jobId);
+
+  var discoveryScope = safeJsonParse_(cell_(row, col, '发现范围') || '', {});
+  var seedTerms = safeJsonParse_(cell_(row, col, '种子词') || '', []);
+  var sourceFamiliesRequested = safeJsonParse_(cell_(row, col, '来源族请求') || '', []);
+
+  return {
+    job_id: jobId,
+    research_type: RESEARCH_TYPE.DEMAND_DISCOVERY,
+    site: String(cell_(row, col, '站点') || cell_(row, col, '游戏') || '').trim(),
+    game: String(cell_(row, col, '游戏') || '').trim(),
+    radar_id: String(cell_(row, col, '雷达ID') || '').trim(),
+    trigger_type: String(cell_(row, col, '触发类型') || '').trim(),
+    anchor_page: String(cell_(row, col, '锚点页面') || '').trim(),
+    source_signal_summary: String(cell_(row, col, '信号摘要') || '').trim(),
+    discovery_scope: discoveryScope && typeof discoveryScope === 'object' ? discoveryScope : {},
+    seed_terms: Array.isArray(seedTerms) ? seedTerms : [],
+    source_families_requested: Array.isArray(sourceFamiliesRequested)
+      ? sourceFamiliesRequested
+      : [],
+    discovery_cycle_date: cycleDate,
+    created_at: createdAt
+  };
+}
+
+/**
+ * 只读 DEMAND_DISCOVERY：任务状态=READY_FOR_DISCOVERY_RUNNER
+ * 该 action 供未来 DEMAND_DISCOVERY runner 使用；旧 runner 只消费 pendingResearchJobs。
+ */
+function loadDemandDiscoveryReadyJobs_() {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  if (!ss) return [];
+  var sheet = ss.getSheetByName(SHEET_NAMES.RESEARCH_JOBS);
+  if (!sheet || sheet.getLastRow() < 2) return [];
+
+  var lastCol = Math.max(sheet.getLastColumn(), 1);
+  var header = sheet.getRange(1, 1, 1, lastCol).getValues()[0];
+  var col = headerIndexMap_(header);
+  var rows = sheet.getRange(2, 1, sheet.getLastRow() - 1, lastCol).getValues();
+  var jobs = [];
+
+  var needStatus = opportunityLabel_(
+    RESEARCH_JOB_STATUS_LABELS,
+    RESEARCH_JOB_STATUS.READY_FOR_DISCOVERY_RUNNER
+  );
+  for (var i = 0; i < rows.length; i++) {
+    var row = rows[i];
+    var statusRaw = String(cell_(row, col, '任务状态') || '').trim();
+    if (statusRaw !== needStatus && statusRaw !== RESEARCH_JOB_STATUS.READY_FOR_DISCOVERY_RUNNER) {
+      continue;
+    }
+
+    var researchType = String(cell_(row, col, '研究类型') || '').trim();
+    if (researchType !== RESEARCH_TYPE.DEMAND_DISCOVERY) continue;
+
+    var job = demandDiscoveryRowToApi_(row, col);
+    if (job && job.job_id) jobs.push(job);
+  }
+  return jobs;
+}
+
+/**
+ * DEMAND_DISCOVERY Job 创建：写 Sheet「研究任务」并绑定「需求雷达」。
+ * 规则门控：仅 QUERY_BLIND_SPOT + ACTIVE + DISCOVERED + DISCOVERY_ONLY + !CrossValidated + RadarStatus&ResearchJobID 条件。
+ */
+function createDemandDiscoveryJobs_(opts) {
+  opts = opts || {};
+  var runDate = opts.runDate || todayStr_();
+  ensureResearchJobSheets_();
+
+  var radarRows = loadDemandRadarRows_();
+  if (!radarRows || !radarRows.length) {
+    return { created: 0, skipped: 0 };
+  }
+
+  var radarCol = headerIndexMap_(DEMAND_RADAR_HEADERS);
+  var jobSheet = getSpreadsheet_().getSheetByName(SHEET_NAMES.RESEARCH_JOBS);
+  if (!jobSheet) return { created: 0, skipped: 0 };
+
+  var lastJobCol = Math.max(jobSheet.getLastColumn(), 1);
+  var jobHeader = jobSheet.getRange(1, 1, 1, lastJobCol).getValues()[0];
+  var jobCol = headerIndexMap_(jobHeader);
+  var jobRows = [];
+  if (jobSheet.getLastRow() >= 2) {
+    jobRows = jobSheet.getRange(2, 1, jobSheet.getLastRow() - 1, lastJobCol).getValues();
+  }
+
+  // 同 ResearchType + RadarID + DiscoveryCycleDate 已存在 → 不重复（含 FAILED，R2A 不自动重试）
+  var existingJobIds = {};
+  var existingDedupe = {};
+  for (var i = 0; i < jobRows.length; i++) {
+    var jrow = jobRows[i];
+    var jt = String(cell_(jrow, jobCol, '研究类型') || '').trim();
+    if (jt !== RESEARCH_TYPE.DEMAND_DISCOVERY) continue;
+    var jobId = String(cell_(jrow, jobCol, '任务ID') || '').trim();
+    var radarIdExisting = String(cell_(jrow, jobCol, '雷达ID') || '').trim();
+    var cycleExisting =
+      normalizeDiscoveryCycleDate_(cell_(jrow, jobCol, '发现周期日期')) ||
+      discoveryCycleDateFromJobId_(jobId);
+    if (jobId) existingJobIds[jobId] = true;
+    if (radarIdExisting && cycleExisting) {
+      existingDedupe[demandDiscoveryDedupeKey_(radarIdExisting, cycleExisting)] = jobId;
+    }
+  }
+
+  var eligible = [];
+  for (var r = 0; r < radarRows.length; r++) {
+    var row = radarRows[r];
+    var radarId = String(row[radarCol['雷达ID']] || '').trim();
+    if (!radarId) continue;
+
+    var radarObj = {
+      radar_id: radarId,
+      site: String(row[radarCol['站点']] || '').trim(),
+      game: String(row[radarCol['游戏']] || '').trim(),
+      anchor_page: String(row[radarCol['锚点页面']] || '').trim(),
+      trigger_type: String(row[radarCol['触发类型']] || '').trim(),
+      trigger_reason: String(row[radarCol['触发原因']] || '').trim(),
+      page_clicks7d: Number(row[radarCol['页面点击7日']] || 0),
+      page_impressions7d: Number(row[radarCol['页面曝光7日']] || 0),
+      opportunity_confidence: String(row[radarCol['机会置信度']] || '').trim(),
+      cross_validated: row[radarCol['交叉验证']],
+      signal_status: String(row[radarCol['信号状态']] || '').trim(),
+      radar_status: String(row[radarCol['雷达状态']] || '').trim(),
+      research_job_id: String(row[radarCol['研究任务ID']] || '').trim(),
+      recent_found: String(row[radarCol['最近发现']] || '').trim()
+    };
+
+    // 冷却控制/去噪由下面的“每站每日最多 1 个 + 选最大 clicks/impr”承担
+    if (!isDemandDiscoveryEligible_(radarObj, { runDate: runDate })) continue;
+    eligible.push(radarObj);
+  }
+
+  // 每站每日最多 1 个：按 eligibility 后再选 best
+  var bySite = {};
+  for (var e = 0; e < eligible.length; e++) {
+    var s = String(eligible[e].site || '').trim();
+    if (!s) continue;
+    if (!bySite[s]) bySite[s] = [];
+    bySite[s].push(eligible[e]);
+  }
+
+  var created = 0;
+  var skipped = 0;
+  var createdAt = new Date();
+  var nowTs = typeof radarNowTs_ === 'function' ? radarNowTs_() : '';
+
+  var toAppend = [];
+
+  for (var siteName in bySite) {
+    if (!bySite.hasOwnProperty(siteName)) continue;
+    var best = chooseBestDemandDiscoveryRadarForSite_(bySite[siteName]);
+    if (!best) continue;
+
+    var radarId = best.radar_id;
+    var cycleDate = normalizeDiscoveryCycleDate_(runDate);
+    var jobId = buildDemandDiscoveryJobId_(radarId, cycleDate);
+    var dedupeKey = demandDiscoveryDedupeKey_(radarId, cycleDate);
+    var existingId = existingJobIds[jobId] ? jobId : existingDedupe[dedupeKey];
+    if (existingId) {
+      // 同 cycle 幂等：若雷达还没绑定 job_id，则补绑定当前 cycle 的 Job，不创建新行
+      for (var rr = 0; rr < radarRows.length; rr++) {
+        var rrow = radarRows[rr];
+        var rid = String(rrow[radarCol['雷达ID']] || '').trim();
+        if (rid !== radarId) continue;
+        if (!String(rrow[radarCol['研究任务ID']] || '').trim()) {
+          rrow[radarCol['雷达状态']] = RADAR_STATUS.RESEARCH;
+          rrow[radarCol['研究任务ID']] = existingId;
+          rrow[radarCol['最近报告时间']] = nowTs;
+        }
+        break;
+      }
+      skipped += 1;
+      continue;
+    }
+
+    var contract = buildDemandDiscoveryJobContract_(best, createdAt, cycleDate);
+    jobId = contract.job_id;
+    var jobRow = demandDiscoveryResearchJobSheetRow_(contract, best.site, createdAt);
+    toAppend.push(jobRow);
+
+    // 更新 radar row
+    for (var r2 = 0; r2 < radarRows.length; r2++) {
+      var rrow2 = radarRows[r2];
+      var rid2 = String(rrow2[radarCol['雷达ID']] || '').trim();
+      if (rid2 !== radarId) continue;
+      rrow2[radarCol['雷达状态']] = RADAR_STATUS.RESEARCH;
+      rrow2[radarCol['研究任务ID']] = jobId;
+      rrow2[radarCol['最近报告时间']] = nowTs;
+      break;
+    }
+
+    created += 1;
+    existingJobIds[jobId] = true;
+    existingDedupe[dedupeKey] = jobId;
+  }
+
+  if (toAppend.length) {
+    var start = jobSheet.getLastRow() + 1;
+    if (start < 2) start = 2;
+    jobSheet.getRange(start, 1, toAppend.length, RESEARCH_JOB_HEADERS.length).setValues(toAppend);
+  }
+
+  replaceSheetDataRows_(SHEET_NAMES.DEMAND_RADAR, DEMAND_RADAR_HEADERS, radarRows);
+  return { created: created, skipped: skipped };
+}
+
+function demandDiscoveryResearchJobSheetRow_(contract, site, createdAt) {
+  // Sheet 写入：禁止伪造 content opportunity 字段（机会等级/建议动作/source_query）
+  // 通过新增 DEMAND_DISCOVERY 元数据列提供完整合同字段。
+  return [
+    String(contract.job_id || '').trim(),
+    createdAt || new Date(),
+    site || contract.site || '',
+    contract.game || '',
+    String(contract.discovery_scope && contract.discovery_scope.page_topic ? contract.discovery_scope.page_topic : '') || '',
+    String(contract.anchor_page || '') || '',
+    '', // 机会等级
+    '', // 建议动作
+    '', // source_query（禁止伪造）
+    opportunityLabel_(
+      RESEARCH_JOB_STATUS_LABELS,
+      RESEARCH_JOB_STATUS.READY_FOR_DISCOVERY_RUNNER
+    ),
+    '', // 关联搜索词
+    '', // 研究结果
+    '', // 证据数量
+    '', // 结果路径
+    '', // 完成时间
+    '', // 错误信息
+    '', // 审核摘要
+    '', // 审核链接
+    '', // 审核决定
+    '', // 审核备注
+    '', // 审核时间
+    RESEARCH_TYPE.DEMAND_DISCOVERY,
+    // DEMAND_DISCOVERY 元数据列
+    String(contract.radar_id || '').trim(),
+    String(contract.trigger_type || '').trim(),
+    String(contract.anchor_page || '').trim(),
+    JSON.stringify(contract.discovery_scope || {}),
+    JSON.stringify(contract.seed_terms || []),
+    JSON.stringify(contract.source_families_requested || []),
+    String(contract.source_signal_summary || '').trim(),
+    String(contract.discovery_cycle_date || '').trim()
+  ];
+}
+
+function createDemandDiscoveryJobs() {
+  // 菜单/调试入口：默认按今天最近发现 runDate 创建
+  return createDemandDiscoveryJobs_({ runDate: todayStr_() });
 }
 
 /**
@@ -1356,7 +1822,16 @@ function researchJobSheetRow_(job, site, createdAt) {
     '',
     '',
     '',
-    job.research_type || RESEARCH_TYPE.CONTENT_RESEARCH
+    job.research_type || RESEARCH_TYPE.CONTENT_RESEARCH,
+    // DEMAND_DISCOVERY 额外元数据列（此类 job 默认空）
+    '',
+    '',
+    '',
+    '',
+    '',
+    '',
+    '',
+    ''
   ];
 }
 
@@ -1593,11 +2068,14 @@ function debugResearchJobsSelfCheck() {
     '研究任务 has review gate columns'
   );
   assert(
-    RESEARCH_JOB_HEADERS[RESEARCH_JOB_HEADERS.length - 4] === '审核决定' &&
-      RESEARCH_JOB_HEADERS[RESEARCH_JOB_HEADERS.length - 3] === '审核备注' &&
-      RESEARCH_JOB_HEADERS[RESEARCH_JOB_HEADERS.length - 2] === '审核时间' &&
-      RESEARCH_JOB_HEADERS[RESEARCH_JOB_HEADERS.length - 1] === '研究类型',
-    '研究类型追加在末尾，不移动审核字段'
+    RESEARCH_JOB_HEADERS.indexOf('审核决定') < RESEARCH_JOB_HEADERS.indexOf('审核备注') &&
+      RESEARCH_JOB_HEADERS.indexOf('审核备注') < RESEARCH_JOB_HEADERS.indexOf('审核时间') &&
+      RESEARCH_JOB_HEADERS.indexOf('审核时间') + 1 === RESEARCH_JOB_HEADERS.indexOf('研究类型'),
+    '研究类型紧跟审核时间，不移动审核字段'
+  );
+  assert(
+    RESEARCH_JOB_HEADERS.indexOf('发现周期日期') > RESEARCH_JOB_HEADERS.indexOf('研究类型'),
+    '发现周期日期追加在研究类型之后'
   );
 
   var apiJob = researchJobRowToApi_(sheetRow, headerIndexMap_(RESEARCH_JOB_HEADERS));
