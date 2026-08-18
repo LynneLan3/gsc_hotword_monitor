@@ -113,6 +113,12 @@ assert(/runDailyWithLock_\(false\)/.test(extractFn(codeSrc, 'runDaily')), 'menu/
 assert(/var DAILY_RUN_MAX_MS/.test(configSrc), 'time budget constant');
 assert(/var DAILY_CONTINUE_HANDLER/.test(configSrc), 'handler name constant');
 
+var createDaily = extractFn(codeSrc, 'createDailyTrigger');
+assert(!/newTrigger\('runFreshQueryMonitor'\)/.test(createDaily), 'no fresh monitor trigger in daily helper');
+assert(!/everyHours\(/.test(createDaily), 'daily helper stays atHour/everyDays');
+assert(!/runFreshQueryMonitor/.test(unlocked), 'runDaily collect must not call fresh monitor');
+assert(!/runFreshQueryMonitor/.test(finalizerFn), 'runDaily finalizer must not call fresh monitor');
+
 // --- 5. setup / 7站旧代码不得删 Agent 64 ---
 assert(!/deleteRow|clearContent|getLastRow\(\) === 8/.test(extractFn(sheetSrc, 'seedSitesIfEmpty_')), 'seed never deletes extra site rows');
 assert(!/for \(var i = .*DEFAULT_SITES\.length[\s\S]*deleteRow/.test(sheetSrc), 'no trim-to-7-sites');

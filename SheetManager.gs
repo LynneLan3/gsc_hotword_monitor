@@ -144,6 +144,13 @@ function applyColumnWidths_(sheet, name) {
       17: 120, 18: 110, 19: 80, 20: 110, 21: 110, 22: 140,
       23: 90, 24: 110, 25: 220, 26: 150
     };
+  } else if (name === SHEET_NAMES.FRESH_QUERY_MONITOR) {
+    widths = {
+      1: 160, 2: 180, 3: 260, 4: 360,
+      5: 110, 6: 110, 7: 110, 8: 130,
+      9: 110, 10: 110, 11: 110, 12: 80,
+      13: 220, 14: 180, 15: 160, 16: 120, 17: 180
+    };
   } else if (name === SHEET_NAMES.RESEARCH_JOBS) {
     widths = {
       1: 260, 2: 160, 3: 160, 4: 160,
@@ -257,6 +264,11 @@ function applyNumberFormats_(sheet, name) {
     sheet.getRange('O:P').setNumberFormat('0.00%');
     sheet.getRange('Z:Z').setNumberFormat('yyyy-mm-dd hh:mm:ss');
     sheet.getRange('AH:AH').setNumberFormat('yyyy-mm-dd hh:mm:ss');
+  } else if (name === SHEET_NAMES.FRESH_QUERY_MONITOR) {
+    sheet.getRange('A:A').setNumberFormat('yyyy-mm-dd hh:mm:ss');
+    sheet.getRange('G:G').setNumberFormat('0.00%');
+    sheet.getRange('H:H').setNumberFormat('0.0');
+    sheet.getRange('J:J').setNumberFormat('0.00%');
   } else if (name === SHEET_NAMES.RESEARCH_JOBS) {
     sheet.getRange('B:B').setNumberFormat('yyyy-mm-dd hh:mm:ss');
     sheet.getRange('O:O').setNumberFormat('yyyy-mm-dd hh:mm:ss');
@@ -298,6 +310,7 @@ function getUsageGuideLines_() {
     '每日快照：快速看站点健康、曝光/点击概况与异常 Status',
     '内容机会：把真实 GSC Query 转成可执行的内容机会（不是随便想话题）',
     '需求雷达：记录 GSC Query 尚未充分暴露、但系统检测到值得进一步调查的需求信号。DISCOVERED 只是发现，不代表内容机会成立。CrossValidated 只有在至少两个独立 Source Family 指向同一需求时才成立。当前 QUERY_BLIND_SPOT 属于 GSC 单来源信号，不应直接触发内容开发。',
+    '实时Query监控：用 GSC hourly 数据看最近 24 小时突然爆发的 Query，并观察落地页承接。只用于热词发现和爆量提醒，不进入 Decision / D7 / 效果评价。数据可能仍不完整。',
     '研究任务：需要外部 Research 的任务队列',
     '研究审核：Human Gate，人工核对证据后再决定是否批准开发/继续观察/无需处理',
     '站点状态：解释 Decision Engine 为什么给出当前判断（分数、阶段、理由）',
@@ -558,6 +571,7 @@ function setupSheets() {
         SHEET_NAMES.TODAY_ACTIONS,
         SHEET_NAMES.OPPORTUNITIES,
         SHEET_NAMES.DEMAND_RADAR,
+        SHEET_NAMES.FRESH_QUERY_MONITOR,
         SHEET_NAMES.RESEARCH_JOBS,
         SHEET_NAMES.RESEARCH_REVIEW,
         SHEET_NAMES.DEVELOPMENT_TASKS,
@@ -594,6 +608,7 @@ function setupSheets() {
   ensureSheet_(SHEET_NAMES.OPPORTUNITIES, OPPORTUNITY_HEADERS);
   ensureSheet_(SHEET_NAMES.DEMAND_RADAR, DEMAND_RADAR_HEADERS);
   ensureDemandRadarHeader_();
+  ensureSheet_(SHEET_NAMES.FRESH_QUERY_MONITOR, FRESH_QUERY_MONITOR_HEADERS);
   ensureSheet_(SHEET_NAMES.RESEARCH_JOBS, RESEARCH_JOB_HEADERS);
   ensureSheet_(SHEET_NAMES.RESEARCH_REVIEW, RESEARCH_REVIEW_HEADERS);
   ensureSheet_(SHEET_NAMES.DEVELOPMENT_TASKS, DEVELOPMENT_TASK_HEADERS);

@@ -24,6 +24,7 @@ function onOpen() {
     .addItem('重建效果评价', 'rebuildEffectEvaluation')
     .addItem('运行内容机会引擎', 'runContentOpportunityEngine')
     .addItem('刷新需求雷达', 'refreshDemandRadar')
+    .addItem('运行实时Query监控', 'runFreshQueryMonitor')
     .addItem('创建需求发现任务', 'createDemandDiscoveryJobs')
     .addItem('创建搜索需求任务', 'createSearchDemandJobs')
     .addItem('创建研究任务', 'createResearchJobs')
@@ -1218,6 +1219,7 @@ function backfillPageDetailsForSite_(site, startDate, endDate) {
  * - runDaily：每天 1 个（约早上 8 点）
  * - runIndexAuditBatch：每天 4 个（上午/中午/下午/晚上）
  * 重复执行不会重复创建。
+ * 不创建 runFreshQueryMonitor：该 trigger helper 独立，需确认后再启用。
  */
 function createDailyTrigger() {
   var triggers = ScriptApp.getProjectTriggers();

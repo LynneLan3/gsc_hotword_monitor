@@ -237,6 +237,20 @@ function extractGscResponseMetadata_(result) {
 }
 
 /**
+ * 解析 GSC hour 维度：YYYY-MM-DDThh:mm:ss[+|-]hh:mm（America/Los_Angeles）。
+ * 解析失败返回 null，不发明时间。
+ * @param {string} hourStr
+ * @return {number|null} epoch ms
+ */
+function parseGscHourMs_(hourStr) {
+  var s = String(hourStr || '').trim();
+  if (!s) return null;
+  var d = new Date(s);
+  if (isNaN(d.getTime())) return null;
+  return d.getTime();
+}
+
+/**
  * 判断是否为 GSC 授权/Property 权限错误（401/403）。
  */
 function isGscPermissionError_(err) {

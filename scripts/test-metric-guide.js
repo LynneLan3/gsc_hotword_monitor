@@ -57,7 +57,7 @@ var rowsMatch = configSrc.match(
 );
 assert(rowsMatch, 'cannot parse getMetricGuideRows_ return array');
 var rows = eval(rowsMatch[1]);
-assert(rows.length === 72, 'metric count must stay 72, got ' + rows.length);
+assert(rows.length === 74, 'metric count must stay 74, got ' + rows.length);
 
 var ALLOWED_TYPES = {
   原始事实: true,
@@ -129,7 +129,9 @@ function mustHave(name) {
   'CrossValidated',
   '搜索意图 / Opportunity Level / 内容机会动作',
   '相关度 / 发现主题 / 玩家问题 / Research Recommendation',
-  '研究审核（Human Gate）'
+  '研究审核（Human Gate）',
+  '实时Query监控（Fresh Hourly）',
+  '展现增长率 / 是否新搜索词 / 页面承接状态'
 ].forEach(mustHave);
 
 assert(
@@ -192,6 +194,18 @@ assert(
   'Relevance AI type'
 );
 assert(byName['研究审核（Human Gate）'][2] === '人工判断', 'Human Gate type');
+assert(
+  /否/.test(byName['实时Query监控（Fresh Hourly）'][6]),
+  'fresh hourly must not enter Decision'
+);
+assert(
+  byName['实时Query监控（Fresh Hourly）'][2] === '原始事实',
+  'fresh hourly type'
+);
+assert(
+  byName['展现增长率 / 是否新搜索词 / 页面承接状态'][2] === '实验规则',
+  'burst rules are experimental'
+);
 
 // Code consistency checks (read-only)
 assert(/function safeGrowth_/.test(decisionSrc), 'safeGrowth_ exists');

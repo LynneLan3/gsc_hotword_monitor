@@ -313,6 +313,103 @@ function fetchFreshQueryPages(siteUrl, dataDate, rowLimit) {
 }
 
 /**
+ * 分页拉取 Search Analytics 全部行。不改现有单页 fetch* 函数。
+ * 复用 searchAnalyticsQuery / extractGscResponseMetadata_。
+ * @param {string} siteUrl
+ * @param {Object} body 请求体（含 rowLimit）
+ * @return {{rows:Array, metadata:Object|null, result:Object}}
+ */
+function searchAnalyticsQueryAllRows_(siteUrl, body) {
+  body = body || {};
+  var allRows = [];
+  var startRow = 0;
+  var limit = body.rowLimit || FRESH_HOURLY_ROW_LIMIT;
+  var metadata = null;
+  var lastResult = {};
+  var guard = 0;
+
+  while (guard < 20) {
+    guard++;
+    var pageBody = Object.assign({}, body, {
+      rowLimit: limit,
+      startRow: startRow
+    });
+    var result = searchAnalyticsQuery(siteUrl, pageBody);
+    lastResult = result || {};
+    var md = extractGscResponseMetadata_(result);
+    if (md) metadata = md;
+    var rows = (result && result.rows) || [];
+    for (var i = 0; i < rows.length; i++) allRows.push(rows[i]);
+    if (rows.length < limit) break;
+    startRow += rows.length;
+  }
+
+  return {
+    rows: allRows,
+    metadata: metadata,
+    result: lastResult
+  };
+}
+
+/**
+ * 将 hour+query+page 行标准化。约定 keys[0]=hour, keys[1]=query, keys[2]=page。
+ * 缺键或 hour 无法解析则跳过，不造假值。
+ * @param {Array=} rows
+ * @return {Array<{hour:string,hourMs:number,query:string,page:string,clicks:number,impressions:number,position:number}>}
+ */
+function normalizeHourlyQueryPageRows_(rows) {
+  var out = [];
+  if (!rows || !rows.length) return out;
+
+  for (var i = 0; i < rows.length; i++) {
+    var r = rows[i];
+    var keys = r && r.keys;
+    if (!keys || keys.length < 3) continue;
+    var hour = keys[0];
+    var query = keys[1];
+    var page = keys[2];
+    if (!hour || !query || !page) continue;
+    var hourMs = parseGscHourMs_(hour);
+    if (hourMs === null) continue;
+    out.push({
+      hour: String(hour),
+      hourMs: hourMs,
+      query: String(query),
+      page: String(page),
+      clicks: r.clicks || 0,
+      impressions: r.impressions || 0,
+      position: r.position || 0
+    });
+  }
+  return out;
+}
+
+/**
+ * Fresh hourly Query × Page（dataState=hourly_all）。
+ * 只供实时 Query 监控旁路使用，不要写入 GSC日数据 / Query明细 / Decision。
+ * @param {string} siteUrl
+ * @param {string} startDate yyyy-MM-dd
+ * @param {string} endDate yyyy-MM-dd
+ * @param {number=} rowLimit
+ * @return {{rows:Array, metadata:Object|null, result:Object}}
+ */
+function fetchHourlyQueryPagesResult_(siteUrl, startDate, endDate, rowLimit) {
+  rowLimit = rowLimit || FRESH_HOURLY_ROW_LIMIT;
+  var packed = searchAnalyticsQueryAllRows_(siteUrl, {
+    startDate: startDate,
+    endDate: endDate,
+    dimensions: ['hour', 'query', 'page'],
+    dataState: 'hourly_all',
+    rowLimit: rowLimit
+  });
+  return {
+    rows: normalizeHourlyQueryPageRows_(packed.rows),
+    metadata: packed.metadata,
+    result: packed.result || {}
+  };
+}
+
+/**
  * 找出 Day0 ~ endDate 之间最早 impressions > 0 的日期
  */
 function findFirstImpressionDate(siteUrl, day0, endDate) {

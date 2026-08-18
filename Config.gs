@@ -28,6 +28,7 @@ var SHEET_NAMES = {
   TODAY_ACTIONS: '今日行动',
   OPPORTUNITIES: '内容机会',
   DEMAND_RADAR: '需求雷达',
+  FRESH_QUERY_MONITOR: '实时Query监控',
   RESEARCH_JOBS: '研究任务',
   RESEARCH_REVIEW: '研究审核',
   DEVELOPMENT_TASKS: '开发任务',
@@ -53,6 +54,7 @@ var SHEET_UI_ORDER = [
   SHEET_NAMES.SNAPSHOT,
   SHEET_NAMES.OPPORTUNITIES,
   SHEET_NAMES.DEMAND_RADAR,
+  SHEET_NAMES.FRESH_QUERY_MONITOR,
   SHEET_NAMES.RESEARCH_JOBS,
   SHEET_NAMES.RESEARCH_REVIEW,
   SHEET_NAMES.SITE_STATUS,
@@ -124,6 +126,29 @@ var PAGE_HEADERS = [
 var QUERY_PAGE_HEADERS = [
   'DataDate', 'Site', 'Query', 'PageURL', 'PagePath',
   'Clicks', 'Impressions', 'CTR', 'AveragePosition'
+];
+/**
+ * 实时 24h Query 爆量监控（hourly_all 旁路）。
+ * 只用于热词发现 / 爆量提醒 / 页面承接观察，不进入 Decision / D7。
+ */
+var FRESH_QUERY_MONITOR_HEADERS = [
+  '生成时间',
+  '站点',
+  '搜索词',
+  '页面URL',
+  '近24小时点击',
+  '近24小时展现',
+  '近24小时CTR',
+  '近24小时平均排名',
+  '前24小时展现',
+  '展现增长率',
+  '是否新搜索词',
+  '是否触发',
+  '触发原因',
+  '页面承接状态',
+  '建议动作',
+  '数据是否未完全',
+  '数据截止小时'
 ];
 var URL_INDEX_HEADERS = [
   'RunDate', 'Site', 'URL', 'Verdict', 'CoverageState', 'RobotsTxtState',
@@ -1067,6 +1092,39 @@ var MAX_RETRIES = 3;
  * 使用 dataState=all，允许后续补数。取 5 天以覆盖常见延迟窗口。
  */
 var FRESH_QUERY_DAYS = 5;
+
+/**
+ * Fresh hourly 旁路：一次拉最近 N 个 GSC 自然日（含今天），再按 hour timestamp
+ * 切近 24h / 前 24h。不要按自然日比较。hourly 数据最长约 10 天。
+ */
+var FRESH_HOURLY_LOOKBACK_DAYS = 3;
+/** Search Analytics 单次 rowLimit 上限 */
+var FRESH_HOURLY_ROW_LIMIT = 25000;
+var FRESH_QUERY_MONITOR_HANDLER = 'runFreshQueryMonitor';
+var FRESH_QUERY_MONITOR_EVERY_HOURS = 6;
+
+/**
+ * 实时 Query 爆量规则（项目实验阈值，不是 Google 官方标准）。
+ * 不写入 Decision / Effect Evaluation / D7 baseline。
+ */
+var FRESH_QUERY_MONITOR_V1 = {
+  IMPRESSIONS_BURST: 30,
+  CLICKS_BURST: 3,
+  GROWTH_RATIO: 1,
+  NEW_QUERY_MIN_IMPRESSIONS: 10,
+  NEW_QUERY_MAX_POSITION: 10,
+  COMPETING_PAGE_MIN_IMPRESSIONS: 10,
+  COMPETING_PAGE_MIN_SHARE: 0.2
+};
+
+/**
+ * Mortal Shell II skip-prologue 承接观察：只匹配 URL path，不写死曝光/点击。
+ */
+var FRESH_QUERY_MS2_SKIP_PROLOGUE = {
+  query: 'mortal shell 2 skip prologue',
+  oldPath: '/mortal-shell-ii/beta-progress-carry-over/',
+  newPath: '/mortal-shell-ii/skip-prologue/'
+};
 
 /**
  * Query Blind Spot Detector V1（热词站内部实验指标，不是 Google 官方指标）。
@@ -2195,6 +2253,32 @@ function getMetricGuideRows_() {
       'M3-6 Effect Evidence Contract',
       '实验中',
       'Reason 只服务 Evidence Contract，不表示效果方向。'
+    ],
+    [
+      '实时Query监控（Fresh Hourly）',
+      '实时Query监控',
+      '原始事实',
+      'Google Search Console Search Analytics API（dataState=hourly_all, dimensions=hour,query,page）',
+      '按返回的 hour timestamp 聚合最近 24h 与前 24h；CTR=clicks/impressions；Average Position 按 impressions 加权。可能含 incomplete hourly 数据。',
+      '发现过去 24 小时突然爆发的 Query，并观察落地页承接',
+      '否（不进入 Decision / Effect Evaluation / D7）',
+      '无',
+      '外部事实（Google Search Console hourly）',
+      '实验中',
+      '这是旁路监控。不要把它当成 finalized 日数据，也不要用它改 D7 baseline。'
+    ],
+    [
+      '展现增长率 / 是否新搜索词 / 页面承接状态',
+      '实时Query监控',
+      '实验规则',
+      '由 hourly 聚合派生；承接状态看 Query×Page',
+      '新搜索词=前24h展现为0；增长率=(近24h−前24h)/前24h；爆量：展现≥30 或 点击≥3 或 增长≥100% 或（新Query且排名≤10且展现≥10）。承接：单内容页=正常承接；Hub+独立意图=可能需要新页；两内容页=可能页面竞争。',
+      '标记爆量 Query 并提示观察/扩页/补新页/检查竞争，不自动改站',
+      '否',
+      'FRESH_QUERY_MONITOR_V1：展现≥30；点击≥3；增长≥100%；新Query Top10（展现≥10 且排名≤10）',
+      '热词站项目实验规则，不是 Google / SEO 官方标准',
+      '实验中',
+      '达到阈值不等于必须新建页面。Mortal Shell II 的 skip prologue 只按落地 URL 观察新旧页切换，不写死指标。'
     ]
   ];
 }
