@@ -1,200 +1,180 @@
 /**
- * M3 本地 mock 自测：不写生产 Sheet、不改 MS2/AU。
- * 逻辑与 DevelopmentTasks.gs 纯函数对齐。
- * 运行：node scripts/test-development-tasks.js
+ * Phase 7E local fixture test.  No SpreadsheetApp / production Sheet access.
+ * Run: node scripts/test-development-tasks.js
  */
+'use strict';
+
+var fs = require('fs');
+var vm = require('vm');
+var path = require('path');
 
 var RESEARCH_JOB_STATUS = {
-  APPROVED: 'APPROVED',
-  REVIEW: 'REVIEW',
-  WATCH: 'WATCH',
-  ARCHIVED: 'ARCHIVED'
+  APPROVED: 'APPROVED', REVIEW: 'REVIEW', WATCH: 'WATCH', ARCHIVED: 'ARCHIVED'
 };
 var RESEARCH_JOB_STATUS_LABELS = {
-  APPROVED: '已批准',
-  REVIEW: '待审核',
-  WATCH: '继续观察',
-  ARCHIVED: '已归档'
+  APPROVED: '已批准', REVIEW: '待审核', WATCH: '继续观察', ARCHIVED: '已归档'
 };
 var RESEARCH_REVIEW_DECISION = { APPROVE: 'APPROVE' };
 var RESEARCH_REVIEW_DECISION_LABELS = {
-  APPROVE: '批准开发',
-  WATCH: '继续观察',
-  NO_ACTION: '无需处理'
+  APPROVE: '批准开发', WATCH: '继续观察', NO_ACTION: '无需处理'
 };
 var RESEARCH_RESULT_RECOMMENDATIONS = {
-  EXPAND_EXISTING: 'EXPAND_EXISTING',
-  NEW_CONTENT: 'NEW_CONTENT'
+  EXPAND_EXISTING: 'EXPAND_EXISTING', NEW_CONTENT: 'NEW_CONTENT', WATCH: 'WATCH'
 };
 var RESEARCH_RESULT_RECOMMENDATION_LABELS = {
-  EXPAND_EXISTING: '扩充现有页面',
-  NEW_CONTENT: '新内容',
-  WATCH: '继续观察'
+  EXPAND_EXISTING: '扩充现有页面', NEW_CONTENT: '新内容', WATCH: '继续观察'
 };
-var OPPORTUNITY_LEVELS = { HIGH: 'HIGH', MEDIUM: 'MEDIUM', WATCH: 'WATCH' };
+var RESEARCH_TYPE = {
+  CONTENT_RESEARCH: 'CONTENT_RESEARCH', ASSET_RESEARCH: 'ASSET_RESEARCH',
+  DEMAND_DISCOVERY: 'DEMAND_DISCOVERY', SEARCH_DEMAND: 'SEARCH_DEMAND'
+};
+var OPPORTUNITY_LEVELS = { HIGH: 'HIGH', MEDIUM: 'MEDIUM' };
 var OPPORTUNITY_LEVEL_LABELS = { HIGH: '高', MEDIUM: '中', WATCH: '观察' };
 var DEVELOPMENT_GOAL_LABELS = {
-  EXPAND_EXISTING: '扩充现有页面',
-  NEW_PAGE: '新建页面',
-  UPDATE_EXISTING: '更新现有页面'
+  EXPAND_EXISTING: '扩充现有页面', NEW_PAGE: '新建页面', UPDATE_EXISTING: '更新现有页面'
 };
 var DEVELOPMENT_PRIORITY_LABELS = { HIGH: '高', MEDIUM: '中', LOW: '低' };
-var DEVELOPMENT_TASK_STATUS_LABELS = { TODO: '待开发' };
+var DEVELOPMENT_TASK_STATUS_LABELS = {
+  TODO: '待开发', READY_FOR_IMPLEMENTATION: 'READY_FOR_IMPLEMENTATION',
+  WAITING_SITE_CREATION: 'WAITING_SITE_CREATION'
+};
+var DEVELOPMENT_TASK_HEADERS = [
+  '开发任务ID', '创建时间', '来源任务ID', '站点', '游戏', '页面路径',
+  '开发目标', 'Evidence链接', '优先级', '任务状态', '完成时间', '备注',
+  'OpportunityID', 'DecisionID', 'SiteID', 'ActionType', 'TaskType',
+  'TaskReason', 'SourceReference'
+];
+var RESEARCH_JOB_HEADERS = [
+  '任务ID', '创建时间', '站点', '游戏', '搜索词 / topic', '页面路径',
+  '机会等级', '建议动作', 'source_query', '任务状态', '关联搜索词',
+  '研究结果', '证据数量', '结果路径', '完成时间', '错误信息', '审核摘要',
+  '审核链接', '审核决定', '审核备注', '审核时间', '研究类型', '雷达ID',
+  '触发类型', '锚点页面', '发现范围', '种子词', '来源族请求', '信号摘要',
+  '发现周期日期', 'OpportunityID'
+];
 
 function enumFromLabel_(labelMap, value) {
   var raw = String(value || '').trim();
   if (!raw) return '';
   if (labelMap[raw]) return raw;
   var keys = Object.keys(labelMap);
-  for (var i = 0; i < keys.length; i++) {
-    if (labelMap[keys[i]] === raw) return keys[i];
-  }
+  for (var i = 0; i < keys.length; i++) if (labelMap[keys[i]] === raw) return keys[i];
   return raw;
 }
-
-function isResearchJobReadyForDevelopment_(status, decision) {
-  var statusRaw = String(status || '').trim();
-  var decisionRaw = String(decision || '').trim();
-  if (!statusRaw || !decisionRaw) return false;
-
-  var statusEnum = statusRaw;
-  if (statusRaw === RESEARCH_JOB_STATUS_LABELS.APPROVED) {
-    statusEnum = RESEARCH_JOB_STATUS.APPROVED;
-  } else if (statusRaw !== RESEARCH_JOB_STATUS.APPROVED) {
-    statusEnum = enumFromLabel_(RESEARCH_JOB_STATUS_LABELS, statusRaw);
-  }
-
-  var decisionEnum = decisionRaw;
-  if (decisionRaw === RESEARCH_REVIEW_DECISION_LABELS.APPROVE) {
-    decisionEnum = RESEARCH_REVIEW_DECISION.APPROVE;
-  } else if (decisionRaw !== RESEARCH_REVIEW_DECISION.APPROVE) {
-    decisionEnum = enumFromLabel_(RESEARCH_REVIEW_DECISION_LABELS, decisionRaw);
-  }
-
-  return (
-    statusEnum === RESEARCH_JOB_STATUS.APPROVED &&
-    decisionEnum === RESEARCH_REVIEW_DECISION.APPROVE
-  );
+function headerIndexMap_(headers) {
+  var out = {};
+  for (var i = 0; i < headers.length; i++) out[String(headers[i] || '').trim()] = i;
+  return out;
+}
+function cell_(row, col, name) {
+  return col[name] === undefined ? '' : row[col[name]];
 }
 
-function developmentGoalFromResearchResult_(resultLabel) {
-  var raw = String(resultLabel || '').trim();
-  if (!raw) return DEVELOPMENT_GOAL_LABELS.UPDATE_EXISTING;
-  var recEnum = enumFromLabel_(RESEARCH_RESULT_RECOMMENDATION_LABELS, raw);
-  if (recEnum === RESEARCH_RESULT_RECOMMENDATIONS.EXPAND_EXISTING) {
-    return DEVELOPMENT_GOAL_LABELS.EXPAND_EXISTING;
-  }
-  if (recEnum === RESEARCH_RESULT_RECOMMENDATIONS.NEW_CONTENT) {
-    return DEVELOPMENT_GOAL_LABELS.NEW_PAGE;
-  }
-  if (raw === DEVELOPMENT_GOAL_LABELS.UPDATE_EXISTING || raw.indexOf('更新') >= 0) {
-    return DEVELOPMENT_GOAL_LABELS.UPDATE_EXISTING;
-  }
-  return DEVELOPMENT_GOAL_LABELS.UPDATE_EXISTING;
-}
-
-function developmentPriorityFromLevel_(levelLabel) {
-  var raw = String(levelLabel || '').trim();
-  var levelEnum = enumFromLabel_(OPPORTUNITY_LEVEL_LABELS, raw);
-  if (levelEnum === OPPORTUNITY_LEVELS.HIGH || raw === '高') {
-    return DEVELOPMENT_PRIORITY_LABELS.HIGH;
-  }
-  if (levelEnum === OPPORTUNITY_LEVELS.MEDIUM || raw === '中') {
-    return DEVELOPMENT_PRIORITY_LABELS.MEDIUM;
-  }
-  return DEVELOPMENT_PRIORITY_LABELS.LOW;
-}
-
-function developmentTaskIdFromSource_(sourceJobId) {
-  return 'dev-' + String(sourceJobId || '').trim();
-}
-
-function simulateCreate(candidates, existingInit) {
-  var existing = Object.assign({}, existingInit || {});
-  var created = 0;
-  var skippedExisting = 0;
-  var built = [];
-  for (var i = 0; i < candidates.length; i++) {
-    var c = candidates[i];
-    if (!isResearchJobReadyForDevelopment_(c.status, c.decision)) continue;
-    if (existing[c.id]) {
-      skippedExisting++;
-      continue;
-    }
-    built.push({
-      development_task_id: developmentTaskIdFromSource_(c.id),
-      source_job_id: c.id,
-      goal: developmentGoalFromResearchResult_(c.result),
-      priority: developmentPriorityFromLevel_(c.level),
-      status: DEVELOPMENT_TASK_STATUS_LABELS.TODO
-    });
-    existing[c.id] = true;
-    created++;
-  }
-  return { created: created, skippedExisting: skippedExisting, built: built, existing: existing };
-}
+var context = {
+  RESEARCH_JOB_STATUS: RESEARCH_JOB_STATUS,
+  RESEARCH_JOB_STATUS_LABELS: RESEARCH_JOB_STATUS_LABELS,
+  RESEARCH_REVIEW_DECISION: RESEARCH_REVIEW_DECISION,
+  RESEARCH_REVIEW_DECISION_LABELS: RESEARCH_REVIEW_DECISION_LABELS,
+  RESEARCH_RESULT_RECOMMENDATIONS: RESEARCH_RESULT_RECOMMENDATIONS,
+  RESEARCH_RESULT_RECOMMENDATION_LABELS: RESEARCH_RESULT_RECOMMENDATION_LABELS,
+  RESEARCH_TYPE: RESEARCH_TYPE,
+  OPPORTUNITY_LEVELS: OPPORTUNITY_LEVELS,
+  OPPORTUNITY_LEVEL_LABELS: OPPORTUNITY_LEVEL_LABELS,
+  DEVELOPMENT_GOAL_LABELS: DEVELOPMENT_GOAL_LABELS,
+  DEVELOPMENT_PRIORITY_LABELS: DEVELOPMENT_PRIORITY_LABELS,
+  DEVELOPMENT_TASK_STATUS_LABELS: DEVELOPMENT_TASK_STATUS_LABELS,
+  DEVELOPMENT_TASK_HEADERS: DEVELOPMENT_TASK_HEADERS,
+  RESEARCH_JOB_HEADERS: RESEARCH_JOB_HEADERS,
+  enumFromLabel_: enumFromLabel_,
+  headerIndexMap_: headerIndexMap_,
+  cell_: cell_
+};
+vm.runInNewContext(
+  fs.readFileSync(path.join(__dirname, '..', 'DevelopmentTasks.gs'), 'utf8'),
+  context
+);
 
 var fails = [];
-function assert(cond, msg) {
-  if (!cond) fails.push(msg);
+function assert(cond, msg) { if (!cond) fails.push(msg); }
+function row(overrides) {
+  var col = headerIndexMap_(RESEARCH_JOB_HEADERS);
+  var out = new Array(RESEARCH_JOB_HEADERS.length).fill('');
+  out[col['任务ID']] = 'fixture-job-001';
+  out[col['站点']] = 'Mortal Shell II';
+  out[col['游戏']] = 'Mortal Shell II';
+  out[col['页面路径']] = '/skip-prologue/';
+  out[col['机会等级']] = '高';
+  out[col['任务状态']] = '已批准';
+  out[col['研究结果']] = '扩充现有页面';
+  out[col['审核决定']] = '批准开发';
+  out[col['OpportunityID']] = 'opp-fixture-001';
+  Object.keys(overrides || {}).forEach(function (key) { out[col[key]] = overrides[key]; });
+  return { values: out, col: col };
+}
+function build(r, refs) {
+  return context.buildDevelopmentTaskFromResearchRow_(r.values, r.col, new Date('2026-08-22T00:00:00Z'), refs || {
+    decisionId: 'decision-fixture-001', siteId: 'mortal-shell-ii'
+  });
 }
 
-assert(isResearchJobReadyForDevelopment_('已批准', '批准开发') === true, 'A ready');
-assert(isResearchJobReadyForDevelopment_('已归档', '无需处理') === false, 'C archived');
-assert(isResearchJobReadyForDevelopment_('继续观察', '') === false, 'D watch');
-assert(isResearchJobReadyForDevelopment_('待审核', '') === false, 'E review');
-assert(isResearchJobReadyForDevelopment_('待审核', '批准开发') === false, 'E review+approve');
+// approved CREATE/UPDATE → task created and bound
+var create = row({ '研究结果': '新内容', '任务ID': 'fixture-create-001', 'OpportunityID': 'opp-create-001' });
+var createTask = build(create);
+assert(context.implementationActionFromResearchRow_(create.values, create.col) === 'CREATE_PAGE', 'approved CREATE action');
+assert(createTask.action_type === 'CREATE_PAGE', 'CREATE task action');
+assert(createTask.status === 'READY_FOR_IMPLEMENTATION', 'existing site READY');
+assert(createTask.opportunity_id === 'opp-create-001', 'OpportunityID preserved');
+assert(createTask.decision_id === 'decision-fixture-001', 'DecisionID preserved');
+assert(createTask.site_id === 'mortal-shell-ii', 'SiteID preserved');
 
-var candidates = [
-  {
-    id: 'mock-approved-expand-20260815',
-    status: '已批准',
-    decision: '批准开发',
-    result: '扩充现有页面',
-    level: '高'
-  },
-  {
-    id: 'mock-archived-20260815',
-    status: '已归档',
-    decision: '无需处理',
-    result: '扩充现有页面',
-    level: '高'
-  },
-  {
-    id: 'mock-watch-20260815',
-    status: '继续观察',
-    decision: '',
-    result: '继续观察',
-    level: '中'
-  },
-  {
-    id: 'mock-review-20260815',
-    status: '待审核',
-    decision: '',
-    result: '扩充现有页面',
-    level: '高'
-  }
-];
+var update = row({ '任务ID': 'fixture-update-001', 'OpportunityID': 'opp-update-001' });
+var updateTask = build(update);
+assert(updateTask.action_type === 'UPDATE_PAGE', 'approved UPDATE action');
+assert(updateTask.page_path === '/skip-prologue/', 'TargetPath reuses 页面路径');
 
-var run1 = simulateCreate(candidates, {});
-assert(run1.created === 1, 'A created=1');
-assert(run1.skippedExisting === 0, 'A skipped=0');
-assert(run1.built[0].development_task_id === 'dev-mock-approved-expand-20260815', 'dev- id');
-assert(run1.built[0].status === '待开发', '初始待开发');
-assert(run1.built[0].goal === '扩充现有页面', 'goal');
-assert(run1.built[0].priority === '高', 'priority');
+// WATCH / REJECT / research-only → excluded
+var watch = row({ '任务状态': '继续观察', '审核决定': '继续观察', '研究结果': '继续观察' });
+assert(context.isResearchJobReadyForDevelopment_(watch.values[watch.col['任务状态']], watch.values[watch.col['审核决定']]) === false, 'WATCH excluded');
+var reject = row({ '审核决定': '无需处理', '任务状态': '已归档' });
+assert(context.isResearchJobReadyForDevelopment_(reject.values[reject.col['任务状态']], reject.values[reject.col['审核决定']]) === false, 'REJECT excluded');
+var researchOnly = row({ '研究结果': '', '建议动作': '研究新内容', '研究类型': 'CONTENT_RESEARCH' });
+assert(context.implementationActionFromResearchRow_(researchOnly.values, researchOnly.col) === '', 'research-only excluded');
+var discoveryOnly = row({ '研究结果': '', '建议动作': '', '研究类型': 'DEMAND_DISCOVERY' });
+assert(context.implementationActionFromResearchRow_(discoveryOnly.values, discoveryOnly.col) === '', 'discovery-only excluded');
+var noAction = row({ '研究结果': '', '建议动作': '', '研究类型': 'CONTENT_RESEARCH' });
+assert(context.implementationActionFromResearchRow_(noAction.values, noAction.col) === '', 'empty action excluded');
 
-var run2 = simulateCreate(candidates, run1.existing);
-assert(run2.created === 0 && run2.skippedExisting === 1, 'B no duplicate');
+// exact four-part identity and rerun idempotency
+var existing = { identity: {}, sourceIds: {} };
+context.markDevelopmentTaskExisting_(existing, updateTask);
+assert(context.developmentTaskAlreadyExists_(existing, updateTask) === true, 'same identity no duplicate');
+var changedPath = build(row({ '页面路径': '/different-path/', 'OpportunityID': 'opp-update-001' }));
+assert(context.developmentTaskAlreadyExists_(existing, changedPath) === false, 'changed TargetPath is new identity');
+var changedDecision = build(row({ 'OpportunityID': 'opp-update-001' }), {
+  decisionId: 'decision-fixture-002', siteId: 'mortal-shell-ii'
+});
+assert(context.developmentTaskAlreadyExists_(existing, changedDecision) === false, 'changed DecisionID is new identity');
+assert(context.developmentTaskIdentityKey_('o', 'd', 'UPDATE_PAGE', '/a') !== context.developmentTaskIdentityKey_('o', 'd', 'UPDATE_PAGE', '/b'), 'identity includes TargetPath');
 
-assert(developmentGoalFromResearchResult_('新内容') === '新建页面', '新建页面');
-assert(developmentPriorityFromLevel_('观察') === '低', '观察→低');
+// resolved approval disappears on refresh
+var resolved = row({ '任务状态': '继续观察', '审核决定': '继续观察' });
+assert(context.isResearchJobReadyForDevelopment_(resolved.values[resolved.col['任务状态']], resolved.values[resolved.col['审核决定']]) === false, 'resolved action disappears');
+
+// Steam BUILD boundary: no site_id, no repo operation
+var steam = context.buildDevelopmentTaskFromSteamRow_({
+  opportunityId: 'opp-steam-build-fixture', game: 'Steam Fixture', sourceReference: 'steam-fixture'
+}, new Date('2026-08-22T00:00:00Z'));
+assert(context.isApprovedSteamBuild_({ opportunityId: 'opp-steam-build-fixture', decision: 'BUILD' }) === true, 'Steam BUILD included');
+assert(steam.opportunity_id === 'opp-steam-build-fixture', 'Steam OpportunityID preserved');
+assert(steam.action_type === 'BUILD' && steam.task_type === 'SITE_BUILD', 'Steam SITE_BUILD type');
+assert(steam.site_id === '', 'Steam site_id remains empty');
+assert(steam.status === 'WAITING_SITE_CREATION', 'Steam waiting status');
+assert(context.isApprovedSteamBuild_({ opportunityId: 'opp-steam-build-fixture', decision: 'REJECT' }) === false, 'Steam REJECT excluded');
+
+assert(context.developmentTaskSheetRow_(createTask).length === DEVELOPMENT_TASK_HEADERS.length, 'row/header width');
 
 if (fails.length) {
   console.error('FAIL (' + fails.length + '):\n' + fails.join('\n'));
   process.exit(1);
 }
-console.log('PASS: Development Tasks mock self-check');
-console.log(
-  'A created=1; B skippedExisting=1; C/D/E not created; initial status=待开发'
-);
+console.log('PASS scripts/test-development-tasks.js (approved create/update, WATCH/REJECT/research exclusion, bindings, four-part idempotency, Steam BUILD boundary, resolved disappearance)');

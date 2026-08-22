@@ -1,70 +1,109 @@
 /**
- * M3：已批准 → 开发任务队列。
- * 扫描「研究任务」，仅为「已批准 + 批准开发」创建「开发任务」。
- * 不调用 Codex、不改游戏网站、不改研究任务状态。
+ * Phase 7E：已批准 Opportunity → 现有「开发任务」runtime record。
+ *
+ * 这里只写「开发任务」Sheet：不改 Opportunity / Decision / Research，
+ * 不调用 Codex，不改 Game Repo，不创建 GitHub/Vercel 资源。
  */
+
+/** 兼容现有菜单入口。 */
+function createDevelopmentTasks() {
+  return syncDevelopmentTasksFromApprovedDecisions();
+}
 
 /**
- * 从「研究任务」创建开发任务。幂等：同一来源任务ID 仅一条。
+ * 从已批准的 GSC Research Approval 与 Steam BUILD Decision 追加任务。
+ * Sheet 是事实源；本函数只追加缺失任务，不更新或删除已有任务。
  * @return {string}
  */
-function createDevelopmentTasks() {
+function syncDevelopmentTasksFromApprovedDecisions() {
   ensureDevelopmentTaskSheets_();
-  var researchSheet = getSpreadsheet_().getSheetByName(SHEET_NAMES.RESEARCH_JOBS);
   var devSheet = ensureSheet_(SHEET_NAMES.DEVELOPMENT_TASKS, DEVELOPMENT_TASK_HEADERS);
-  if (!researchSheet || researchSheet.getLastRow() < 2) {
-    var emptyMsg =
-      'createDevelopmentTasks 结束 created=0 skippedExisting=0（研究任务为空）';
-    writeLog_('INFO', '', emptyMsg);
-    Logger.log(emptyMsg);
-    return emptyMsg;
-  }
-
-  var existing = loadExistingDevelopmentSourceIds_(devSheet);
-  var lastCol = Math.max(researchSheet.getLastColumn(), RESEARCH_JOB_HEADERS.length);
-  var header = researchSheet.getRange(1, 1, 1, lastCol).getValues()[0];
-  var col = headerIndexMap_(header);
-  var n = researchSheet.getLastRow() - 1;
-  var rows = researchSheet.getRange(2, 1, n, lastCol).getValues();
-
+  var existing = loadExistingDevelopmentTaskKeys_(devSheet);
   var createdRows = [];
   var created = 0;
   var skippedExisting = 0;
+  var skippedNoOpportunity = 0;
+  var skippedNonImplementation = 0;
   var now = new Date();
+  var decisionRefs = loadDevelopmentDecisionReferences_();
+  var siteRefs = loadDevelopmentSiteReferences_();
 
-  for (var i = 0; i < rows.length; i++) {
-    var row = rows[i];
-    var sourceId = String(cell_(row, col, '任务ID') || '').trim();
-    if (!sourceId) continue;
+  var researchSheet = getSpreadsheet_().getSheetByName(SHEET_NAMES.RESEARCH_JOBS);
+  if (researchSheet && researchSheet.getLastRow() >= 2) {
+    var lastCol = Math.max(researchSheet.getLastColumn(), RESEARCH_JOB_HEADERS.length);
+    var header = researchSheet.getRange(1, 1, 1, lastCol).getValues()[0];
+    var col = headerIndexMap_(header);
+    var rows = researchSheet.getRange(2, 1, researchSheet.getLastRow() - 1, lastCol).getValues();
 
-    var status = String(cell_(row, col, '任务状态') || '').trim();
-    var decision = String(cell_(row, col, '审核决定') || '').trim();
-    if (!isResearchJobReadyForDevelopment_(status, decision)) continue;
+    for (var i = 0; i < rows.length; i++) {
+      var row = rows[i];
+      var sourceId = String(cell_(row, col, '任务ID') || '').trim();
+      if (!sourceId || !isResearchJobReadyForDevelopment_(
+        cell_(row, col, '任务状态'),
+        cell_(row, col, '审核决定')
+      )) continue;
 
-    if (existing[sourceId]) {
+      var opportunityId = String(cell_(row, col, 'OpportunityID') || '').trim();
+      if (!opportunityId) {
+        // Phase 7C-1 之前没有 OpportunityID 的历史任务不反向补造绑定。
+        skippedNoOpportunity++;
+        continue;
+      }
+
+      var actionType = implementationActionFromResearchRow_(row, col);
+      if (!actionType) {
+        skippedNonImplementation++;
+        continue;
+      }
+
+      var task = buildDevelopmentTaskFromResearchRow_(row, col, now, {
+        decisionId: developmentDecisionIdFromResearchRow_(row, col, decisionRefs),
+        siteId: developmentSiteIdFromResearchRow_(row, col, siteRefs),
+        actionType: actionType
+      });
+      if (developmentTaskAlreadyExists_(existing, task)) {
+        skippedExisting++;
+        continue;
+      }
+      createdRows.push(developmentTaskSheetRow_(task));
+      markDevelopmentTaskExisting_(existing, task);
+      created++;
+    }
+  }
+
+  // Steam source is read-only. BUILD is an explicit implementation decision;
+  // without site_id it remains a task waiting for site creation.
+  var steamRows = [];
+  try {
+    if (typeof loadSteamActionRows_ === 'function') steamRows = loadSteamActionRows_();
+  } catch (e) {
+    writeLog_('WARN', '', 'Development Task 跳过 Steam Source: ' + e.message);
+  }
+  for (var s = 0; s < steamRows.length; s++) {
+    var steam = steamRows[s] || {};
+    if (!isApprovedSteamBuild_(steam)) continue;
+    var steamTask = buildDevelopmentTaskFromSteamRow_(steam, now);
+    if (developmentTaskAlreadyExists_(existing, steamTask)) {
       skippedExisting++;
       continue;
     }
-
-    var task = buildDevelopmentTaskFromResearchRow_(row, col, now);
-    createdRows.push(developmentTaskSheetRow_(task));
-    existing[sourceId] = true;
+    createdRows.push(developmentTaskSheetRow_(steamTask));
+    markDevelopmentTaskExisting_(existing, steamTask);
     created++;
   }
 
   if (createdRows.length) {
-    var start = devSheet.getLastRow() + 1;
-    if (start < 2) start = 2;
+    var start = Math.max(2, devSheet.getLastRow() + 1);
     devSheet
       .getRange(start, 1, createdRows.length, DEVELOPMENT_TASK_HEADERS.length)
       .setValues(createdRows);
   }
 
   var summary =
-    'createDevelopmentTasks 结束 created=' +
-    created +
-    ' skippedExisting=' +
-    skippedExisting;
+    'syncDevelopmentTasksFromApprovedDecisions 结束 created=' + created +
+    ' skippedExisting=' + skippedExisting +
+    ' skippedNoOpportunity=' + skippedNoOpportunity +
+    ' skippedNonImplementation=' + skippedNonImplementation;
   writeLog_('INFO', '', summary);
   Logger.log(summary);
   return summary;
@@ -96,113 +135,265 @@ function ensureDevelopmentTaskColumns_(sheet) {
     if (!have[DEVELOPMENT_TASK_HEADERS[n]]) toAdd.push(DEVELOPMENT_TASK_HEADERS[n]);
   }
   if (!toAdd.length) return;
-
   var startCol = lastCol + 1;
-  if (String(header[header.length - 1] || '').trim() === '') {
-    startCol = lastCol;
-  }
+  if (String(header[header.length - 1] || '').trim() === '') startCol = lastCol;
   sheet.getRange(1, startCol, 1, toAdd.length).setValues([toAdd]);
   sheet.getRange(1, startCol, 1, toAdd.length).setFontWeight('bold');
 }
 
-/**
- * @return {Object<string, boolean>} source_job_id → true
- */
+/** Legacy compatibility helper. */
 function loadExistingDevelopmentSourceIds_(sheet) {
-  var map = {};
-  if (!sheet || sheet.getLastRow() < 2) return map;
-  var lastCol = Math.max(sheet.getLastColumn(), 1);
+  return loadExistingDevelopmentTaskKeys_(sheet).sourceIds;
+}
+
+/** @return {{identity:Object<string, boolean>, sourceIds:Object<string, boolean>}} */
+function loadExistingDevelopmentTaskKeys_(sheet) {
+  var result = { identity: {}, sourceIds: {} };
+  if (!sheet || sheet.getLastRow() < 2) return result;
+  var lastCol = Math.max(sheet.getLastColumn(), DEVELOPMENT_TASK_HEADERS.length);
   var header = sheet.getRange(1, 1, 1, lastCol).getValues()[0];
   var col = headerIndexMap_(header);
-  var srcIdx = col['来源任务ID'];
-  if (srcIdx === undefined) return map;
-  var n = sheet.getLastRow() - 1;
-  var values = sheet.getRange(2, srcIdx + 1, n, 1).getValues();
+  var values = sheet.getRange(2, 1, sheet.getLastRow() - 1, lastCol).getValues();
   for (var i = 0; i < values.length; i++) {
-    var id = String(values[i][0] || '').trim();
-    if (id) map[id] = true;
+    var row = values[i];
+    var sourceId = String(cell_(row, col, '来源任务ID') || '').trim();
+    var opportunityId = String(cell_(row, col, 'OpportunityID') || '').trim();
+    var decisionId = String(cell_(row, col, 'DecisionID') || '').trim();
+    var actionType = String(cell_(row, col, 'ActionType') || '').trim();
+    var targetPath = String(cell_(row, col, '页面路径') || '').trim();
+    if (opportunityId && actionType) {
+      result.identity[developmentTaskIdentityKey_(
+        opportunityId, decisionId, actionType, targetPath
+      )] = true;
+    } else if (sourceId) {
+      // Only legacy rows without a Phase 7E identity use source-job fallback.
+      result.sourceIds[sourceId] = true;
+    }
   }
-  return map;
+  return result;
 }
 
-/**
- * 仅：任务状态=已批准 且 审核决定=批准开发。
- */
-function isResearchJobReadyForDevelopment_(status, decision) {
-  var statusRaw = String(status || '').trim();
-  var decisionRaw = String(decision || '').trim();
-  if (!statusRaw || !decisionRaw) return false;
-
-  var statusEnum = statusRaw;
-  if (statusRaw === RESEARCH_JOB_STATUS_LABELS.APPROVED) {
-    statusEnum = RESEARCH_JOB_STATUS.APPROVED;
-  } else if (statusRaw !== RESEARCH_JOB_STATUS.APPROVED) {
-    statusEnum = enumFromLabel_(RESEARCH_JOB_STATUS_LABELS, statusRaw);
-  }
-
-  var decisionEnum = decisionRaw;
-  if (decisionRaw === RESEARCH_REVIEW_DECISION_LABELS.APPROVE) {
-    decisionEnum = RESEARCH_REVIEW_DECISION.APPROVE;
-  } else if (decisionRaw !== RESEARCH_REVIEW_DECISION.APPROVE) {
-    decisionEnum = enumFromLabel_(RESEARCH_REVIEW_DECISION_LABELS, decisionRaw);
-  }
-
-  return (
-    statusEnum === RESEARCH_JOB_STATUS.APPROVED &&
-    decisionEnum === RESEARCH_REVIEW_DECISION.APPROVE
+function developmentTaskAlreadyExists_(existing, task) {
+  var key = developmentTaskIdentityKey_(
+    task.opportunity_id,
+    task.decision_id,
+    task.action_type,
+    task.page_path
   );
+  if (task.opportunity_id && task.action_type && existing.identity[key]) return true;
+  // Do not create a second Phase 7E row for a legacy task from the same job.
+  return !!(task.source_job_id && existing.sourceIds[task.source_job_id]);
 }
 
-function buildDevelopmentTaskFromResearchRow_(row, col, createdAt) {
-  var sourceId = String(cell_(row, col, '任务ID') || '').trim();
-  return {
-    development_task_id: developmentTaskIdFromSource_(sourceId),
-    created_at: createdAt || new Date(),
-    source_job_id: sourceId,
-    site: String(cell_(row, col, '站点') || '').trim(),
-    game: String(cell_(row, col, '游戏') || '').trim(),
-    page_path: String(cell_(row, col, '页面路径') || '').trim(),
-    goal: developmentGoalFromResearchResult_(
-      String(cell_(row, col, '研究结果') || '').trim()
-    ),
-    evidence_link: String(cell_(row, col, '审核链接') || '').trim(),
-    priority: developmentPriorityFromLevel_(
-      String(cell_(row, col, '机会等级') || '').trim()
-    ),
-    status: DEVELOPMENT_TASK_STATUS_LABELS.TODO,
-    completed_at: '',
-    note: ''
-  };
+function markDevelopmentTaskExisting_(existing, task) {
+  if (task.opportunity_id && task.action_type) {
+    existing.identity[developmentTaskIdentityKey_(
+      task.opportunity_id,
+      task.decision_id,
+      task.action_type,
+      task.page_path
+    )] = true;
+  }
+  if (!task.opportunity_id && task.source_job_id) {
+    existing.sourceIds[task.source_job_id] = true;
+  }
+}
+
+/** Opportunity + Decision + Action + TargetPath; never Sheet row number. */
+function developmentTaskIdentityKey_(opportunityId, decisionId, actionType, targetPath) {
+  return [opportunityId, decisionId, actionType, targetPath].map(function (value) {
+    return String(value || '').trim();
+  }).join('\u001f');
+}
+
+function developmentTaskIdFromIdentity_(opportunityId, decisionId, actionType, targetPath) {
+  var raw = developmentTaskIdentityKey_(opportunityId, decisionId, actionType, targetPath);
+  return 'dev-' + encodeURIComponent(raw).replace(/%/g, '_');
 }
 
 function developmentTaskIdFromSource_(sourceJobId) {
   return 'dev-' + String(sourceJobId || '').trim();
 }
 
-/**
- * 研究结果 → 短中文开发目标。
- * EXPAND_EXISTING → 扩充现有页面；NEW_CONTENT → 新建页面；其余 → 更新现有页面。
- */
+/** 仅：任务状态=已批准 且 审核决定=批准开发。 */
+function isResearchJobReadyForDevelopment_(status, decision) {
+  var statusRaw = String(status || '').trim();
+  var decisionRaw = String(decision || '').trim();
+  if (!statusRaw || !decisionRaw) return false;
+  var statusEnum = statusRaw === RESEARCH_JOB_STATUS_LABELS.APPROVED
+    ? RESEARCH_JOB_STATUS.APPROVED
+    : enumFromLabel_(RESEARCH_JOB_STATUS_LABELS, statusRaw);
+  var decisionEnum = decisionRaw === RESEARCH_REVIEW_DECISION_LABELS.APPROVE
+    ? RESEARCH_REVIEW_DECISION.APPROVE
+    : enumFromLabel_(RESEARCH_REVIEW_DECISION_LABELS, decisionRaw);
+  return statusEnum === RESEARCH_JOB_STATUS.APPROVED &&
+    decisionEnum === RESEARCH_REVIEW_DECISION.APPROVE;
+}
+
+/** Research-only / WATCH 不进入实施任务。 */
+function implementationActionFromResearchRow_(row, col) {
+  var result = String(cell_(row, col, '研究结果') || '').trim();
+  var directResult = normalizeDevelopmentAction_(result);
+  if (directResult) return directResult;
+  if ((result && isPassiveDevelopmentValue_(result)) || /RESEARCH|研究/.test(result.toUpperCase())) return '';
+
+  var researchType = String(cell_(row, col, '研究类型') || '').trim().toUpperCase();
+  var suggested = String(cell_(row, col, '建议动作') || '').trim();
+  var directSuggested = normalizeDevelopmentAction_(suggested);
+  if (directSuggested) return directSuggested;
+  if ((suggested && isPassiveDevelopmentValue_(suggested)) || /RESEARCH|研究/.test(suggested.toUpperCase())) return '';
+  if (researchType === RESEARCH_TYPE.DEMAND_DISCOVERY || researchType === RESEARCH_TYPE.SEARCH_DEMAND) return '';
+
+  // No explicit implementation action means this is still a signal/research
+  // record, even if its review gate was filled accidentally.
+  return '';
+}
+
+function normalizeDevelopmentAction_(value) {
+  var raw = String(value || '').trim();
+  if (!raw) return '';
+  var upper = raw.toUpperCase();
+  if (upper === 'CREATE_PAGE' || raw === '新建页面' || raw === '新内容') return 'CREATE_PAGE';
+  if (upper === 'UPDATE_PAGE' || upper === 'UPDATE_EXISTING' || raw === '更新现有页面' || raw === '扩充现有页面') return 'UPDATE_PAGE';
+  if (upper === 'CONTENT_OPTIMIZE' || raw === '内容优化') return 'CONTENT_OPTIMIZE';
+  if (upper === 'BUILD' || upper === 'SITE_BUILD' || raw === '建站') return 'BUILD';
+  return '';
+}
+
+function isPassiveDevelopmentValue_(value) {
+  var raw = String(value || '').trim();
+  var upper = raw.toUpperCase();
+  return !raw || upper === 'WATCH' || upper === 'MONITOR' || upper === 'MONITORING' ||
+    raw === '继续观察' || raw === '自动监控' || raw === '纯被动等待';
+}
+
+function buildDevelopmentTaskFromResearchRow_(row, col, createdAt, refs) {
+  refs = refs || {};
+  var sourceId = String(cell_(row, col, '任务ID') || '').trim();
+  var opportunityId = String(cell_(row, col, 'OpportunityID') || '').trim();
+  var decisionId = String(refs.decisionId || '').trim();
+  var actionType = String(refs.actionType || implementationActionFromResearchRow_(row, col) || '').trim();
+  var pagePath = String(cell_(row, col, '页面路径') || '').trim();
+  var siteId = String(refs.siteId || cell_(row, col, 'SiteID') || '').trim();
+  var hasPhase7EBinding = !!opportunityId;
+  return {
+    development_task_id: hasPhase7EBinding
+      ? developmentTaskIdFromIdentity_(opportunityId, decisionId, actionType, pagePath)
+      : developmentTaskIdFromSource_(sourceId),
+    created_at: createdAt || new Date(),
+    source_job_id: sourceId,
+    site: String(cell_(row, col, '站点') || '').trim(),
+    game: String(cell_(row, col, '游戏') || '').trim(),
+    page_path: pagePath,
+    goal: developmentGoalFromResearchResult_(String(cell_(row, col, '研究结果') || '').trim()),
+    evidence_link: String(cell_(row, col, '审核链接') || '').trim(),
+    priority: developmentPriorityFromLevel_(String(cell_(row, col, '机会等级') || '').trim()),
+    status: hasPhase7EBinding
+      ? (siteId ? DEVELOPMENT_TASK_STATUS_LABELS.READY_FOR_IMPLEMENTATION : DEVELOPMENT_TASK_STATUS_LABELS.WAITING_SITE_CREATION)
+      : DEVELOPMENT_TASK_STATUS_LABELS.TODO,
+    completed_at: '',
+    note: '',
+    opportunity_id: opportunityId,
+    decision_id: decisionId,
+    site_id: siteId,
+    action_type: actionType,
+    task_type: hasPhase7EBinding ? 'CONTENT_IMPLEMENTATION' : '',
+    task_reason: '已批准实施：' + (actionType || 'UPDATE_PAGE'),
+    source_reference: String(cell_(row, col, '审核链接') || '').trim() || '研究任务/' + sourceId
+  };
+}
+
+function buildDevelopmentTaskFromSteamRow_(item, createdAt) {
+  var opportunityId = String(item.opportunityId || '').trim();
+  return {
+    development_task_id: developmentTaskIdFromIdentity_(opportunityId, '', 'BUILD', ''),
+    created_at: createdAt || new Date(),
+    source_job_id: '',
+    site: '',
+    game: String(item.game || '').trim(),
+    page_path: '',
+    goal: '建站',
+    evidence_link: '',
+    priority: 'P0',
+    status: DEVELOPMENT_TASK_STATUS_LABELS.WAITING_SITE_CREATION,
+    completed_at: '',
+    note: '',
+    opportunity_id: opportunityId,
+    // Steam 候选决策源没有 DecisionID 列，保持为空，不伪造历史决策行。
+    decision_id: '',
+    site_id: '',
+    action_type: 'BUILD',
+    task_type: 'SITE_BUILD',
+    task_reason: 'Steam Decision=BUILD；尚无 site_id，等待站点创建',
+    source_reference: String(item.sourceReference || '').trim()
+  };
+}
+
+function isApprovedSteamBuild_(item) {
+  return !!(item && String(item.opportunityId || '').trim() &&
+    String(item.decision || '').trim().toUpperCase() === 'BUILD');
+}
+
+function developmentDecisionIdFromResearchRow_(row, col, decisionRefs) {
+  var explicit = String(cell_(row, col, 'DecisionID') || '').trim();
+  if (explicit) return explicit;
+  var opportunityId = String(cell_(row, col, 'OpportunityID') || '').trim();
+  if (opportunityId && decisionRefs[opportunityId]) return decisionRefs[opportunityId];
+  // The Research Approval is the explicit gate; keep this reference deterministic.
+  return 'approval:' + String(cell_(row, col, '任务ID') || '').trim();
+}
+
+function loadDevelopmentDecisionReferences_() {
+  var out = {};
+  var sheet = getSpreadsheet_().getSheetByName(SHEET_NAMES.DECISION_HISTORY);
+  if (!sheet || sheet.getLastRow() < 2) return out;
+  var lastCol = Math.max(sheet.getLastColumn(), DECISION_HISTORY_HEADERS.length);
+  var header = sheet.getRange(1, 1, 1, lastCol).getValues()[0];
+  var col = headerIndexMap_(header);
+  var oppIdx = col['OpportunityID'];
+  var idIdx = col['DecisionID'];
+  if (oppIdx === undefined || idIdx === undefined) return out;
+  var values = sheet.getRange(2, 1, sheet.getLastRow() - 1, lastCol).getValues();
+  for (var i = 0; i < values.length; i++) {
+    var opportunityId = String(values[i][oppIdx] || '').trim();
+    var decisionId = String(values[i][idIdx] || '').trim();
+    if (opportunityId && decisionId && !out[opportunityId]) out[opportunityId] = decisionId;
+  }
+  return out;
+}
+
+function loadDevelopmentSiteReferences_() {
+  var out = {};
+  var sheet = getSpreadsheet_().getSheetByName(SHEET_NAMES.SITES);
+  if (!sheet || sheet.getLastRow() < 2) return out;
+  var lastCol = Math.max(sheet.getLastColumn(), SITE_HEADERS.length);
+  var header = sheet.getRange(1, 1, 1, lastCol).getValues()[0];
+  var col = headerIndexMap_(header);
+  var nameIdx = col['站点名称'];
+  var siteIdx = col['site_id'];
+  if (nameIdx === undefined || siteIdx === undefined) return out;
+  var values = sheet.getRange(2, 1, sheet.getLastRow() - 1, lastCol).getValues();
+  for (var i = 0; i < values.length; i++) {
+    var name = String(values[i][nameIdx] || '').trim();
+    if (name && !out[name]) out[name] = String(values[i][siteIdx] || '').trim();
+  }
+  return out;
+}
+
+function developmentSiteIdFromResearchRow_(row, col, siteRefs) {
+  var explicit = String(cell_(row, col, 'SiteID') || '').trim();
+  if (explicit) return explicit;
+  return siteRefs[String(cell_(row, col, '站点') || '').trim()] || '';
+}
+
+/** 研究结果 → 旧列「开发目标」短中文显示。 */
 function developmentGoalFromResearchResult_(resultLabel) {
   var raw = String(resultLabel || '').trim();
   if (!raw) return DEVELOPMENT_GOAL_LABELS.UPDATE_EXISTING;
-
   var recEnum = enumFromLabel_(RESEARCH_RESULT_RECOMMENDATION_LABELS, raw);
-  if (recEnum === RESEARCH_RESULT_RECOMMENDATIONS.EXPAND_EXISTING) {
-    return DEVELOPMENT_GOAL_LABELS.EXPAND_EXISTING;
-  }
-  if (recEnum === RESEARCH_RESULT_RECOMMENDATIONS.NEW_CONTENT) {
-    return DEVELOPMENT_GOAL_LABELS.NEW_PAGE;
-  }
-  if (raw === DEVELOPMENT_GOAL_LABELS.EXPAND_EXISTING) {
-    return DEVELOPMENT_GOAL_LABELS.EXPAND_EXISTING;
-  }
-  if (raw === DEVELOPMENT_GOAL_LABELS.NEW_PAGE || raw === '新内容') {
-    return DEVELOPMENT_GOAL_LABELS.NEW_PAGE;
-  }
-  if (raw === DEVELOPMENT_GOAL_LABELS.UPDATE_EXISTING || raw.indexOf('更新') >= 0) {
-    return DEVELOPMENT_GOAL_LABELS.UPDATE_EXISTING;
-  }
+  if (recEnum === RESEARCH_RESULT_RECOMMENDATIONS.EXPAND_EXISTING || raw === '扩充现有页面') return DEVELOPMENT_GOAL_LABELS.EXPAND_EXISTING;
+  if (recEnum === RESEARCH_RESULT_RECOMMENDATIONS.NEW_CONTENT || raw === '新内容') return DEVELOPMENT_GOAL_LABELS.NEW_PAGE;
+  if (raw === DEVELOPMENT_GOAL_LABELS.NEW_PAGE) return DEVELOPMENT_GOAL_LABELS.NEW_PAGE;
   return DEVELOPMENT_GOAL_LABELS.UPDATE_EXISTING;
 }
 
@@ -210,216 +401,75 @@ function developmentGoalFromResearchResult_(resultLabel) {
 function developmentPriorityFromLevel_(levelLabel) {
   var raw = String(levelLabel || '').trim();
   var levelEnum = enumFromLabel_(OPPORTUNITY_LEVEL_LABELS, raw);
-  if (levelEnum === OPPORTUNITY_LEVELS.HIGH || raw === '高') {
-    return DEVELOPMENT_PRIORITY_LABELS.HIGH;
-  }
-  if (levelEnum === OPPORTUNITY_LEVELS.MEDIUM || raw === '中') {
-    return DEVELOPMENT_PRIORITY_LABELS.MEDIUM;
-  }
+  if (levelEnum === OPPORTUNITY_LEVELS.HIGH || raw === '高') return DEVELOPMENT_PRIORITY_LABELS.HIGH;
+  if (levelEnum === OPPORTUNITY_LEVELS.MEDIUM || raw === '中') return DEVELOPMENT_PRIORITY_LABELS.MEDIUM;
   return DEVELOPMENT_PRIORITY_LABELS.LOW;
 }
 
 function developmentTaskSheetRow_(task) {
   return [
-    task.development_task_id,
-    task.created_at || new Date(),
-    task.source_job_id,
-    task.site,
-    task.game,
-    task.page_path,
-    task.goal,
-    task.evidence_link,
-    task.priority,
-    task.status || DEVELOPMENT_TASK_STATUS_LABELS.TODO,
-    task.completed_at || '',
-    task.note || ''
+    task.development_task_id, task.created_at || new Date(), task.source_job_id || '',
+    task.site || '', task.game || '', task.page_path || '', task.goal || '',
+    task.evidence_link || '', task.priority || '',
+    task.status || DEVELOPMENT_TASK_STATUS_LABELS.TODO, task.completed_at || '',
+    task.note || '', task.opportunity_id || '', task.decision_id || '',
+    task.site_id || '', task.action_type || '', task.task_type || '',
+    task.task_reason || '', task.source_reference || ''
   ];
 }
 
-/**
- * 纯逻辑自测（不写 Sheet、不碰生产研究任务）。
- * 覆盖：已批准创建、防重复、已归档/继续观察/待审核不创建。
- * @return {string}
- */
+/** 纯逻辑自测入口；不写 Sheet、不碰生产 Research/Steam。 */
 function debugDevelopmentTasksSelfCheck() {
   var fails = [];
-  function assert(cond, msg) {
-    if (!cond) fails.push(msg);
-  }
+  function assert(cond, msg) { if (!cond) fails.push(msg); }
+  assert(DEVELOPMENT_TASK_HEADERS.length === 19, '开发任务 headers append-only');
+  assert(DEVELOPMENT_TASK_HEADERS[0] === '开发任务ID' && DEVELOPMENT_TASK_HEADERS[11] === '备注', '旧列顺序保留');
+  assert(DEVELOPMENT_TASK_HEADERS.indexOf('OpportunityID') > 11, 'OpportunityID appended');
+  assert(DEVELOPMENT_TASK_HEADERS.indexOf('DecisionID') > 11, 'DecisionID appended');
+  assert(DEVELOPMENT_TASK_HEADERS.indexOf('SiteID') > 11, 'SiteID appended');
+  assert(DEVELOPMENT_TASK_HEADERS.indexOf('ActionType') > 11, 'ActionType appended');
+  assert(DEVELOPMENT_TASK_HEADERS.indexOf('SourceReference') > 11, 'SourceReference appended');
+  assert(isResearchJobReadyForDevelopment_('已批准', '批准开发') === true, 'approved gate');
+  assert(isResearchJobReadyForDevelopment_('待审核', '批准开发') === false, 'review excluded');
+  assert(isResearchJobReadyForDevelopment_('继续观察', '继续观察') === false, 'watch excluded');
 
-  assert(
-    DEVELOPMENT_TASK_HEADERS.length === 12 &&
-      DEVELOPMENT_TASK_HEADERS[0] === '开发任务ID' &&
-      DEVELOPMENT_TASK_HEADERS[2] === '来源任务ID' &&
-      DEVELOPMENT_TASK_HEADERS[9] === '任务状态',
-    '开发任务 headers'
-  );
-  assert(
-    DEVELOPMENT_TASK_STATUS_LABELS.TODO === '待开发',
-    '初始状态 待开发'
-  );
+  var col = headerIndexMap_(RESEARCH_JOB_HEADERS);
+  var row = [];
+  for (var i = 0; i < RESEARCH_JOB_HEADERS.length; i++) row.push('');
+  row[col['任务ID']] = 'fixture-ms2-approved';
+  row[col['站点']] = 'Mortal Shell II';
+  row[col['游戏']] = 'Mortal Shell II';
+  row[col['页面路径']] = '/skip-prologue/';
+  row[col['机会等级']] = '高';
+  row[col['任务状态']] = '已批准';
+  row[col['研究结果']] = '扩充现有页面';
+  row[col['审核决定']] = '批准开发';
+  row[col['OpportunityID']] = 'opp-ms2-fixture-001';
+  var task = buildDevelopmentTaskFromResearchRow_(row, col, new Date('2026-08-22T00:00:00Z'), {
+    decisionId: 'decision-ms2-fixture-001', siteId: 'mortal-shell-ii'
+  });
+  assert(task.opportunity_id === 'opp-ms2-fixture-001', 'OpportunityID preserved');
+  assert(task.decision_id === 'decision-ms2-fixture-001', 'DecisionID bound');
+  assert(task.site_id === 'mortal-shell-ii', 'SiteID preserved');
+  assert(task.action_type === 'UPDATE_PAGE', 'approved update action');
+  assert(task.status === 'READY_FOR_IMPLEMENTATION', 'ready status');
+  assert(developmentTaskIdentityKey_('o', 'd', 'UPDATE_PAGE', '/x') !== developmentTaskIdentityKey_('o', 'd', 'UPDATE_PAGE', '/y'), 'path in identity');
 
-  assert(
-    isResearchJobReadyForDevelopment_('已批准', '批准开发') === true,
-    'A: 已批准+批准开发 → ready'
-  );
-  assert(
-    isResearchJobReadyForDevelopment_('APPROVED', 'APPROVE') === true,
-    'A: enum 也 ready'
-  );
+  var steamTask = buildDevelopmentTaskFromSteamRow_({
+    opportunityId: 'opp-steam-build-fixture', game: 'Steam Fixture', sourceReference: 'steam-row'
+  }, new Date('2026-08-22T00:00:00Z'));
+  assert(steamTask.action_type === 'BUILD' && steamTask.task_type === 'SITE_BUILD', 'Steam site build');
+  assert(steamTask.site_id === '' && steamTask.status === 'WAITING_SITE_CREATION', 'Steam boundary');
+  assert(isApprovedSteamBuild_({ opportunityId: 'o', decision: 'BUILD' }) === true, 'Steam BUILD included');
+  assert(isApprovedSteamBuild_({ opportunityId: 'o', decision: 'REJECT' }) === false, 'Steam REJECT excluded');
+  assert(implementationActionFromResearchRow_(row, col) === 'UPDATE_PAGE', 'research implementation included');
+  row[col['研究结果']] = '继续观察';
+  assert(implementationActionFromResearchRow_(row, col) === '', 'research WATCH excluded');
+  row[col['研究结果']] = '';
+  row[col['建议动作']] = '研究新内容';
+  assert(implementationActionFromResearchRow_(row, col) === '', 'research-only excluded');
 
-  assert(
-    isResearchJobReadyForDevelopment_('已归档', '无需处理') === false,
-    'C: 已归档 不创建'
-  );
-  assert(
-    isResearchJobReadyForDevelopment_('继续观察', '') === false,
-    'D: 继续观察 不创建'
-  );
-  assert(
-    isResearchJobReadyForDevelopment_('继续观察', '继续观察') === false,
-    'D: WATCH+继续观察 不创建'
-  );
-  assert(
-    isResearchJobReadyForDevelopment_('待审核', '') === false,
-    'E: 待审核无决定 不创建'
-  );
-  assert(
-    isResearchJobReadyForDevelopment_('待审核', '批准开发') === false,
-    'E: 待审核即使填了批准开发也不创建（须已批准）'
-  );
-  assert(
-    isResearchJobReadyForDevelopment_('已批准', '') === false,
-    '已批准但无审核决定 不创建'
-  );
-
-  var mockCol = headerIndexMap_(RESEARCH_JOB_HEADERS);
-  function mockResearchRow(over) {
-    var row = [];
-    for (var i = 0; i < RESEARCH_JOB_HEADERS.length; i++) row.push('');
-    row[mockCol['任务ID']] = 'mock-approved-expand-20260815';
-    row[mockCol['站点']] = 'Mock Site';
-    row[mockCol['游戏']] = 'Mock Game';
-    row[mockCol['页面路径']] = '/mock/page/';
-    row[mockCol['机会等级']] = '高';
-    row[mockCol['任务状态']] = '已批准';
-    row[mockCol['研究结果']] = '扩充现有页面';
-    row[mockCol['审核链接']] = 'https://example.com/review#mock';
-    row[mockCol['审核决定']] = '批准开发';
-    var keys = Object.keys(over || {});
-    for (var k = 0; k < keys.length; k++) {
-      row[mockCol[keys[k]]] = over[keys[k]];
-    }
-    return row;
-  }
-
-  var createdAt = new Date('2026-08-15T15:00:00+08:00');
-  var task = buildDevelopmentTaskFromResearchRow_(mockResearchRow({}), mockCol, createdAt);
-  assert(task.development_task_id === 'dev-mock-approved-expand-20260815', 'dev- prefix');
-  assert(task.source_job_id === 'mock-approved-expand-20260815', 'source id');
-  assert(task.goal === '扩充现有页面', 'goal expand');
-  assert(task.priority === '高', 'priority 高');
-  assert(task.status === '待开发', 'status 待开发');
-  assert(task.completed_at === '', '完成时间 empty');
-  assert(task.evidence_link === 'https://example.com/review#mock', 'Evidence 链接复用');
-
-  var sheetRow = developmentTaskSheetRow_(task);
-  assert(sheetRow.length === DEVELOPMENT_TASK_HEADERS.length, 'row length');
-  assert(sheetRow[9] === '待开发', 'sheet 任务状态');
-
-  assert(
-    developmentGoalFromResearchResult_('新内容') === '新建页面',
-    '新内容 → 新建页面'
-  );
-  assert(
-    developmentGoalFromResearchResult_('NEW_CONTENT') === '新建页面',
-    'NEW_CONTENT → 新建页面'
-  );
-  assert(
-    developmentPriorityFromLevel_('观察') === '低',
-    '观察 → 低'
-  );
-
-  // B: 防重复 — 同一来源已存在则跳过
-  var existing = { 'mock-approved-expand-20260815': true };
-  var candidates = [
-    mockResearchRow({}),
-    mockResearchRow({
-      任务ID: 'mock-archived-20260815',
-      任务状态: '已归档',
-      审核决定: '无需处理'
-    }),
-    mockResearchRow({
-      任务ID: 'mock-watch-20260815',
-      任务状态: '继续观察',
-      审核决定: ''
-    }),
-    mockResearchRow({
-      任务ID: 'mock-review-20260815',
-      任务状态: '待审核',
-      审核决定: ''
-    }),
-    mockResearchRow({
-      任务ID: 'mock-approved-new-20260815',
-      任务状态: '已批准',
-      审核决定: '批准开发',
-      研究结果: '新内容',
-      机会等级: '中'
-    })
-  ];
-
-  var created = 0;
-  var skippedExisting = 0;
-  var built = [];
-  for (var c = 0; c < candidates.length; c++) {
-    var r = candidates[c];
-    var sid = String(cell_(r, mockCol, '任务ID') || '').trim();
-    var st = String(cell_(r, mockCol, '任务状态') || '').trim();
-    var dec = String(cell_(r, mockCol, '审核决定') || '').trim();
-    if (!isResearchJobReadyForDevelopment_(st, dec)) continue;
-    if (existing[sid]) {
-      skippedExisting++;
-      continue;
-    }
-    var t = buildDevelopmentTaskFromResearchRow_(r, mockCol, createdAt);
-    built.push(t);
-    existing[sid] = true;
-    created++;
-  }
-
-  assert(created === 1, 'B/A: 5 mock 中仅 1 条新建（另一条已存在跳过）');
-  assert(skippedExisting === 1, 'B: skippedExisting=1');
-  assert(
-    built[0] && built[0].development_task_id === 'dev-mock-approved-new-20260815',
-    '新建的是 mock-approved-new'
-  );
-  assert(built[0].goal === '新建页面', '新内容目标');
-  assert(built[0].priority === '中', '中优先级');
-
-  // 再次扫描：全部跳过
-  var created2 = 0;
-  var skipped2 = 0;
-  for (var c2 = 0; c2 < candidates.length; c2++) {
-    var r2 = candidates[c2];
-    var sid2 = String(cell_(r2, mockCol, '任务ID') || '').trim();
-    var st2 = String(cell_(r2, mockCol, '任务状态') || '').trim();
-    var dec2 = String(cell_(r2, mockCol, '审核决定') || '').trim();
-    if (!isResearchJobReadyForDevelopment_(st2, dec2)) continue;
-    if (existing[sid2]) {
-      skipped2++;
-      continue;
-    }
-    created2++;
-    existing[sid2] = true;
-  }
-  assert(created2 === 0 && skipped2 === 2, 'B: 再次运行不重复 created=0 skipped=2');
-
-  var msg;
-  if (fails.length) {
-    msg = 'FAIL (' + fails.length + '):\n' + fails.join('\n');
-  } else {
-    msg = 'PASS: Development Tasks self-check';
-  }
-  Logger.log(msg);
-  return msg;
+  assert(developmentTaskSheetRow_(task).length === DEVELOPMENT_TASK_HEADERS.length, 'sheet row length');
+  if (fails.length) throw new Error('DevelopmentTasks self-check failed: ' + fails.join('; '));
+  return 'PASS DevelopmentTasks self-check';
 }

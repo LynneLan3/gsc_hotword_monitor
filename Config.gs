@@ -887,17 +887,26 @@ var RESEARCH_RESULT_RECOMMENDATION_LABELS = {
  */
 var DEVELOPMENT_TASK_HEADERS = [
   '开发任务ID', '创建时间', '来源任务ID', '站点', '游戏', '页面路径',
-  '开发目标', 'Evidence链接', '优先级', '任务状态', '完成时间', '备注'
+  '开发目标', 'Evidence链接', '优先级', '任务状态', '完成时间', '备注',
+  // Phase 7E：只追加跨系统绑定与实施语义；不移动旧列、不回填历史任务。
+  'OpportunityID', 'DecisionID', 'SiteID', 'ActionType', 'TaskType',
+  'TaskReason', 'SourceReference'
 ];
 
 var DEVELOPMENT_TASK_STATUS = {
   TODO: 'TODO',
+  READY_FOR_IMPLEMENTATION: 'READY_FOR_IMPLEMENTATION',
+  WAITING_SITE_CREATION: 'WAITING_SITE_CREATION',
+  IN_PROGRESS: 'IN_PROGRESS',
   DONE: 'DONE',
   SKIPPED: 'SKIPPED'
 };
 
 var DEVELOPMENT_TASK_STATUS_LABELS = {
   TODO: '待开发',
+  READY_FOR_IMPLEMENTATION: 'READY_FOR_IMPLEMENTATION',
+  WAITING_SITE_CREATION: 'WAITING_SITE_CREATION',
+  IN_PROGRESS: 'IN_PROGRESS',
   DONE: '已完成',
   SKIPPED: '已跳过'
 };
