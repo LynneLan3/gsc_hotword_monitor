@@ -38,10 +38,12 @@ var sandbox = {
   DAILY_GAME_WIDE_TRIGGER: DAILY_GAME_WIDE_TRIGGER,
   DAILY_GAME_WIDE_LOOKBACK_HOURS: 24,
   DAILY_GAME_WIDE_SOURCE_FAMILIES: ['COMMUNITY', 'VIDEO'],
+  DEFAULT_SITES: [{ name: 'Mortal Shell II', propertyUrl: 'https://mortal-shell-ii.vercel.app/', siteId: 'mortal-shell-ii' }],
   opportunityLabel_: function (map, key) { return (map && map[key]) || key || ''; },
   radarSiteSlug_: function (name) { return String(name || '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, ''); },
   headerIndexMap_: function (headers) { var out = {}; headers.forEach(function (h, i) { out[h] = i; }); return out; },
   cell_: function (row, col, name) { return col[name] === undefined ? '' : row[col[name]]; },
+  normalizePropertyUrlForGsc_: function (url) { return String(url || '').trim().replace(/\/$/, ''); },
   safeJsonParse_: function (value, fallback) { try { return JSON.parse(value); } catch (e) { return fallback; } },
   getSiteIdentityKey_: function (site) { return site && site.siteId ? 'site_id:' + site.siteId : 'site_name:' + String(site && site.name || ''); },
   Session: { getScriptTimeZone: function () { return 'UTC'; } },
@@ -62,12 +64,14 @@ vm.runInContext(utilsSrc, sandbox);
 vm.runInContext(researchSrc, sandbox);
 
 var ms2 = { name: 'Mortal Shell II', siteId: 'mortal-shell-ii', propertyUrl: 'https://mortal-shell-ii.vercel.app/', enabled: true };
+var ms2Legacy = { name: 'Mortal Shell II', propertyUrl: 'https://mortal-shell-ii.vercel.app/', enabled: true };
 var inactive = { name: 'Archived Site', siteId: 'archived-site', propertyUrl: 'https://archived.example/', enabled: true, status: 'ARCHIVED' };
 var runDate = '2026-08-22';
 
 assert(sandbox.isDailyGameWideSiteEligible_(ms2), 'eligible live site');
 assert(!sandbox.isDailyGameWideSiteEligible_(inactive), 'inactive/archived site excluded');
-assert(sandbox.dailyGameWideDedupeKey_(ms2, DAILY_GAME_WIDE_TRIGGER, runDate) === 'mortal-shell-ii||DAILY_GAME_WIDE||2026-08-22', 'site/date dedupe key');
+assert(sandbox.resolveDailyGameWideSiteId_(ms2Legacy) === 'mortal-shell-ii', 'legacy row reuses known site_id');
+assert(sandbox.dailyGameWideDedupeKey_(ms2Legacy, DAILY_GAME_WIDE_TRIGGER, runDate) === 'site_id:mortal-shell-ii||DAILY_GAME_WIDE||2026-08-22', 'site/date dedupe key');
 
 var first = sandbox.planDailyGameWideDiscoveryJobs_([ms2, inactive], [], runDate, new Date('2026-08-22T01:00:00Z'));
 assert(first.created === 1 && first.excluded === 1, 'eligible creates and inactive excludes');

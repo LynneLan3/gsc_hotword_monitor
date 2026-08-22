@@ -499,15 +499,37 @@ function createGameWideDiscoveryJobForSite_(siteName, gameName, opts) {
 }
 
 /** Stable M0 idempotency key: site identity + trigger + discovery date. */
+function resolveDailyGameWideSiteId_(site) {
+  var explicit = String((site && (site.siteId || site.site_id)) || '').trim();
+  if (explicit) return explicit;
+
+  // Existing GSC rows may predate the additive site_id column. Reuse only an
+  // exact DEFAULT_SITES name + Property match; never generate a new identity.
+  var defaults = typeof DEFAULT_SITES !== 'undefined' && Array.isArray(DEFAULT_SITES)
+    ? DEFAULT_SITES
+    : [];
+  var name = String((site && site.name) || '').trim();
+  var propertyUrl = String((site && site.propertyUrl) || '').trim();
+  for (var i = 0; i < defaults.length; i++) {
+    var candidate = defaults[i] || {};
+    if (String(candidate.name || '').trim() !== name) continue;
+    var candidateUrl = String(candidate.propertyUrl || '').trim();
+    if (candidateUrl && propertyUrl && normalizePropertyUrlForGsc_(candidateUrl) !== normalizePropertyUrlForGsc_(propertyUrl)) continue;
+    var known = String(candidate.siteId || candidate.site_id || '').trim();
+    if (known) return known;
+  }
+  return '';
+}
+
 function dailyGameWideDedupeKey_(site, triggerType, discoveryDate) {
-  var identity = String((site && (site.siteId || site.site_id)) || '').trim();
-  if (!identity) identity = getSiteIdentityKey_(site || {});
+  var siteId = resolveDailyGameWideSiteId_(site);
+  var identity = siteId ? 'site_id:' + siteId : getSiteIdentityKey_(site || {});
   return identity + '||' + String(triggerType || DAILY_GAME_WIDE_TRIGGER).trim() + '||' +
     normalizeDiscoveryCycleDate_(discoveryDate);
 }
 
 function buildDailyGameWideJobId_(site, discoveryDate) {
-  var identity = String((site && (site.siteId || site.site_id)) || '').trim();
+  var identity = resolveDailyGameWideSiteId_(site);
   var slug = slugifyResearch_(identity || (site && site.name) || '') || 'site';
   return 'game-wide-' + slug + '-' + discoveryCycleDateToYmd_(discoveryDate);
 }
@@ -585,7 +607,7 @@ function planDailyGameWideDiscoveryJobs_(sites, existingJobs, runDate, createdAt
       triggerType: DAILY_GAME_WIDE_TRIGGER,
       discoveryCycleDate: runDate,
       jobId: jobId,
-      siteId: site.siteId || site.site_id || ''
+      siteId: resolveDailyGameWideSiteId_(site)
     });
     existingKeys[key] = contract.job_id;
     existingJobIds[contract.job_id] = true;
