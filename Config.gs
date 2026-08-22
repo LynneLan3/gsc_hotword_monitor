@@ -890,7 +890,7 @@ var DEVELOPMENT_TASK_HEADERS = [
   '开发目标', 'Evidence链接', '优先级', '任务状态', '完成时间', '备注',
   // Phase 7E：只追加跨系统绑定与实施语义；不移动旧列、不回填历史任务。
   'OpportunityID', 'DecisionID', 'SiteID', 'ActionType', 'TaskType',
-  'TaskReason', 'SourceReference'
+  'TaskReason', 'SourceReference', 'HandoffStatus', 'HandoffReference'
 ];
 
 var DEVELOPMENT_TASK_STATUS = {

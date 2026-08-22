@@ -319,8 +319,8 @@ function buildDevelopmentTaskFromSteamRow_(item, createdAt) {
     completed_at: '',
     note: '',
     opportunity_id: opportunityId,
-    // Steam 候选决策源没有 DecisionID 列，保持为空，不伪造历史决策行。
-    decision_id: '',
+    // Steam 候选决策源通常没有 DecisionID 列；只保留上游明确提供的值。
+    decision_id: String(item.decisionId || '').trim(),
     site_id: '',
     action_type: 'BUILD',
     task_type: 'SITE_BUILD',
@@ -414,7 +414,8 @@ function developmentTaskSheetRow_(task) {
     task.status || DEVELOPMENT_TASK_STATUS_LABELS.TODO, task.completed_at || '',
     task.note || '', task.opportunity_id || '', task.decision_id || '',
     task.site_id || '', task.action_type || '', task.task_type || '',
-    task.task_reason || '', task.source_reference || ''
+    task.task_reason || '', task.source_reference || '',
+    task.handoff_status || '', task.handoff_reference || ''
   ];
 }
 
@@ -422,13 +423,15 @@ function developmentTaskSheetRow_(task) {
 function debugDevelopmentTasksSelfCheck() {
   var fails = [];
   function assert(cond, msg) { if (!cond) fails.push(msg); }
-  assert(DEVELOPMENT_TASK_HEADERS.length === 19, '开发任务 headers append-only');
+  assert(DEVELOPMENT_TASK_HEADERS.length === 21, '开发任务 headers append-only');
   assert(DEVELOPMENT_TASK_HEADERS[0] === '开发任务ID' && DEVELOPMENT_TASK_HEADERS[11] === '备注', '旧列顺序保留');
   assert(DEVELOPMENT_TASK_HEADERS.indexOf('OpportunityID') > 11, 'OpportunityID appended');
   assert(DEVELOPMENT_TASK_HEADERS.indexOf('DecisionID') > 11, 'DecisionID appended');
   assert(DEVELOPMENT_TASK_HEADERS.indexOf('SiteID') > 11, 'SiteID appended');
   assert(DEVELOPMENT_TASK_HEADERS.indexOf('ActionType') > 11, 'ActionType appended');
   assert(DEVELOPMENT_TASK_HEADERS.indexOf('SourceReference') > 11, 'SourceReference appended');
+  assert(DEVELOPMENT_TASK_HEADERS.indexOf('HandoffStatus') > 11, 'HandoffStatus appended');
+  assert(DEVELOPMENT_TASK_HEADERS.indexOf('HandoffReference') > 11, 'HandoffReference appended');
   assert(isResearchJobReadyForDevelopment_('已批准', '批准开发') === true, 'approved gate');
   assert(isResearchJobReadyForDevelopment_('待审核', '批准开发') === false, 'review excluded');
   assert(isResearchJobReadyForDevelopment_('继续观察', '继续观察') === false, 'watch excluded');

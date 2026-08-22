@@ -42,7 +42,7 @@ var DEVELOPMENT_TASK_HEADERS = [
   '开发任务ID', '创建时间', '来源任务ID', '站点', '游戏', '页面路径',
   '开发目标', 'Evidence链接', '优先级', '任务状态', '完成时间', '备注',
   'OpportunityID', 'DecisionID', 'SiteID', 'ActionType', 'TaskType',
-  'TaskReason', 'SourceReference'
+  'TaskReason', 'SourceReference', 'HandoffStatus', 'HandoffReference'
 ];
 var RESEARCH_JOB_HEADERS = [
   '任务ID', '创建时间', '站点', '游戏', '搜索词 / topic', '页面路径',

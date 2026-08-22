@@ -232,6 +232,7 @@ function runDailyFinalizerUnlocked_(sites, runDate) {
     refreshDemandRadar_(sites, runDate);
     refreshUnifiedActionQueue_(runDate);
     syncDevelopmentTasksFromApprovedDecisions();
+    refreshImplementationHandoffs_();
     sortSheetsNewestFirst_([SHEET_NAMES.LOG]);
     setDailyRunPhase_('done');
     deleteDailyContinuationTriggers_();

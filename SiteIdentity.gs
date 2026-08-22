@@ -99,3 +99,66 @@ function getSnapshotIdentityColumns_(sheet) {
     readWidth: width
   };
 }
+
+/**
+ * Existing Control Center publishing references, keyed only by stable site_id.
+ *
+ * Apps Script cannot read the sibling Control Center checkout at runtime, so
+ * this is a read-only adapter for the existing registry reference, not a new
+ * Game Name -> Repo mapping or a deployment/runtime registry. The canonical
+ * reference is hotword-control-center/registry/sites.yaml.
+ */
+var SITE_REPOSITORY_REFERENCES_BY_ID_ = {
+  'agefield-high-rock-the-school': {
+    repoPath: '/Users/lanling/Code/hot_words_websites/Agefield_high',
+    githubRepo: 'LynneLan3/hot_words_Agefield-High-Rock-the-School'
+  },
+  'mortal-shell-ii': {
+    repoPath: '/Users/lanling/Code/hot_words_websites/Mortal Shell II',
+    githubRepo: 'LynneLan3/Mortal-Shell-II'
+  },
+  beastlink: {
+    repoPath: '/Users/lanling/Code/hot_words_websites/BeastLink',
+    githubRepo: 'LynneLan3/BeastLink'
+  },
+  'sovereign-tower': {
+    repoPath: '/Users/lanling/Code/hot_words_websites/Sovereign Tower',
+    githubRepo: 'LynneLan3/Sovereign-Tower'
+  },
+  'approximately-up': {
+    repoPath: '/Users/lanling/Code/hot_words_websites/Approximately Up',
+    githubRepo: 'LynneLan3/Approximately-Up-'
+  },
+  'grain-rot': {
+    repoPath: '/Users/lanling/Code/hot_words_websites/Grain Rot',
+    githubRepo: 'LynneLan3/Grain-Rot'
+  },
+  'leafy-corner': {
+    repoPath: '/Users/lanling/Code/hot_words_websites/Leafy Corner',
+    githubRepo: 'LynneLan3/Leafy-Corner'
+  },
+  'twisted-tower': {
+    repoPath: '/Users/lanling/Code/hot_words_websites/Twisted Tower',
+    githubRepo: 'LynneLan3/Twisted-Tower'
+  },
+  'agent-64-spies-never-die': {
+    repoPath: '/Users/lanling/Code/hot_words_websites/agent-64-short-domain-fix',
+    githubRepo: 'LynneLan3/game-wiki-starter'
+  }
+};
+
+/**
+ * Resolve the existing repository reference by site_id. Never derives a path
+ * or repository from a display name.
+ *
+ * @param {string} siteId
+ * @return {{repoPath:string, githubRepo:string}}
+ */
+function getSiteRepositoryReferenceBySiteId_(siteId) {
+  var key = String(siteId || '').trim();
+  var ref = key ? SITE_REPOSITORY_REFERENCES_BY_ID_[key] : null;
+  return {
+    repoPath: ref ? String(ref.repoPath || '').trim() : '',
+    githubRepo: ref ? String(ref.githubRepo || '').trim() : ''
+  };
+}
