@@ -27,6 +27,9 @@ function doGet(e) {
   if (action === 'pendingSearchDemandJobs') {
     return jsonOutput_({ jobs: loadSearchDemandReadyJobs_() });
   }
+  if (action === 'pendingGameWideDiscoveryJobs') {
+    return jsonOutput_({ jobs: loadGameWideDiscoveryReadyJobs_() });
+  }
   if (action === 'initResearchWriteToken') {
     return jsonOutput_(initResearchWriteToken_());
   }
@@ -53,6 +56,15 @@ function doPost(e) {
     }
     var researchType = String((body && body.research_type) || '').trim();
     if (researchType === RESEARCH_TYPE.DEMAND_DISCOVERY) {
+      // DEMAND_DISCOVERY callback 按 scope 分流：GAME_WIDE → 独立 handler
+      var cbScope = normalizeDiscoveryScopeLabel_(
+        body.discovery_scope && body.discovery_scope.scope
+          ? body.discovery_scope.scope
+          : body.discovery_scope
+      );
+      if (cbScope === 'GAME_WIDE') {
+        return jsonOutput_(handleGameWideDiscoveryCallback_(body));
+      }
       return jsonOutput_(handleDemandDiscoveryCallback_(body));
     }
     if (researchType === RESEARCH_TYPE.SEARCH_DEMAND) {
@@ -333,6 +345,271 @@ function handleDemandDiscoveryCallback_(payload) {
   }
 
   return { ok: true, job_id: jobId, status: 'COMPLETED', discovery_status: discoveryStatus };
+}
+
+// ---------------------------------------------------------------------------
+// GAME_WIDE scope — Job Creation / Loading / Callback
+// ---------------------------------------------------------------------------
+
+/**
+ * M0 临时 wrapper：零参数，可在 Apps Script 编辑器直接运行。
+ * 创建一个 Mortal Shell II GAME_WIDE Job。
+ */
+function runMs2GameWideDiscoveryM0() {
+  return createGameWideDiscoveryJobForSite_(
+    'Mortal Shell II',
+    'Mortal Shell II',
+    {
+      lookbackHours: 24,
+      aliases: ['Mortal Shell 2']
+    }
+  );
+}
+
+/**
+ * 构建 GAME_WIDE scope Job 合同。不依赖 Radar 行。
+ * research_type = DEMAND_DISCOVERY，scope = GAME_WIDE。
+ * @param {string} siteName
+ * @param {string} gameName
+ * @param {Date}   createdAt
+ * @param {Object} opts  { aliases: string[], lookbackHours: number }
+ * @return {Object}
+ */
+function buildGameWideDiscoveryJobContract_(siteName, gameName, createdAt, opts) {
+  opts = opts || {};
+  createdAt = createdAt || new Date();
+  var createdAtIso = '';
+  if (typeof toIso8601_ === 'function') {
+    try { createdAtIso = toIso8601_(createdAt); } catch (e) { createdAtIso = String(createdAt); }
+  } else {
+    createdAtIso = String(createdAt || '');
+  }
+
+  var slug = radarSiteSlug_(siteName) || slugifyResearch_(siteName) || 'site';
+  var ymd = Utilities.formatDate(createdAt, Session.getScriptTimeZone() || 'Asia/Shanghai', 'yyyyMMdd');
+  var jobId = 'game-wide-' + slug + '-' + ymd;
+
+  var lookbackHours = Number(opts.lookbackHours) || 24;
+  var aliases = Array.isArray(opts.aliases) ? opts.aliases : [];
+
+  return {
+    job_id: jobId,
+    job_type: 'GAME_WIDE_SOCIAL_DISCOVERY',
+    research_type: RESEARCH_TYPE.DEMAND_DISCOVERY,
+    site: String(siteName || '').trim(),
+    game: String(gameName || '').trim(),
+    radar_id: '',
+    trigger_type: 'GAME_WIDE_LAUNCH',
+    anchor_page: '',
+    source_signal_summary: '主动扫描 ' + gameName + ' 最近 ' + lookbackHours + 'h 社交信号',
+    discovery_scope: { scope: 'GAME_WIDE', lookback_hours: lookbackHours },
+    seed_terms: [gameName].concat(aliases),
+    source_families_requested: ['COMMUNITY', 'VIDEO'],
+    discovery_cycle_date: Utilities.formatDate(createdAt, Session.getScriptTimeZone() || 'Asia/Shanghai', 'yyyy-MM-dd'),
+    created_at: createdAtIso
+  };
+}
+
+/**
+ * 将 GAME_WIDE 合同转为「研究任务」Sheet 行（30 列）。
+ */
+function gameWideDiscoveryResearchJobSheetRow_(contract, site, createdAt) {
+  return [
+    String(contract.job_id || '').trim(),                                // 任务ID
+    createdAt || new Date(),                                              // 创建时间
+    site || contract.site || '',                                          // 站点
+    contract.game || '',                                                  // 游戏
+    '',                                                                   // 搜索词/topic
+    '',                                                                   // 页面路径
+    '',                                                                   // 机会等级
+    '',                                                                   // 建议动作
+    '',                                                                   // source_query
+    opportunityLabel_(RESEARCH_JOB_STATUS_LABELS, RESEARCH_JOB_STATUS.READY_FOR_DISCOVERY_RUNNER), // 任务状态
+    '',                                                                   // 关联搜索词
+    '',                                                                   // 研究结果
+    '',                                                                   // 证据数量
+    '',                                                                   // 结果路径
+    '',                                                                   // 完成时间
+    '',                                                                   // 错误信息
+    '', '', '', '', '',                                                   // 审核 5 列
+    RESEARCH_TYPE.DEMAND_DISCOVERY,                                        // 研究类型
+    // --- GAME_WIDE 元数据列 ---
+    '',                                                                   // 雷达ID
+    String(contract.trigger_type || '').trim(),                           // 触发类型
+    '',                                                                   // 锚点页面
+    JSON.stringify(contract.discovery_scope || {}),                       // 发现范围
+    JSON.stringify(contract.seed_terms || []),                            // 种子词
+    JSON.stringify(contract.source_families_requested || []),             // 来源族请求
+    String(contract.source_signal_summary || '').trim(),                  // 信号摘要
+    String(contract.discovery_cycle_date || '').trim()                    // 发现周期日期
+  ];
+}
+
+/**
+ * 手工创建 GAME_WIDE Job。第一版仅用于单站实验。
+ * @param {string} siteName
+ * @param {string} gameName
+ * @param {Object} opts  { aliases: string[], lookbackHours: number }
+ * @return {Object} { created: number, job_id: string }
+ */
+function createGameWideDiscoveryJobForSite_(siteName, gameName, opts) {
+  opts = opts || {};
+  ensureResearchJobSheets_();
+
+  var jobSheet = getSpreadsheet_().getSheetByName(SHEET_NAMES.RESEARCH_JOBS);
+  if (!jobSheet) return { created: 0, job_id: '', error: 'sheet_missing' };
+
+  var runDate = todayStr_();
+  var createdAt = new Date();
+  var nowTs = typeof radarNowTs_ === 'function' ? radarNowTs_() : '';
+
+  // Dedupe: 同 game + 同日期不重复创建
+  var lastCol = Math.max(jobSheet.getLastColumn(), 1);
+  var header = jobSheet.getRange(1, 1, 1, lastCol).getValues()[0];
+  var col = headerIndexMap_(header);
+  if (jobSheet.getLastRow() >= 2) {
+    var existingRows = jobSheet.getRange(2, 1, jobSheet.getLastRow() - 1, lastCol).getValues();
+    for (var i = 0; i < existingRows.length; i++) {
+      var rt = String(cell_(existingRows[i], col, '研究类型') || '').trim();
+      if (rt !== RESEARCH_TYPE.DEMAND_DISCOVERY) continue;
+      var game = String(cell_(existingRows[i], col, '游戏') || '').trim();
+      if (game !== gameName) continue;
+      var status = String(cell_(existingRows[i], col, '任务状态') || '').trim();
+      // 同 game + 同日期（从 job_id 提取）已存在 → skip
+      var jid = String(cell_(existingRows[i], col, '任务ID') || '').trim();
+      if (jid && jid.indexOf(runDate.replace(/-/g, '')) >= 0) {
+        return { created: 0, job_id: jid, skipped: true };
+      }
+    }
+  }
+
+  var contract = buildGameWideDiscoveryJobContract_(siteName, gameName, createdAt, opts);
+  var jobRow = gameWideDiscoveryResearchJobSheetRow_(contract, siteName, createdAt);
+
+  var start = jobSheet.getLastRow() + 1;
+  if (start < 2) start = 2;
+  jobSheet.getRange(start, 1, 1, RESEARCH_JOB_HEADERS.length).setValues([jobRow]);
+
+  return { created: 1, job_id: contract.job_id };
+}
+
+/**
+ * 加载待执行的 GAME_WIDE scope Job（DEMAND_DISCOVERY 研究类型 + 状态过滤）。
+ */
+function loadGameWideDiscoveryReadyJobs_() {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  if (!ss) return [];
+  var sheet = ss.getSheetByName(SHEET_NAMES.RESEARCH_JOBS);
+  if (!sheet || sheet.getLastRow() < 2) return [];
+
+  var lastCol = Math.max(sheet.getLastColumn(), 1);
+  var header = sheet.getRange(1, 1, 1, lastCol).getValues()[0];
+  var col = headerIndexMap_(header);
+  var rows = sheet.getRange(2, 1, sheet.getLastRow() - 1, lastCol).getValues();
+  var jobs = [];
+
+  var needStatus = opportunityLabel_(RESEARCH_JOB_STATUS_LABELS, RESEARCH_JOB_STATUS.READY_FOR_DISCOVERY_RUNNER);
+  for (var i = 0; i < rows.length; i++) {
+    var row = rows[i];
+    var statusRaw = String(cell_(row, col, '任务状态') || '').trim();
+    if (statusRaw !== needStatus && statusRaw !== RESEARCH_JOB_STATUS.READY_FOR_DISCOVERY_RUNNER) continue;
+
+    var researchType = String(cell_(row, col, '研究类型') || '').trim();
+    if (researchType !== RESEARCH_TYPE.DEMAND_DISCOVERY) continue;
+
+    var discoveryScope = safeJsonParse_(cell_(row, col, '发现范围') || '', {});
+    var scopeLabel = String((discoveryScope && discoveryScope.scope) || '').trim().toUpperCase();
+    if (scopeLabel !== 'GAME_WIDE') continue;
+
+    var job = gameWideDiscoveryRowToApi_(row, col);
+    if (job && job.job_id) jobs.push(job);
+  }
+  return jobs;
+}
+
+/**
+ * 将「研究任务」Sheet 行转为 GAME_WIDE scope API 输出。
+ */
+function gameWideDiscoveryRowToApi_(row, col) {
+  var created = cell_(row, col, '创建时间');
+  var createdAt = '';
+  if (Object.prototype.toString.call(created) === '[object Date]' && !isNaN(created.getTime())) {
+    createdAt = typeof toIso8601_ === 'function' ? toIso8601_(created) : String(created);
+  } else {
+    createdAt = String(created || '').trim();
+  }
+
+  var jobId = String(cell_(row, col, '任务ID') || '').trim();
+  var discoveryScope = safeJsonParse_(cell_(row, col, '发现范围') || '', {});
+  var seedTerms = safeJsonParse_(cell_(row, col, '种子词') || '', []);
+
+  return {
+    job_id: jobId,
+    job_type: 'GAME_WIDE_SOCIAL_DISCOVERY',
+    research_type: RESEARCH_TYPE.DEMAND_DISCOVERY,
+    site: String(cell_(row, col, '站点') || '').trim(),
+    game: String(cell_(row, col, '游戏') || '').trim(),
+    discovery_scope: discoveryScope && typeof discoveryScope === 'object' ? discoveryScope : {},
+    seed_terms: Array.isArray(seedTerms) ? seedTerms : [],
+    source_families_requested: safeJsonParse_(cell_(row, col, '来源族请求') || '', []),
+    created_at: createdAt
+  };
+}
+
+/**
+ * DEMAND_DISCOVERY (GAME_WIDE scope) Callback Handler。
+ * 第一版只更新「研究任务」行，不写「需求雷达」。
+ */
+function handleGameWideDiscoveryCallback_(payload) {
+  payload = payload || {};
+  var jobId = String(payload.job_id || '').trim();
+  if (!jobId) return { ok: false, error: 'missing_job_id' };
+
+  var executionStatus = String(payload.execution_status || '').trim().toUpperCase();
+  if (executionStatus !== 'COMPLETED' && executionStatus !== 'FAILED') {
+    return { ok: false, error: 'invalid_execution_status' };
+  }
+
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  if (!ss) return { ok: false, error: 'no_spreadsheet' };
+
+  var jobSheet = ss.getSheetByName(SHEET_NAMES.RESEARCH_JOBS);
+  if (!jobSheet) return { ok: false, error: 'research_jobs_missing' };
+
+  ensureResearchJobResultColumns_(jobSheet);
+
+  var lastCol = Math.max(jobSheet.getLastColumn(), RESEARCH_JOB_HEADERS.length);
+  var header = jobSheet.getRange(1, 1, 1, lastCol).getValues()[0];
+  var col = headerIndexMap_(header);
+
+  var found = findResearchJobRowById_(jobSheet, col, jobId);
+  if (!found) return { ok: false, error: 'job_not_found', job_id: jobId };
+
+  var jobRow = jobSheet.getRange(found.sheetRow, 1, 1, lastCol).getValues()[0];
+  var completedAt = new Date();
+  var row = jobRow.slice();
+
+  if (executionStatus === 'FAILED') {
+    row[col['任务状态']] = RESEARCH_JOB_STATUS_LABELS[RESEARCH_JOB_STATUS.FAILED] || '失败';
+    if (col['错误信息'] !== undefined) row[col['错误信息']] = String(payload.error || '').trim();
+    if (col['完成时间'] !== undefined) row[col['完成时间']] = completedAt;
+  } else {
+    // COMPLETED
+    row[col['任务状态']] = RESEARCH_JOB_STATUS_LABELS[RESEARCH_JOB_STATUS.DISCOVERY_DONE] || '需求发现完成';
+    if (col['证据数量'] !== undefined) row[col['证据数量']] = Number(payload.evidence_count || 0) || 0;
+    if (col['结果路径'] !== undefined) row[col['结果路径']] = String(payload.result_path || '').trim();
+    if (col['完成时间'] !== undefined) row[col['完成时间']] = completedAt;
+    if (col['研究结果'] !== undefined) {
+      var summary = 'clusters=' + (payload.cluster_count || 0);
+      var dc = payload.decision_counts || {};
+      if (dc.NEW || dc.EXPAND) summary += ' new=' + (dc.NEW || 0) + ' expand=' + (dc.EXPAND || 0);
+      row[col['研究结果']] = summary;
+    }
+    if (col['错误信息'] !== undefined) row[col['错误信息']] = '';
+  }
+
+  jobSheet.getRange(found.sheetRow, 1, 1, lastCol).setValues([row]);
+  return { ok: true, job_id: jobId, status: executionStatus };
 }
 
 // ---------------------------------------------------------------------------
