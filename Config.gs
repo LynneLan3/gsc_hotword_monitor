@@ -102,13 +102,15 @@ var SHEET_UI_TRAILING_ORDER = [
 /** 旧/实验 Tab：只隐藏，不删除数据、不删除代码依赖 */
 var SHEET_UI_HIDDEN = [SHEET_NAMES.PAGE_OPPORTUNITIES];
 
-var SITE_HEADERS = ['站点名称', 'Property URL', 'Sitemap URL', 'Day0', 'Enabled'];
+// site_id is an additive cross-system reference. Keep legacy columns first so
+// existing 5-column 站点配置 rows remain readable without migration.
+var SITE_HEADERS = ['站点名称', 'Property URL', 'Sitemap URL', 'Day0', 'Enabled', 'site_id'];
 var SNAPSHOT_HEADERS = [
   'RunDate', 'LatestGSCDataDate', 'Site', 'PropertyURL', 'Day',
   'SitemapURLCount', 'IndexedURLCount', 'IndexRate',
   'Impressions', 'Clicks', 'CTR', 'AveragePosition',
   'ReturnedQueryCount', 'FirstImpressionDate',
-  'TopQueries', 'TopPages', 'NewQueries', 'Status', 'Error'
+  'TopQueries', 'TopPages', 'NewQueries', 'Status', 'Error', 'site_id'
 ];
 var DAILY_HEADERS = [
   'DataDate', 'Site', 'Clicks', 'Impressions', 'CTR',
@@ -1044,35 +1046,43 @@ var GSC_TIMEZONE = 'America/Los_Angeles';
 var DEFAULT_SITES = [
   {
     name: 'Agefield High: Rock the School',
-    propertyUrl: 'https://agefield-high-rock-the-school.vercel.app/'
+    propertyUrl: 'https://agefield-high-rock-the-school.vercel.app/',
+    siteId: 'agefield-high-rock-the-school'
   },
   {
     name: 'Mortal Shell II',
-    propertyUrl: 'https://mortal-shell-ii.vercel.app/'
+    propertyUrl: 'https://mortal-shell-ii.vercel.app/',
+    siteId: 'mortal-shell-ii'
   },
   {
     name: 'BeastLink',
-    propertyUrl: 'https://beast-link.vercel.app/'
+    propertyUrl: 'https://beast-link.vercel.app/',
+    siteId: 'beastlink'
   },
   {
     name: 'Sovereign Tower',
-    propertyUrl: 'https://sovereign-tower.vercel.app/'
+    propertyUrl: 'https://sovereign-tower.vercel.app/',
+    siteId: 'sovereign-tower'
   },
   {
     name: 'Approximately Up',
-    propertyUrl: 'https://approximately-up.vercel.app/'
+    propertyUrl: 'https://approximately-up.vercel.app/',
+    siteId: 'approximately-up'
   },
   {
     name: 'Grain Rot',
-    propertyUrl: 'https://grainrot.vercel.app/'
+    propertyUrl: 'https://grainrot.vercel.app/',
+    siteId: 'grain-rot'
   },
   {
     name: 'Leafy Corner',
-    propertyUrl: 'https://leafy-corner.vercel.app/'
+    propertyUrl: 'https://leafy-corner.vercel.app/',
+    siteId: 'leafy-corner'
   },
   {
     name: 'Agent 64: Spies Never Die',
-    propertyUrl: 'https://agent-64.vercel.app/'
+    propertyUrl: 'https://agent-64.vercel.app/',
+    siteId: 'agent-64-spies-never-die'
   }
 ];
 
@@ -2285,4 +2295,3 @@ function getMetricGuideRows_() {
     ]
   ];
 }
-

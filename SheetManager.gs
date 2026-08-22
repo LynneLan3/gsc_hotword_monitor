@@ -72,13 +72,13 @@ function ensureSheet_(name, headers) {
 function applyColumnWidths_(sheet, name) {
   var widths = {};
   if (name === SHEET_NAMES.SITES) {
-    widths = { 1: 220, 2: 360, 3: 360, 4: 110, 5: 80 };
+    widths = { 1: 220, 2: 360, 3: 360, 4: 110, 5: 80, 6: 220 };
   } else if (name === SHEET_NAMES.SNAPSHOT) {
     widths = {
       1: 100, 2: 130, 3: 180, 4: 280, 5: 50,
       6: 110, 7: 110, 8: 90, 9: 100, 10: 70,
       11: 70, 12: 110, 13: 120, 14: 130,
-      15: 280, 16: 280, 17: 200, 18: 140, 19: 220
+      15: 280, 16: 280, 17: 200, 18: 140, 19: 220, 20: 220
     };
   } else if (name === SHEET_NAMES.DAILY) {
     widths = {
@@ -581,6 +581,7 @@ function setupSheets() {
 
   ensureSheet_(SHEET_NAMES.SITES, SITE_HEADERS);
   ensureSheet_(SHEET_NAMES.SNAPSHOT, SNAPSHOT_HEADERS);
+  ensureAdditiveSiteIdentityHeaders_();
   ensureSheet_(SHEET_NAMES.DAILY, DAILY_HEADERS);
   ensureSheet_(SHEET_NAMES.QUERIES, QUERY_HEADERS);
   ensureSheet_(SHEET_NAMES.PAGES, PAGE_HEADERS);
@@ -644,7 +645,8 @@ function seedSitesIfEmpty_() {
       normalizePropertyUrlForGsc_(s.propertyUrl),
       defaultSitemapUrl_(s.propertyUrl),
       '', // Day0 留空
-      true
+      true,
+      s.siteId || ''
     ];
   });
   if (rows.length === 0) return;
@@ -661,33 +663,60 @@ function getEnabledSites() {
   var sheet = getSpreadsheet_().getSheetByName(SHEET_NAMES.SITES);
   if (!sheet || sheet.getLastRow() < 2) return [];
 
-  var values = sheet.getRange(2, 1, sheet.getLastRow(), SITE_HEADERS.length).getValues();
+  var columns = getSiteConfigColumns_(sheet);
+  var values = sheet.getRange(2, 1, sheet.getLastRow(), columns.readWidth).getValues();
   var sites = [];
   for (var i = 0; i < values.length; i++) {
     var row = values[i];
-    var name = String(row[0] || '').trim();
-    var propertyUrl = String(row[1] || '').trim();
+    var name = String(row[columns.name] || '').trim();
+    var propertyUrl = String(row[columns.propertyUrl] || '').trim();
     if (!name || !propertyUrl) continue;
 
-    var enabled = row[4];
+    var enabled = row[columns.enabled];
     if (enabled === false || enabled === 'FALSE' || enabled === 'false' || enabled === 0) {
       continue;
     }
 
-    var day0 = row[3];
+    var day0 = row[columns.day0];
     var day0Str = toDateStr_(day0);
 
-    var sitemapUrl = String(row[2] || '').trim() || defaultSitemapUrl_(propertyUrl);
+    var sitemapUrl =
+      String(row[columns.sitemapUrl] || '').trim() || defaultSitemapUrl_(propertyUrl);
+    var siteId = String(row[columns.siteId] || '').trim();
 
     sites.push({
       name: name,
       propertyUrl: normalizePropertyUrlForGsc_(propertyUrl),
       sitemapUrl: sitemapUrl,
       day0: day0Str,
+      siteId: siteId,
+      identityKey: getSiteIdentityKey_({ name: name, siteId: siteId }),
       rowIndex: i + 2
     });
   }
   return sites;
+}
+
+/**
+ * Resolve site config columns by header, with the legacy 5-column layout as
+ * the fallback. The optional site_id column is never inferred or generated.
+ */
+function getSiteConfigColumns_(sheet) {
+  var width = Math.max(SITE_HEADERS.length, sheet.getLastColumn() || SITE_HEADERS.length);
+  var headers = sheet.getRange(1, 1, 1, width).getValues()[0];
+  var index = function (header, fallback) {
+    var found = headers.indexOf(header);
+    return found >= 0 ? found : fallback;
+  };
+  return {
+    name: index('站点名称', 0),
+    propertyUrl: index('Property URL', 1),
+    sitemapUrl: index('Sitemap URL', 2),
+    day0: index('Day0', 3),
+    enabled: index('Enabled', 4),
+    siteId: index('site_id', 5),
+    readWidth: width
+  };
 }
 
 /**

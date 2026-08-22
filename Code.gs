@@ -43,6 +43,7 @@ function onOpen() {
     .addToUi();
 }
 
+
 /** 初始化全部工作表；DEFAULT_SITES 仅在「站点配置」为空时预填，不覆盖已有行 */
 function setup() {
   setupSheets();
@@ -659,7 +660,8 @@ function processSiteDaily_(site, runDate) {
     topPages,
     newQueriesText,
     status,
-    errors.join(' | ')
+    errors.join(' | '),
+    site.siteId || ''
   ]);
 
   writeLog_(
@@ -1570,7 +1572,7 @@ function updateAgent64CanonicalDomainConfig() {
     // 不存在则追加一行，避免静默失败
     rowIndex = lastRow + 1;
     sheet.getRange(rowIndex, 1, rowIndex, SITE_HEADERS.length).setValues([
-      [TARGET_NAME, PROPERTY_URL, SITEMAP_URL, DAY0, true]
+      [TARGET_NAME, PROPERTY_URL, SITEMAP_URL, DAY0, true, 'agent-64-spies-never-die']
     ]);
     sheet.getRange(rowIndex, 5).insertCheckboxes();
     Logger.log('APPEND row=' + rowIndex + ' name=' + TARGET_NAME);
@@ -1625,7 +1627,8 @@ function readAgent64ShortDomainStatus_() {
           propertyUrl: values[i][1],
           sitemapUrl: values[i][2],
           day0: toDateStr_(values[i][3]),
-          enabled: values[i][4]
+          enabled: values[i][4],
+          siteId: String(values[i][5] || '').trim()
         };
         break;
       }
@@ -1727,4 +1730,3 @@ function readAgent64ShortDomainStatus_() {
     runDate: runDate
   };
 }
-

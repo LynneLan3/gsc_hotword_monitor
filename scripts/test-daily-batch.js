@@ -42,7 +42,10 @@ var AGENT = 'Agent 64: Spies Never Die';
 
 // --- 1. 默认配置与 seed 不得覆盖已有第9行 ---
 assert(configSrc.indexOf("propertyUrl: 'https://agent-64.vercel.app/'") >= 0, 'DEFAULT_SITES short domain');
-assert(configSrc.indexOf('agent-64-spies-never-die') < 0, 'DEFAULT_SITES has no long domain');
+assert(
+  configSrc.indexOf("propertyUrl: 'https://agent-64-spies-never-die") < 0,
+  'DEFAULT_SITES has no long domain'
+);
 assert(/seedSitesIfEmpty_[\s\S]*if \(sheet\.getLastRow\(\) > 1\) return/.test(sheetSrc), 'seed does not overwrite existing sites');
 assert(extractFn(sheetSrc, 'getEnabledSites').indexOf('normalizePropertyUrlForGsc_(propertyUrl)') >= 0, 'runtime reads current 站点配置 URL');
 
