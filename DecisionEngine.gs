@@ -137,6 +137,7 @@ function runDecisionEngine(opts) {
   refreshTodayActions_(runDate, actionRows);
   appendDecisionHistoryRows_(historyRows);
   applyTodayActionValidation_();
+  refreshUnifiedActionQueue_(runDate);
 
   try {
     runPortfolioEngine();

@@ -230,6 +230,7 @@ function runDailyFinalizerUnlocked_(sites, runDate) {
     runDecisionEngine();
     runContentOpportunityEngine();
     refreshDemandRadar_(sites, runDate);
+    refreshUnifiedActionQueue_(runDate);
     sortSheetsNewestFirst_([SHEET_NAMES.LOG]);
     setDailyRunPhase_('done');
     deleteDailyContinuationTriggers_();

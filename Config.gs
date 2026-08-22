@@ -616,7 +616,10 @@ var EFFECT_EVIDENCE_V1 = {
 
 var TODAY_ACTION_HEADERS = [
   'Date', 'Priority', 'Site', 'LifecycleStage', 'RecommendedAction',
-  'DomainScore', 'Reason', 'Status', '人工备注', 'DecisionID'
+  'DomainScore', 'Reason', 'Status', '人工备注', 'DecisionID',
+  // Phase 7D: additive fields for the derived cross-system action queue.
+  'SourceSystem', 'OpportunityID', 'Game', 'OpportunityType',
+  'CurrentState', 'SourceReference'
 ];
 var TODAY_ACTION_STATUSES = ['TODO', 'DONE', 'SKIP'];
 /** 可同步回决策历史的终态 */

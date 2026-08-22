@@ -126,7 +126,8 @@ function applyColumnWidths_(sheet, name) {
   } else if (name === SHEET_NAMES.TODAY_ACTIONS) {
     widths = {
       1: 100, 2: 70, 3: 180, 4: 120, 5: 150,
-      6: 100, 7: 360, 8: 80, 9: 180
+      6: 100, 7: 360, 8: 80, 9: 180, 10: 260, 11: 90,
+      12: 360, 13: 180, 14: 150, 15: 220, 16: 360
     };
   } else if (name === SHEET_NAMES.OPPORTUNITIES) {
     widths = {
