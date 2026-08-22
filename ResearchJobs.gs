@@ -387,10 +387,13 @@ function buildGameWideDiscoveryJobContract_(siteName, gameName, createdAt, opts)
 
   var slug = radarSiteSlug_(siteName) || slugifyResearch_(siteName) || 'site';
   var ymd = Utilities.formatDate(createdAt, Session.getScriptTimeZone() || 'Asia/Shanghai', 'yyyyMMdd');
-  var jobId = 'game-wide-' + slug + '-' + ymd;
+  var cycleDate = normalizeDiscoveryCycleDate_(opts.discoveryCycleDate) ||
+    Utilities.formatDate(createdAt, Session.getScriptTimeZone() || 'Asia/Shanghai', 'yyyy-MM-dd');
+  var jobId = String(opts.jobId || '').trim() || ('game-wide-' + slug + '-' + ymd);
 
-  var lookbackHours = Number(opts.lookbackHours) || 24;
+  var lookbackHours = Number(opts.lookbackHours) || DAILY_GAME_WIDE_LOOKBACK_HOURS;
   var aliases = Array.isArray(opts.aliases) ? opts.aliases : [];
+  var triggerType = String(opts.triggerType || 'GAME_WIDE_LAUNCH').trim();
 
   return {
     job_id: jobId,
@@ -399,13 +402,14 @@ function buildGameWideDiscoveryJobContract_(siteName, gameName, createdAt, opts)
     site: String(siteName || '').trim(),
     game: String(gameName || '').trim(),
     radar_id: '',
-    trigger_type: 'GAME_WIDE_LAUNCH',
+    trigger_type: triggerType,
     anchor_page: '',
     source_signal_summary: '主动扫描 ' + gameName + ' 最近 ' + lookbackHours + 'h 社交信号',
     discovery_scope: { scope: 'GAME_WIDE', lookback_hours: lookbackHours },
     seed_terms: [gameName].concat(aliases),
-    source_families_requested: ['COMMUNITY', 'VIDEO'],
-    discovery_cycle_date: Utilities.formatDate(createdAt, Session.getScriptTimeZone() || 'Asia/Shanghai', 'yyyy-MM-dd'),
+    source_families_requested: DAILY_GAME_WIDE_SOURCE_FAMILIES.slice(),
+    discovery_cycle_date: cycleDate,
+    site_id: String(opts.siteId || '').trim(),
     created_at: createdAtIso
   };
 }
@@ -494,6 +498,167 @@ function createGameWideDiscoveryJobForSite_(siteName, gameName, opts) {
   return { created: 1, job_id: contract.job_id };
 }
 
+/** Stable M0 idempotency key: site identity + trigger + discovery date. */
+function dailyGameWideDedupeKey_(site, triggerType, discoveryDate) {
+  var identity = String((site && (site.siteId || site.site_id)) || '').trim();
+  if (!identity) identity = getSiteIdentityKey_(site || {});
+  return identity + '||' + String(triggerType || DAILY_GAME_WIDE_TRIGGER).trim() + '||' +
+    normalizeDiscoveryCycleDate_(discoveryDate);
+}
+
+function buildDailyGameWideJobId_(site, discoveryDate) {
+  var identity = String((site && (site.siteId || site.site_id)) || '').trim();
+  var slug = slugifyResearch_(identity || (site && site.name) || '') || 'site';
+  return 'game-wide-' + slug + '-' + discoveryCycleDateToYmd_(discoveryDate);
+}
+
+function isDailyGameWideSiteEligible_(site) {
+  if (!site || !String(site.name || '').trim() || !String(site.propertyUrl || '').trim()) return false;
+  if (site.enabled === false) return false;
+
+  var explicitBooleanFields = [site.status, site.lifecycle, site.releaseStatus, site.liveStatus];
+  for (var b = 0; b < explicitBooleanFields.length; b++) {
+    var raw = explicitBooleanFields[b];
+    if (raw === false || raw === 0 || String(raw || '').trim().toLowerCase() === 'false') return false;
+  }
+
+  var blocked = ['ARCHIVED', 'INACTIVE', 'REJECTED', 'DISABLED', 'OFFLINE', 'DRAFT', 'DELETED', 'NOT_LIVE'];
+  for (var i = 0; i < explicitBooleanFields.length; i++) {
+    var value = String(explicitBooleanFields[i] || '').trim().toUpperCase().replace(/[\s-]+/g, '_');
+    if (!value) continue;
+    for (var j = 0; j < blocked.length; j++) {
+      if (value === blocked[j] || value.indexOf(blocked[j] + '_') === 0 || value.indexOf('_' + blocked[j]) >= 0) {
+        return false;
+      }
+    }
+  }
+  return true;
+}
+
+function dailyGameWideAliasesForSite_(site) {
+  var aliases = Array.isArray(site && site.aliases) ? site.aliases.slice() : [];
+  var siteId = String((site && (site.siteId || site.site_id)) || '').trim();
+  var name = String((site && site.name) || '').trim().toLowerCase();
+  if ((siteId === 'mortal-shell-ii' || name === 'mortal shell ii') && aliases.indexOf('Mortal Shell 2') < 0) {
+    aliases.push('Mortal Shell 2');
+  }
+  return aliases;
+}
+
+/** Pure planning layer used by the Sheet writer and local M0 tests. */
+function planDailyGameWideDiscoveryJobs_(sites, existingJobs, runDate, createdAt) {
+  sites = sites || [];
+  existingJobs = existingJobs || [];
+  runDate = normalizeDiscoveryCycleDate_(runDate || todayStr_());
+  createdAt = createdAt || new Date();
+
+  var existingKeys = {};
+  var existingJobIds = {};
+  for (var e = 0; e < existingJobs.length; e++) {
+    var prior = existingJobs[e] || {};
+    if (String(prior.trigger_type || '').trim() !== DAILY_GAME_WIDE_TRIGGER) continue;
+    if (normalizeDiscoveryCycleDate_(prior.discovery_cycle_date) !== runDate) continue;
+    var priorId = String(prior.job_id || '').trim();
+    if (priorId) existingJobIds[priorId] = true;
+    if (prior.site) existingKeys[dailyGameWideDedupeKey_(prior.site, DAILY_GAME_WIDE_TRIGGER, runDate)] = priorId || true;
+  }
+
+  var result = { created: 0, skipped: 0, excluded: 0, dedupe_hits: 0, jobs: [], contracts: [], excluded_sites: [] };
+  for (var i = 0; i < sites.length; i++) {
+    var site = sites[i];
+    if (!isDailyGameWideSiteEligible_(site)) {
+      result.excluded += 1;
+      result.excluded_sites.push(String(site && site.name || '').trim());
+      continue;
+    }
+    var key = dailyGameWideDedupeKey_(site, DAILY_GAME_WIDE_TRIGGER, runDate);
+    var jobId = buildDailyGameWideJobId_(site, runDate);
+    if (existingKeys[key] || existingJobIds[jobId]) {
+      result.skipped += 1;
+      result.dedupe_hits += 1;
+      result.jobs.push({ site: site.name, job_id: String(existingKeys[key] || jobId), created: false, dedupe_hit: true });
+      continue;
+    }
+    var contract = buildGameWideDiscoveryJobContract_(site.name, site.name, createdAt, {
+      aliases: dailyGameWideAliasesForSite_(site),
+      lookbackHours: DAILY_GAME_WIDE_LOOKBACK_HOURS,
+      triggerType: DAILY_GAME_WIDE_TRIGGER,
+      discoveryCycleDate: runDate,
+      jobId: jobId,
+      siteId: site.siteId || site.site_id || ''
+    });
+    existingKeys[key] = contract.job_id;
+    existingJobIds[contract.job_id] = true;
+    result.created += 1;
+    result.contracts.push(contract);
+    result.jobs.push({ site: site.name, job_id: contract.job_id, created: true, dedupe_hit: false });
+  }
+  return result;
+}
+
+/**
+ * Daily M0 orchestrator. It only appends READY_FOR_DISCOVERY_RUNNER jobs;
+ * it does not merge external/GSC opportunities or change any decision/action.
+ */
+function enqueueDailyGameWideDiscovery_(sites, runDate) {
+  ensureResearchJobSheets_();
+  sites = sites || [];
+  runDate = normalizeDiscoveryCycleDate_(runDate || todayStr_());
+
+  var jobSheet = getSpreadsheet_().getSheetByName(SHEET_NAMES.RESEARCH_JOBS);
+  if (!jobSheet) return { created: 0, skipped: 0, excluded: 0, dedupe_hits: 0, jobs: [], error: 'sheet_missing' };
+
+  var lastCol = Math.max(jobSheet.getLastColumn(), RESEARCH_JOB_HEADERS.length);
+  var header = jobSheet.getRange(1, 1, 1, lastCol).getValues()[0];
+  var col = headerIndexMap_(header);
+  var rows = jobSheet.getLastRow() >= 2
+    ? jobSheet.getRange(2, 1, jobSheet.getLastRow() - 1, lastCol).getValues()
+    : [];
+  var siteByName = {};
+  for (var s = 0; s < sites.length; s++) siteByName[String(sites[s].name || '').trim()] = sites[s];
+
+  var existingJobs = [];
+  for (var r = 0; r < rows.length; r++) {
+    var row = rows[r];
+    var trigger = String(cell_(row, col, '触发类型') || '').trim();
+    var cycle = normalizeDiscoveryCycleDate_(cell_(row, col, '发现周期日期'));
+    var existingSite = siteByName[String(cell_(row, col, '站点') || '').trim()];
+    existingJobs.push({
+      site: existingSite,
+      job_id: String(cell_(row, col, '任务ID') || '').trim(),
+      trigger_type: trigger,
+      discovery_cycle_date: cycle
+    });
+  }
+
+  var result = planDailyGameWideDiscoveryJobs_(sites, existingJobs, runDate, new Date());
+  var toAppend = result.contracts.map(function (contract) {
+    return gameWideDiscoveryResearchJobSheetRow_(contract, contract.site, new Date(contract.created_at || new Date()));
+  });
+
+  if (toAppend.length) {
+    var start = jobSheet.getLastRow() + 1;
+    if (start < 2) start = 2;
+    jobSheet.getRange(start, 1, toAppend.length, RESEARCH_JOB_HEADERS.length).setValues(toAppend);
+  }
+
+  writeLog_('INFO', '', 'enqueueDailyGameWideDiscovery runDate=' + runDate +
+    ' created=' + result.created + ' skipped=' + result.skipped + ' excluded=' + result.excluded);
+  return result;
+}
+
+/** Manual/retry entry; the daily finalizer calls the unlocked helper directly. */
+function enqueueDailyGameWideDiscovery() {
+  var lock = LockService.getScriptLock();
+  if (!lock.tryLock(15000)) return 'enqueueDailyGameWideDiscovery skipped: lock busy';
+  try {
+    setupSheets();
+    return enqueueDailyGameWideDiscovery_(getEnabledSites(), todayStr_());
+  } finally {
+    lock.releaseLock();
+  }
+}
+
 /**
  * 加载待执行的 GAME_WIDE scope Job（DEMAND_DISCOVERY 研究类型 + 状态过滤）。
  */
@@ -543,13 +708,25 @@ function gameWideDiscoveryRowToApi_(row, col) {
   var jobId = String(cell_(row, col, '任务ID') || '').trim();
   var discoveryScope = safeJsonParse_(cell_(row, col, '发现范围') || '', {});
   var seedTerms = safeJsonParse_(cell_(row, col, '种子词') || '', []);
+  var cycleDate = normalizeDiscoveryCycleDate_(cell_(row, col, '发现周期日期')) ||
+    discoveryCycleDateFromJobId_(jobId);
+  var lookbackHours = Number(discoveryScope && discoveryScope.lookback_hours) || DAILY_GAME_WIDE_LOOKBACK_HOURS;
 
   return {
     job_id: jobId,
     job_type: 'GAME_WIDE_SOCIAL_DISCOVERY',
     research_type: RESEARCH_TYPE.DEMAND_DISCOVERY,
+    site_key: String(cell_(row, col, '站点') || '').trim(),
+    game_name: String(cell_(row, col, '游戏') || '').trim(),
     site: String(cell_(row, col, '站点') || '').trim(),
     game: String(cell_(row, col, '游戏') || '').trim(),
+    aliases: Array.isArray(seedTerms) ? seedTerms.slice(1) : [],
+    lookback_hours: lookbackHours,
+    trigger_type: String(cell_(row, col, '触发类型') || '').trim(),
+    radar_id: String(cell_(row, col, '雷达ID') || '').trim(),
+    anchor_page: String(cell_(row, col, '锚点页面') || '').trim(),
+    source_signal_summary: String(cell_(row, col, '信号摘要') || '').trim(),
+    discovery_cycle_date: cycleDate,
     discovery_scope: discoveryScope && typeof discoveryScope === 'object' ? discoveryScope : {},
     seed_terms: Array.isArray(seedTerms) ? seedTerms : [],
     source_families_requested: safeJsonParse_(cell_(row, col, '来源族请求') || '', []),

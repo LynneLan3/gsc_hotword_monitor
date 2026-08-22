@@ -26,6 +26,7 @@ function onOpen() {
     .addItem('刷新需求雷达', 'refreshDemandRadar')
     .addItem('运行实时Query监控', 'runFreshQueryMonitor')
     .addItem('创建需求发现任务', 'createDemandDiscoveryJobs')
+    .addItem('创建每日 GAME_WIDE 发现任务', 'enqueueDailyGameWideDiscovery')
     .addItem('创建搜索需求任务', 'createSearchDemandJobs')
     .addItem('创建研究任务', 'createResearchJobs')
     .addItem('重置并创建研究任务', 'resetAndCreateResearchJobs')
@@ -230,6 +231,7 @@ function runDailyFinalizerUnlocked_(sites, runDate) {
     runDecisionEngine();
     runContentOpportunityEngine();
     refreshDemandRadar_(sites, runDate);
+    enqueueDailyGameWideDiscovery_(sites, runDate);
     refreshUnifiedActionQueue_(runDate);
     syncDevelopmentTasksFromApprovedDecisions();
     refreshImplementationHandoffs_();

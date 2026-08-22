@@ -693,6 +693,11 @@ function getEnabledSites() {
       sitemapUrl: sitemapUrl,
       day0: day0Str,
       siteId: siteId,
+      enabled: true,
+      status: columns.status >= 0 ? row[columns.status] : '',
+      lifecycle: columns.lifecycle >= 0 ? row[columns.lifecycle] : '',
+      releaseStatus: columns.releaseStatus >= 0 ? row[columns.releaseStatus] : '',
+      liveStatus: columns.liveStatus >= 0 ? row[columns.liveStatus] : '',
       identityKey: getSiteIdentityKey_({ name: name, siteId: siteId }),
       rowIndex: i + 2
     });
@@ -711,6 +716,13 @@ function getSiteConfigColumns_(sheet) {
     var found = headers.indexOf(header);
     return found >= 0 ? found : fallback;
   };
+  var indexAny = function (names, fallback) {
+    for (var i = 0; i < names.length; i++) {
+      var found = headers.indexOf(names[i]);
+      if (found >= 0) return found;
+    }
+    return fallback;
+  };
   return {
     name: index('站点名称', 0),
     propertyUrl: index('Property URL', 1),
@@ -718,6 +730,11 @@ function getSiteConfigColumns_(sheet) {
     day0: index('Day0', 3),
     enabled: index('Enabled', 4),
     siteId: index('site_id', 5),
+    // Optional existing lifecycle/live fields; no new columns are created.
+    status: indexAny(['Status', 'status', '站点状态', '状态'], -1),
+    lifecycle: indexAny(['Lifecycle', 'lifecycle', 'LifecycleStage', '生命周期'], -1),
+    releaseStatus: indexAny(['ReleaseStatus', 'release_status', '发布状态'], -1),
+    liveStatus: indexAny(['LiveStatus', 'live_status', '上线状态'], -1),
     readWidth: width
   };
 }

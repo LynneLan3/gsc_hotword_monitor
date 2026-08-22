@@ -795,6 +795,11 @@ var RESEARCH_TYPE = {
   SEARCH_DEMAND: 'SEARCH_DEMAND'
 };
 
+/** Phase 7C-3A：每日 GAME_WIDE Demand Discovery 调度合同。 */
+var DAILY_GAME_WIDE_TRIGGER = 'DAILY_GAME_WIDE';
+var DAILY_GAME_WIDE_LOOKBACK_HOURS = 24;
+var DAILY_GAME_WIDE_SOURCE_FAMILIES = ['COMMUNITY', 'VIDEO'];
+
 /**
  * Human Gate：Research 证据明细（运营在 Sheet 内审核，无需下载 JSON）。
  * 按 job_id 幂等替换；每条 evidence 一行。
