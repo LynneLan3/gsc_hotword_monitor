@@ -441,7 +441,8 @@ function gameWideDiscoveryResearchJobSheetRow_(contract, site, createdAt) {
     JSON.stringify(contract.seed_terms || []),                            // 种子词
     JSON.stringify(contract.source_families_requested || []),             // 来源族请求
     String(contract.source_signal_summary || '').trim(),                  // 信号摘要
-    String(contract.discovery_cycle_date || '').trim()                    // 发现周期日期
+    String(contract.discovery_cycle_date || '').trim(),                   // 发现周期日期
+    String(contract.opportunity_id || '').trim()                           // OpportunityID
   ];
 }
 
@@ -1547,6 +1548,9 @@ function buildDemandDiscoveryJobContract_(radar, createdAt, cycleDate) {
     site: String(radar.site || '').trim(),
     game: String(radar.game || radar.gameName || '').trim(),
     radar_id: String(radar.radar_id || radar.radarId || '').trim(),
+    opportunity_id:
+      String(radar.opportunity_id || radar.opportunityId || '').trim() ||
+      buildOpportunityIdFromRadarId_(radar.radar_id || radar.radarId),
     trigger_type: String(radar.trigger_type || radar.triggerType || '').trim(),
     anchor_page: String(radar.anchor_page || radar.anchorPage || '').trim(),
     source_signal_summary: String(
@@ -1650,6 +1654,8 @@ function demandDiscoveryRowToApi_(row, col) {
     site: String(cell_(row, col, '站点') || cell_(row, col, '游戏') || '').trim(),
     game: String(cell_(row, col, '游戏') || '').trim(),
     radar_id: String(cell_(row, col, '雷达ID') || '').trim(),
+    opportunity_id: String(cell_(row, col, 'OpportunityID') || '').trim() ||
+      buildOpportunityIdFromRadarId_(cell_(row, col, '雷达ID')),
     trigger_type: String(cell_(row, col, '触发类型') || '').trim(),
     anchor_page: String(cell_(row, col, '锚点页面') || '').trim(),
     source_signal_summary: String(cell_(row, col, '信号摘要') || '').trim(),
@@ -1882,7 +1888,8 @@ function demandDiscoveryResearchJobSheetRow_(contract, site, createdAt) {
     JSON.stringify(contract.seed_terms || []),
     JSON.stringify(contract.source_families_requested || []),
     String(contract.source_signal_summary || '').trim(),
-    String(contract.discovery_cycle_date || '').trim()
+    String(contract.discovery_cycle_date || '').trim(),
+    String(contract.opportunity_id || '').trim()
   ];
 }
 
@@ -2017,6 +2024,9 @@ function buildSearchDemandJobContract_(radar, createdAt, cycleDate) {
     site: String(radar.site || '').trim(),
     game: String(radar.game || radar.gameName || '').trim(),
     radar_id: String(radar.radar_id || radar.radarId || '').trim(),
+    opportunity_id:
+      String(radar.opportunity_id || radar.opportunityId || '').trim() ||
+      buildOpportunityIdFromRadarId_(radar.radar_id || radar.radarId),
     trigger_type: String(radar.trigger_type || radar.triggerType || '').trim(),
     anchor_page: String(radar.anchor_page || radar.anchorPage || '').trim(),
     discovery_scope: {
@@ -2070,7 +2080,8 @@ function searchDemandResearchJobSheetRow_(contract, site, createdAt) {
     JSON.stringify(contract.seed_terms || []),
     JSON.stringify(contract.search_sources_requested || []),
     String(contract.source_signal_summary || '').trim(),
-    String(contract.search_cycle_date || '').trim()
+    String(contract.search_cycle_date || '').trim(),
+    String(contract.opportunity_id || '').trim()
   ];
 }
 
@@ -2101,6 +2112,8 @@ function searchDemandRowToApi_(row, col) {
     site: String(cell_(row, col, '站点') || cell_(row, col, '游戏') || '').trim(),
     game: String(cell_(row, col, '游戏') || '').trim(),
     radar_id: String(cell_(row, col, '雷达ID') || '').trim(),
+    opportunity_id: String(cell_(row, col, 'OpportunityID') || '').trim() ||
+      buildOpportunityIdFromRadarId_(cell_(row, col, '雷达ID')),
     trigger_type: String(cell_(row, col, '触发类型') || '').trim(),
     anchor_page: String(cell_(row, col, '锚点页面') || '').trim(),
     discovery_scope: discoveryScope && typeof discoveryScope === 'object' ? discoveryScope : {},
@@ -2153,6 +2166,10 @@ function parseRadarRowForSearchDemand_(row, radarCol) {
   row = row || [];
   return {
     radar_id: String(row[radarCol['雷达ID']] || '').trim(),
+    opportunity_id:
+      String(
+        radarCol['OpportunityID'] !== undefined ? row[radarCol['OpportunityID']] || '' : ''
+      ).trim() || buildOpportunityIdFromRadarId_(row[radarCol['雷达ID']]),
     site: String(row[radarCol['站点']] || '').trim(),
     game: String(row[radarCol['游戏']] || '').trim(),
     anchor_page: String(row[radarCol['锚点页面']] || '').trim(),
@@ -3177,7 +3194,8 @@ function researchJobSheetRow_(job, site, createdAt) {
     '',
     '',
     '',
-    ''
+    '',
+    '' // OpportunityID（CONTENT_RESEARCH 不绑定 GSC Opportunity）
   ];
 }
 

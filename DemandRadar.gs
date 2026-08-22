@@ -2,7 +2,8 @@
  * Query Blind Spot Detector（R0）
  *
  * Page明细（page-only Performance）vs Query页面明细（可见 Query×Page）。
- * 只产出 QUERY_BLIND_SPOT 事实信号，不创建内容机会 / Research / 今日行动，
+ * 只产出 QUERY_BLIND_SPOT 事实信号，并在同一 Radar 行保存 OpportunityID；
+ * 不创建独立 Opportunity Sheet / Research / 今日行动，
  * 不改 Decision Engine / Portfolio / DomainScore / GSC 原始口径。
  */
 
@@ -600,6 +601,8 @@ function reconcileDemandRadarRows_(existingRows, detections, opts) {
     existing.push((existingRows[e] || []).slice());
   }
 
+  ensureDemandRadarOpportunityIds_(existing);
+
   if (radarCollectionFailed_(opts)) {
     return { rows: existing, skipped: true };
   }
@@ -694,6 +697,10 @@ function migrateRadarRowKey_(byId, order, fromId, toId) {
   var row = byId[fromId];
   row[0] = toId;
   row[7] = radarCanonicalPagePath_('', row[7]) || row[7];
+  var opportunityCol = DEMAND_RADAR_HEADERS.indexOf('OpportunityID');
+  if (opportunityCol >= 0) {
+    row[opportunityCol] = buildOpportunityIdFromRadarId_(toId);
+  }
   delete byId[fromId];
   byId[toId] = row;
   for (var i = 0; i < (order || []).length; i++) {
@@ -751,6 +758,9 @@ function buildRadarRowFromDetection_(detection, opts) {
     opts.nowTs || opts.runDate || ''
   ];
   while (row.length < DEMAND_RADAR_HEADERS.length) row.push('');
+  row[DEMAND_RADAR_HEADERS.indexOf('OpportunityID')] = buildOpportunityIdFromRadarId_(
+    row[0]
+  );
   return row;
 }
 
@@ -784,7 +794,25 @@ function mergeRadarActiveRow_(existingRow, detection, opts) {
   row[22] = RADAR_SIGNAL_STATUS.ACTIVE;
   if (!String(row[23] || '').trim()) row[23] = RADAR_STATUS.DISCOVERED;
   row[25] = opts.nowTs || opts.runDate || row[25];
+  var opportunityCol = DEMAND_RADAR_HEADERS.indexOf('OpportunityID');
+  if (opportunityCol >= 0) {
+    row[opportunityCol] = buildOpportunityIdFromRadarId_(row[0]);
+  }
   return row;
+}
+
+function ensureDemandRadarOpportunityIds_(rows) {
+  var opportunityCol = DEMAND_RADAR_HEADERS.indexOf('OpportunityID');
+  if (opportunityCol < 0) return rows || [];
+  for (var i = 0; i < (rows || []).length; i++) {
+    var row = rows[i] || [];
+    while (row.length < DEMAND_RADAR_HEADERS.length) row.push('');
+    var radarId = String(row[0] || '').trim();
+    if (radarId) {
+      row[opportunityCol] = buildOpportunityIdFromRadarId_(radarId);
+    }
+  }
+  return rows || [];
 }
 
 function markRadarResolvedRow_(existingRow, runDate, nowTs) {

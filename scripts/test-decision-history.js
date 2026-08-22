@@ -3,6 +3,14 @@
  * 运行：node scripts/test-decision-history.js
  */
 
+var fs = require('fs');
+var path = require('path');
+var vm = require('vm');
+var decisionEngineSrc = fs.readFileSync(
+  path.join(__dirname, '..', 'DecisionEngine.gs'),
+  'utf8'
+);
+
 var TODAY_ACTION_EXCLUDED = {
   NO_ACTION: true,
   WAIT: true
@@ -520,7 +528,31 @@ var headers = eval(headersMatch[1]);
 assert(headers.indexOf('HumanDecision') === 30, 'HumanDecision index stable');
 assert(headers.indexOf('RecordedAt') === 32, 'RecordedAt index stable');
 assert(headers.indexOf('BaselineStartDate') === 33, 'Baseline appended after RecordedAt');
-assert(headers[headers.length - 1] === 'BaselineBestPosition', 'baseline ends headers');
-assert(headers.length === 42, 'history header count');
+assert(headers[headers.length - 2] === 'BaselineBestPosition', 'baseline ends before OpportunityID');
+assert(headers[headers.length - 1] === 'OpportunityID', 'OpportunityID appended after baseline');
+assert(headers.length === 43, 'history header count');
+
+var actualDecisionSandbox = { DECISION_RULE_VERSION: DECISION_RULE_VERSION };
+vm.createContext(actualDecisionSandbox);
+vm.runInContext(decisionEngineSrc, actualDecisionSandbox);
+var actualFutureDecision = actualDecisionSandbox.buildDecisionHistoryRow_(
+  '2026-08-22',
+  'Mortal Shell II',
+  sampleMetrics_(),
+  sampleScores_(),
+  { action: 'CONTENT_OPTIMIZE', stage: 'TRACTION', priority: 'P2' },
+  'explicit opportunity binding',
+  'gsc-decision-v1.0',
+  '2026-08-22 12:00:00',
+  'decision-1',
+  { bestPosition: 12 },
+  'opp-ms2-mortal-shell-ii-skip-prologue-query-blind-spot-001'
+);
+assert(actualFutureDecision.length === headers.length, 'future decision row matches headers');
+assert(
+  actualFutureDecision[actualFutureDecision.length - 1] ===
+    'opp-ms2-mortal-shell-ii-skip-prologue-query-blind-spot-001',
+  'future Decision History saves explicit OpportunityID'
+);
 
 console.log('PASS scripts/test-decision-history.js');

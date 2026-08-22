@@ -21,6 +21,7 @@ function extractAssign(src, name) {
 var root = path.join(__dirname, '..');
 var configSrc = fs.readFileSync(path.join(root, 'Config.gs'), 'utf8');
 var researchSrc = fs.readFileSync(path.join(root, 'ResearchJobs.gs'), 'utf8');
+var identitySrc = fs.readFileSync(path.join(root, 'OpportunityIdentity.gs'), 'utf8');
 
 // Constants from Config.gs
 var QUERY_BLIND_SPOT_TRIGGER = extractAssign(configSrc, 'QUERY_BLIND_SPOT_TRIGGER');
@@ -90,6 +91,7 @@ var sandbox = {
 };
 
 vm.createContext(sandbox);
+vm.runInContext(identitySrc, sandbox);
 vm.runInContext(researchSrc, sandbox);
 
 assert(typeof sandbox.isDemandDiscoveryEligible_ === 'function', 'missing isDemandDiscoveryEligible_');
@@ -160,6 +162,10 @@ var created = new Date('2026-08-18T00:00:00Z');
 var contract1 = sandbox.buildDemandDiscoveryJobContract_(radar1, created, RUN_DATE);
 assert(contract1.research_type === RESEARCH_TYPE.DEMAND_DISCOVERY, 'Case1 research_type');
 assert(contract1.radar_id === radar1.radar_id, 'Case1 radar_id');
+assert(
+  contract1.opportunity_id === sandbox.buildOpportunityIdFromRadarId_(radar1.radar_id),
+  'Case1 OpportunityID inherited'
+);
 assert(contract1.trigger_type === QUERY_BLIND_SPOT_TRIGGER, 'Case1 trigger_type');
 assert(contract1.anchor_page === radar1.anchor_page, 'Case1 anchor_page');
 assert(contract1.discovery_cycle_date === RUN_DATE, 'Case1 discovery_cycle_date');
@@ -215,10 +221,19 @@ assert(
 var sheetRow = sandbox.demandDiscoveryResearchJobSheetRow_(contractA1, SITE, created);
 assert(sheetRow.length === RESEARCH_JOB_HEADERS.length, 'CaseC sheet row matches headers');
 assert(sheetRow[RESEARCH_JOB_HEADERS.indexOf('发现周期日期')] === RUN_DATE, 'CaseC sheet stores cycle date');
+assert(
+  sheetRow[RESEARCH_JOB_HEADERS.indexOf('OpportunityID')] ===
+    sandbox.buildOpportunityIdFromRadarId_(radar1.radar_id),
+  'CaseC sheet stores OpportunityID'
+);
 var payload = sandbox.demandDiscoveryRowToApi_(sheetRow, sandbox.headerIndexMap_(RESEARCH_JOB_HEADERS));
 assert(payload.job_id === contractA1.job_id, 'CaseC payload job_id');
 assert(payload.research_type === RESEARCH_TYPE.DEMAND_DISCOVERY, 'CaseC payload research_type');
 assert(payload.radar_id === radar1.radar_id, 'CaseC payload radar_id');
+assert(
+  payload.opportunity_id === sandbox.buildOpportunityIdFromRadarId_(radar1.radar_id),
+  'CaseC payload OpportunityID'
+);
 assert(payload.discovery_cycle_date === RUN_DATE, 'CaseC payload discovery_cycle_date');
 assert(payload.opportunity_level === undefined, 'CaseC payload has no opportunity_level');
 assert(payload.source_query === undefined, 'CaseC payload has no source_query');
@@ -297,4 +312,3 @@ assert(
 );
 
 console.log('PASS scripts/test-demand-discovery-jobs.js');
-

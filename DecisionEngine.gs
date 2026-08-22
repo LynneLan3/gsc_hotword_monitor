@@ -7,7 +7,11 @@
 /**
  * 独立入口：可在采集完成后调用，也可单独重复运行。
  */
-function runDecisionEngine() {
+function runDecisionEngine(opts) {
+  opts = opts || {};
+  // Only an explicit caller-supplied binding may enter Decision History.
+  // The normal daily engine leaves this empty; it never infers from site/date.
+  var opportunityIdBySite = opts.opportunityIdBySite || {};
   ensureDecisionSheets_();
   var runDate = todayStr_();
   writeLog_('INFO', '', 'runDecisionEngine 开始 runDate=' + runDate);
@@ -120,7 +124,8 @@ function runDecisionEngine() {
           DECISION_RULE_VERSION,
           nowRecordedAt_(),
           decisionId,
-          baseline
+          baseline,
+          opportunityIdBySite[site.name] || ''
         )
       );
     }
@@ -893,7 +898,8 @@ function buildDecisionHistoryRow_(
   ruleVersion,
   recordedAt,
   decisionId,
-  baseline
+  baseline,
+  opportunityId
 ) {
   ruleVersion = ruleVersion || DECISION_RULE_VERSION;
   var action = decision && decision.action ? decision.action : '';
@@ -958,7 +964,8 @@ function buildDecisionHistoryRow_(
     baseline.bestPosition === null ||
     baseline.bestPosition === undefined
       ? ''
-      : baseline.bestPosition
+      : baseline.bestPosition,
+    String(opportunityId || '').trim()
   ];
 }
 

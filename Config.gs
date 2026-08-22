@@ -355,7 +355,9 @@ var DECISION_HISTORY_HEADERS = [
   'BaselineGuideQueryCount',
   'BaselineTop50QueryCount',
   'BaselineTop20QueryCount',
-  'BaselineBestPosition'
+  'BaselineBestPosition',
+  // Phase 7C-1: only future explicitly-linked Decisions populate this field.
+  'OpportunityID'
 ];
 
 /**
@@ -778,7 +780,8 @@ var RESEARCH_JOB_HEADERS = [
   '研究类型',
   // DEMAND_DISCOVERY / SEARCH_DEMAND 元数据（按 research_type 解释；append-only）
   '雷达ID', '触发类型', '锚点页面', '发现范围', '种子词', '来源族请求', '信号摘要',
-  '发现周期日期'
+  '发现周期日期',
+  'OpportunityID'
 ];
 
 /** 研究任务来源类型（单元格写英文；旧行空值视为 CONTENT_RESEARCH） */
@@ -1194,7 +1197,9 @@ var DEMAND_RADAR_HEADERS = [
   '研究结果路径',
   // R3A search demand job binding (append-only, do not shift existing indices)
   '搜索需求任务ID',
-  '最近搜索需求时间'
+  '最近搜索需求时间',
+  // Phase 7C-1: stable GSC Opportunity identity (append-only)
+  'OpportunityID'
 ];
 
 var SOURCE_FAMILY = {

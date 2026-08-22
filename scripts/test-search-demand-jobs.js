@@ -21,6 +21,7 @@ function extractAssign(src, name) {
 var root = path.join(__dirname, '..');
 var configSrc = fs.readFileSync(path.join(root, 'Config.gs'), 'utf8');
 var researchSrc = fs.readFileSync(path.join(root, 'ResearchJobs.gs'), 'utf8');
+var identitySrc = fs.readFileSync(path.join(root, 'OpportunityIdentity.gs'), 'utf8');
 var codeSrc = fs.readFileSync(path.join(root, 'Code.gs'), 'utf8');
 
 var QUERY_BLIND_SPOT_TRIGGER = extractAssign(configSrc, 'QUERY_BLIND_SPOT_TRIGGER');
@@ -88,6 +89,7 @@ var sandbox = {
 };
 
 vm.createContext(sandbox);
+vm.runInContext(identitySrc, sandbox);
 vm.runInContext(researchSrc, sandbox);
 
 assert(typeof sandbox.isSearchDemandEligible_ === 'function', 'missing isSearchDemandEligible_');
@@ -112,6 +114,7 @@ var RUN_DATE = '2026-08-18';
 var GAME = 'Agefield High: Rock the School';
 var SITE = 'Agefield High';
 var RADAR_ID = 'agefield|/agefield-high-rock-the-school/classes/|QUERY_BLIND_SPOT';
+var OPPORTUNITY_ID = 'opp-agefield-agefield-high-rock-the-school-classes-query-blind-spot-001';
 
 function radar_(opts) {
   opts = opts || {};
@@ -184,6 +187,7 @@ assert(sandbox.isDemandDiscoveryEligible_(radar1, { runDate: RUN_DATE }) === fal
 var contract1 = sandbox.buildSearchDemandJobContract_(radar1, new Date('2026-08-18T00:00:00Z'), RUN_DATE);
 assert(contract1.research_type === RESEARCH_TYPE.SEARCH_DEMAND, 'Case1 research_type');
 assert(contract1.radar_id === RADAR_ID, 'Case1 radar_id');
+assert(contract1.opportunity_id === OPPORTUNITY_ID, 'Case1 OpportunityID inherited');
 assert(contract1.search_cycle_date === RUN_DATE, 'Case1 search_cycle_date');
 assert(/-20260818$/.test(contract1.job_id), 'Case1 job_id ends with cycle');
 assert(contract1.job_id.indexOf('search-') === 0, 'Case1 job_id search prefix');
@@ -299,6 +303,10 @@ assert(
 // Case 6: pendingSearchDemandJobs 只返回 SEARCH_DEMAND
 var searchSheetRow = sandbox.searchDemandResearchJobSheetRow_(contract1, SITE, createdAt);
 assert(searchSheetRow.length === RESEARCH_JOB_HEADERS.length, 'Case6 sheet row matches headers');
+assert(
+  searchSheetRow[RESEARCH_JOB_HEADERS.indexOf('OpportunityID')] === OPPORTUNITY_ID,
+  'Case6 sheet stores OpportunityID'
+);
 assert(
   searchSheetRow[RESEARCH_JOB_HEADERS.indexOf('任务状态')] === '待搜索需求执行',
   'Case6 status label'

@@ -19,6 +19,7 @@ var sheetSrc = fs.readFileSync(path.join(root, 'SheetManager.gs'), 'utf8');
 var opportunitySrc = fs.readFileSync(path.join(root, 'OpportunityEngine.gs'), 'utf8');
 var decisionSrc = fs.readFileSync(path.join(root, 'DecisionEngine.gs'), 'utf8');
 var researchSrc = fs.readFileSync(path.join(root, 'ResearchJobs.gs'), 'utf8');
+var identitySrc = fs.readFileSync(path.join(root, 'OpportunityIdentity.gs'), 'utf8');
 
 function extractFn(src, name) {
   var start = src.indexOf('function ' + name + '(');
@@ -66,15 +67,14 @@ assert(DEMAND_RADAR_HEADERS.indexOf('雷达ID') === 0, 'RadarID header');
 assert(DEMAND_RADAR_HEADERS.indexOf('交叉验证') >= 0, 'CrossValidated header');
 assert(DEMAND_RADAR_HEADERS.indexOf('独立来源族数') >= 0, 'family count header');
 assert(DEMAND_RADAR_HEADERS.indexOf('研究任务ID') === 24, 'R2 ResearchJobID column unmoved');
+assert(DEMAND_RADAR_HEADERS.indexOf('搜索需求任务ID') >= 0, 'search job id appended');
 assert(
-  DEMAND_RADAR_HEADERS[DEMAND_RADAR_HEADERS.length - 2] === '搜索需求任务ID',
-  'search job id appended'
-);
-assert(
-  DEMAND_RADAR_HEADERS[DEMAND_RADAR_HEADERS.length - 1] === '最近搜索需求时间',
+  DEMAND_RADAR_HEADERS[DEMAND_RADAR_HEADERS.length - 2] === '最近搜索需求时间',
   'search job time appended'
 );
-assert(DEMAND_RADAR_HEADERS.length === 34, 'header count');
+assert(DEMAND_RADAR_HEADERS[DEMAND_RADAR_HEADERS.length - 1] === 'OpportunityID',
+  'opportunity id appended');
+assert(DEMAND_RADAR_HEADERS.length === 35, 'header count');
 
 function pagePathFromUrl_(pageUrl) {
   var raw = String(pageUrl || '').trim();
@@ -125,6 +125,7 @@ var sandbox = {
   normalizeKeyDate_: normalizeKeyDate_
 };
 vm.createContext(sandbox);
+vm.runInContext(identitySrc, sandbox);
 vm.runInContext(radarSrc, sandbox);
 
 var AGEFIELD = 'Agefield High: Rock the School';
@@ -205,6 +206,10 @@ assert(day1.skipped === false, 'case1 not skipped');
 assert(day1.rows.length === 1, 'case1 one row');
 var row1 = day1.rows[0];
 var radarId = String(row1[col('雷达ID')]);
+var opportunityId = String(row1[col('OpportunityID')]);
+assert(opportunityId === 'opp-agefield-agefield-high-rock-the-school-classes-query-blind-spot-001',
+  'case1 stable OpportunityID');
+assert(sandbox.isStableOpportunityId_(opportunityId), 'case1 OpportunityID format');
 assert(radarId.indexOf('agefield|') === 0, 'slug from RESEARCH_GAME_SLUGS');
 assert(/\|\/agefield-high-rock-the-school\/classes\/\|QUERY_BLIND_SPOT$/.test(radarId),
   'stable id path+trigger');
@@ -234,6 +239,8 @@ var day2 = sandbox.reconcileDemandRadarRows_(day1.rows, [day2Det], {
 assert(day2.rows.length === 1, 'case2 no second row');
 var row2 = day2.rows[0];
 assert(row2[col('雷达ID')] === radarId, 'case2 same id');
+assert(row2[col('OpportunityID')] === opportunityId, 'case2 same OpportunityID');
+assert(row2[col('雷达ID')] && row2[col('OpportunityID')], 'case2 RadarID and OpportunityID both present');
 assert(row2[col('首次发现')] === '2026-08-17', 'case2 first seen frozen');
 assert(row2[col('最近发现')] === '2026-08-18', 'case2 last seen updated');
 assert(row2[col('页面点击7日')] === 14, 'case2 metrics updated');
@@ -300,6 +307,17 @@ var slashB = sandbox.buildRadarId_(
 );
 assert(slashA === slashB, 'trailing slash must not fork RadarID');
 assert(slashA === radarId, 'slash ids match case1 id');
+assert(
+  sandbox.buildOpportunityIdFromRadarId_(radarId) !==
+    sandbox.buildOpportunityIdFromRadarId_('agefield|/agefield-high-rock-the-school/other/|QUERY_BLIND_SPOT'),
+  'different RadarID gets different OpportunityID'
+);
+assert(
+  sandbox.buildOpportunityIdFromRadarId_(
+    'ms2|/mortal-shell-ii/skip-prologue/|QUERY_BLIND_SPOT'
+  ) === 'opp-ms2-mortal-shell-ii-skip-prologue-query-blind-spot-001',
+  'Mortal Shell II skip-prologue OpportunityID'
+);
 
 var slashMerge = sandbox.reconcileDemandRadarRows_(day1.rows, [
   detection_({
