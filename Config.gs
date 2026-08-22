@@ -669,6 +669,25 @@ var OPPORTUNITY_HEADERS = [
   '研究任务ID', '研究请求时间'
 ];
 
+/** Phase 7C-3B M0：External Discovery + GSC + Existing Content Merge。 */
+var EXTERNAL_OPPORTUNITY_HEADERS = [
+  'OpportunityID', 'Game', 'OpportunityType', 'ExternalEvidence',
+  'GSCEvidence', 'ExistingAsset', 'Confidence', 'RecommendedAction',
+  'SourceReference'
+];
+
+var EXTERNAL_OPPORTUNITY_TYPES = {
+  NEW_PAGE_CANDIDATE: 'NEW_PAGE_CANDIDATE',
+  EXPAND_EXISTING: 'EXPAND_EXISTING',
+  WATCH: 'WATCH'
+};
+
+var EXTERNAL_OPPORTUNITY_CONFIDENCE = {
+  HIGH: 'HIGH',
+  MEDIUM: 'MEDIUM',
+  LOW: 'LOW'
+};
+
 /** Opportunity Engine 独立动作（勿与 Decision Engine RecommendedAction 混用） */
 var OPPORTUNITY_ACTIONS = {
   RESEARCH_EXPAND_EXISTING: 'RESEARCH_EXPAND_EXISTING',

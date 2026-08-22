@@ -809,7 +809,16 @@ function handleGameWideDiscoveryCallback_(payload) {
   }
 
   jobSheet.getRange(found.sheetRow, 1, 1, lastCol).setValues([row]);
-  return { ok: true, job_id: jobId, status: executionStatus };
+  var merge = null;
+  if (executionStatus === 'COMPLETED' && typeof runExternalOpportunityMergeM0 === 'function') {
+    try {
+      merge = runExternalOpportunityMergeM0(payload);
+    } catch (mergeErr) {
+      merge = { ok: false, error: String(mergeErr && mergeErr.message || mergeErr) };
+      writeLog_('WARN', '', 'GAME_WIDE Opportunity Merge M0 skipped: ' + merge.error);
+    }
+  }
+  return { ok: true, job_id: jobId, status: executionStatus, opportunity_merge: merge };
 }
 
 // ---------------------------------------------------------------------------

@@ -15,7 +15,16 @@ function runContentOpportunityEngine() {
 
   var sites = getEnabledSites();
   if (!sites.length) {
-    replaceSheetDataRows_(SHEET_NAMES.OPPORTUNITIES, OPPORTUNITY_HEADERS, []);
+    var emptyRows = typeof mergeExternalOpportunityRowsIntoLegacyOutput_ === 'function'
+      ? mergeExternalOpportunityRowsIntoLegacyOutput_([])
+      : [];
+    var emptyHeaders = typeof externalOpportunityAllHeaders_ === 'function'
+      ? externalOpportunityAllHeaders_()
+      : OPPORTUNITY_HEADERS;
+    var normalizedEmptyRows = typeof externalOpportunityOutputRows_ === 'function'
+      ? externalOpportunityOutputRows_(emptyRows)
+      : emptyRows;
+    replaceSheetDataRows_(SHEET_NAMES.OPPORTUNITIES, emptyHeaders, normalizedEmptyRows);
     writeLog_('INFO', '', 'runContentOpportunityEngine 结束：无启用站点');
     return;
   }
@@ -68,7 +77,17 @@ function runContentOpportunityEngine() {
     outRows[r][22] = ops.researchRequestedAt || '';
   }
 
-  replaceSheetDataRows_(SHEET_NAMES.OPPORTUNITIES, OPPORTUNITY_HEADERS, outRows);
+  if (typeof mergeExternalOpportunityRowsIntoLegacyOutput_ === 'function') {
+    outRows = mergeExternalOpportunityRowsIntoLegacyOutput_(outRows);
+  }
+  var outputHeaders = typeof externalOpportunityAllHeaders_ === 'function'
+    ? externalOpportunityAllHeaders_()
+    : OPPORTUNITY_HEADERS;
+  var outputRows = typeof externalOpportunityOutputRows_ === 'function'
+    ? externalOpportunityOutputRows_(outRows)
+    : outRows;
+
+  replaceSheetDataRows_(SHEET_NAMES.OPPORTUNITIES, outputHeaders, outputRows);
   writeLog_(
     'INFO',
     '',
@@ -79,6 +98,9 @@ function runContentOpportunityEngine() {
 function ensureOpportunitySheets_() {
   ensureSheet_(SHEET_NAMES.OPPORTUNITIES, OPPORTUNITY_HEADERS);
   ensureOpportunityHeader_();
+  if (typeof ensureExternalOpportunityHeaders_ === 'function') {
+    ensureExternalOpportunityHeaders_();
+  }
   var sheet = getSpreadsheet_().getSheetByName(SHEET_NAMES.OPPORTUNITIES);
   if (sheet) ensureOpportunityResearchColumns_(sheet);
 }
