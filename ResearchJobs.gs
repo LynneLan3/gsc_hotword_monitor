@@ -3272,6 +3272,15 @@ function applyResearchReviewDecisionValidation_() {
   }
 }
 
+/** Public manual entry: refresh only the「审核决定」strict dropdown. */
+function refreshResearchReviewValidation() {
+  ensureResearchJobSheets_();
+  applyResearchReviewDecisionValidation_();
+  SpreadsheetApp.flush();
+  return 'refreshResearchReviewValidation 完成 options=' +
+    RESEARCH_REVIEW_DECISION_OPTIONS.join('|');
+}
+
 /**
  * 仅追加「研究任务」缺失列；不重复、不改已有数据行。
  */
@@ -3336,18 +3345,25 @@ function processResearchReviewDecisions() {
     var decisionLabel = String(cell_(row, col, '审核决定') || '').trim();
     if (!decisionLabel) continue;
 
-    if (hasResearchReviewProcessed_(cell_(row, col, '审核时间'))) {
-      skippedProcessed++;
-      continue;
-    }
-
-    var statusRaw = String(cell_(row, col, '任务状态') || '').trim();
-    if (!isResearchJobAwaitingReview_(statusRaw)) {
-      skippedNotReview++;
-      continue;
-    }
-
     var researchType = String(cell_(row, col, '研究类型') || '').trim();
+    var requeue = isResearchReviewRequeue_(decisionLabel, researchType);
+    var statusRaw = String(cell_(row, col, '任务状态') || '').trim();
+    if (requeue) {
+      if (!isResearchReviewRequeueSourceStatus_(statusRaw)) {
+        skippedNotReview++;
+        continue;
+      }
+    } else {
+      if (hasResearchReviewProcessed_(cell_(row, col, '审核时间'))) {
+        skippedProcessed++;
+        continue;
+      }
+      if (!isResearchJobAwaitingReview_(statusRaw)) {
+        skippedNotReview++;
+        continue;
+      }
+    }
+
     var nextStatus = statusAfterResearchReviewDecision_(decisionLabel, researchType);
     if (!nextStatus) {
       skippedUnknown++;
@@ -3360,7 +3376,6 @@ function processResearchReviewDecisions() {
     }
 
     var sheetRow = i + 2;
-    var requeue = isResearchReviewRequeue_(decisionLabel, researchType);
     setCellIf_(sheet, sheetRow, col, '任务状态', nextStatus);
     if (requeue) {
       // 只清空触发器；原 JobID、ActionContext 与旧 Evidence 保留到新 callback。
@@ -3422,6 +3437,16 @@ function isResearchJobAwaitingReview_(status) {
   if (s === RESEARCH_JOB_STATUS.REVIEW) return true;
   if (s === RESEARCH_JOB_STATUS_LABELS.REVIEW) return true;
   return enumFromLabel_(RESEARCH_JOB_STATUS_LABELS, s) === RESEARCH_JOB_STATUS.REVIEW;
+}
+
+function isResearchReviewRequeueSourceStatus_(status) {
+  var s = String(status || '').trim();
+  if (!s) return false;
+  var statusEnum = enumFromLabel_(RESEARCH_JOB_STATUS_LABELS, s);
+  return statusEnum === RESEARCH_JOB_STATUS.REVIEW ||
+    statusEnum === RESEARCH_JOB_STATUS.APPROVED ||
+    statusEnum === RESEARCH_JOB_STATUS.WATCH ||
+    statusEnum === RESEARCH_JOB_STATUS.ARCHIVED;
 }
 
 /**

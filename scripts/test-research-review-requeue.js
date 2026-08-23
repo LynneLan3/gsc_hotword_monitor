@@ -25,9 +25,11 @@ var RESEARCH_TYPE = extractAssign(configSrc, 'RESEARCH_TYPE');
 var RESEARCH_REVIEW_DECISION_LABELS = extractAssign(configSrc, 'RESEARCH_REVIEW_DECISION_LABELS');
 
 var rows = [];
+var validationState = {};
 var sheet = {
   getLastColumn: function () { return headers.length; },
   getLastRow: function () { return rows.length + 1; },
+  getMaxRows: function () { return 100; },
   getRange: function (row, column, rowCount, columnCount) {
     return {
       getValues: function () {
@@ -37,6 +39,10 @@ var sheet = {
       setValue: function (value) {
         rows[row - 2][column - 1] = value;
       },
+      setDataValidation: function (rule) {
+        validationState.rule = rule;
+      },
+      setNumberFormat: function () {},
       setValues: function (values) {
         for (var i = 0; i < values.length; i++) rows[row - 2 + i] = values[i];
       }
@@ -57,7 +63,28 @@ var context = {
   RESEARCH_JOB_HEADERS: headers,
   SHEET_NAMES: { RESEARCH_JOBS: '研究任务' },
   Logger: { log: function () {} },
-  SpreadsheetApp: { getActiveSpreadsheet: function () { return { getSheetByName: function () { return sheet; } }; } },
+  SpreadsheetApp: {
+    getActiveSpreadsheet: function () { return { getSheetByName: function () { return sheet; } }; },
+    newDataValidation: function () {
+      var rule = {};
+      return {
+        requireValueInList: function (values, showDropdown) {
+          rule.values = values.slice();
+          rule.showDropdown = showDropdown;
+          return this;
+        },
+        setAllowInvalid: function (allowInvalid) {
+          rule.allowInvalid = allowInvalid;
+          return this;
+        },
+        build: function () {
+          validationState.rule = rule;
+          return rule;
+        }
+      };
+    },
+    flush: function () {}
+  },
   getSpreadsheet_: function () { return { getSheetByName: function () { return sheet; } }; },
   writeLog_: function () {},
   ensureResearchJobSheets_: function () {},
@@ -108,14 +135,14 @@ assert(
   'legacy content research cannot be requeued by 重新研究'
 );
 
-function makeRow(researchType, decision) {
+function makeRow(researchType, decision, status, auditTime) {
   var row = new Array(headers.length).fill('');
   row[col['任务ID']] = 'ms2-gloombound-flame-20260823';
   row[col['站点']] = 'Mortal Shell II';
   row[col['游戏']] = 'Mortal Shell II';
   row[col['搜索词 / topic']] = 'Gloombound Flame';
   row[col['页面路径']] = '/mortal-shell-ii/gloombound-flame/';
-  row[col['任务状态']] = context.RESEARCH_JOB_STATUS_LABELS.REVIEW;
+  row[col['任务状态']] = status || context.RESEARCH_JOB_STATUS_LABELS.REVIEW;
   row[col['关联搜索词']] = 'gloombound flame|lantern';
   row[col['研究类型']] = researchType;
   row[col['SourceAction']] = 'OPTIMIZE_EXISTING';
@@ -126,8 +153,18 @@ function makeRow(researchType, decision) {
     pageImpressions: 158
   });
   row[col['审核决定']] = decision;
+  row[col['审核时间']] = auditTime || '';
   return row;
 }
+
+assert(typeof context.refreshResearchReviewValidation === 'function', 'public dropdown refresh entry exists');
+assert(/重新研究/.test(context.refreshResearchReviewValidation()), 'public dropdown refresh completes');
+assert(validationState.rule.showDropdown === true, '审核决定 dropdown is strict list mode');
+assert(validationState.rule.allowInvalid === false, '审核决定 dropdown rejects invalid values');
+assert(
+  validationState.rule.values.join('|') === '批准开发|继续观察|无需处理|重新研究',
+  '审核决定 validation has exactly four options'
+);
 
 var actionContextBefore = JSON.parse(makeRow('PAGE_OPTIMIZATION_RESEARCH', '重新研究')[col['ActionContext']]);
 var oldEvidence = [{ 任务ID: 'ms2-gloombound-flame-20260823', 证据摘录: 'old evidence remains' }];
@@ -153,11 +190,37 @@ assert(pending[0].research_type === 'PAGE_OPTIMIZATION_RESEARCH', 'pending job k
 assert(pending[0].source_action === 'OPTIMIZE_EXISTING', 'pending job keeps SourceAction');
 assert(pending[0].action_context.clusterKey === 'GLOOMBOUND_FLAME', 'pending job keeps ActionContext');
 
+function assertRequeueFromCompletedStatus(status) {
+  rows.length = 0;
+  rows.push(makeRow('PAGE_OPTIMIZATION_RESEARCH', '重新研究', status, new Date('2026-08-23T10:00:00Z')));
+  var result = context.processResearchReviewDecisions();
+  assert(/processed=1/.test(result), status + ' + 重新研究 requeues');
+  assert(rows[0][col['任务状态']] === context.RESEARCH_JOB_STATUS_LABELS.PENDING, status + ' → 待处理');
+  assert(rows[0][col['审核决定']] === '', status + ' clears 审核决定');
+  assert(rows[0][col['审核时间']] === '', status + ' clears old 审核时间');
+}
+
+assertRequeueFromCompletedStatus(context.RESEARCH_JOB_STATUS_LABELS.APPROVED);
+assertRequeueFromCompletedStatus(context.RESEARCH_JOB_STATUS_LABELS.WATCH);
+assertRequeueFromCompletedStatus(context.RESEARCH_JOB_STATUS_LABELS.ARCHIVED);
+
+function assertRequeueBlockedFrom(status) {
+  rows.length = 0;
+  rows.push(makeRow('PAGE_OPTIMIZATION_RESEARCH', '重新研究', status, new Date('2026-08-23T10:00:00Z')));
+  var result = context.processResearchReviewDecisions();
+  assert(/processed=0/.test(result), status + ' + 重新研究 is not processed');
+  assert(rows[0][col['任务状态']] === status, status + ' status unchanged');
+  assert(rows[0][col['审核决定']] === '重新研究', status + ' decision remains for blocked requeue');
+}
+
+assertRequeueBlockedFrom(context.RESEARCH_JOB_STATUS_LABELS.PENDING);
+assertRequeueBlockedFrom(context.RESEARCH_JOB_STATUS_LABELS.RUNNING);
+
 rows.length = 0;
-rows.push(makeRow('CONTENT_RESEARCH', '重新研究'));
+rows.push(makeRow('CONTENT_RESEARCH', '重新研究', context.RESEARCH_JOB_STATUS_LABELS.APPROVED, new Date('2026-08-23T10:00:00Z')));
 var legacyResult = context.processResearchReviewDecisions();
-assert(/processed=0/.test(legacyResult) && /skippedUnknown=1/.test(legacyResult), 'legacy research is not requeued');
-assert(rows[0][col['任务状态']] === context.RESEARCH_JOB_STATUS_LABELS.REVIEW, 'legacy status unchanged');
+assert(/processed=0/.test(legacyResult), 'legacy research is not requeued');
+assert(rows[0][col['任务状态']] === context.RESEARCH_JOB_STATUS_LABELS.APPROVED, 'legacy status unchanged');
 assert(rows[0][col['审核决定']] === '重新研究', 'legacy decision is not cleared');
 
 console.log('PASS scripts/test-research-review-requeue.js');
