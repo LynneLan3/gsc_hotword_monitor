@@ -235,6 +235,13 @@ function runDailyFinalizerUnlocked_(sites, runDate) {
     refreshUnifiedActionQueue_(runDate);
     syncDevelopmentTasksFromApprovedDecisions();
     refreshImplementationHandoffs_();
+    try {
+      maintainExperimentLedger_();
+    } catch (ledgerError) {
+      var ledgerDetail = formatErrorWithStack_(ledgerError);
+      writeLog_('WARN', '', 'EXPERIMENT_LEDGER_MAINTENANCE_FAILED | ' + ledgerDetail);
+      Logger.log('EXPERIMENT_LEDGER_MAINTENANCE_FAILED | ' + ledgerDetail);
+    }
     sortSheetsNewestFirst_([SHEET_NAMES.LOG]);
     setDailyRunPhase_('done');
     deleteDailyContinuationTriggers_();

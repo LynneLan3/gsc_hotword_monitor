@@ -1,0 +1,60 @@
+{
+  "schemaVersion": "hotword-publish-receipt-v1",
+  "dryRun": true,
+  "common": {
+    "site": "Mortal Shell II",
+    "siteId": "mortal-shell-ii",
+    "game": "Mortal Shell II",
+    "releaseDate": "2026-08-15",
+    "lifecyclePhase": "growth",
+    "batchId": "ms2-batch-5-20260823",
+    "commitSha": "fixture-batch-5-sha",
+    "deploymentUrl": "https://fixture-batch-5.vercel.app",
+    "productionUrl": "https://mortal-shell-ii.vercel.app/",
+    "deployedAt": "2026-08-23T11:36:00+08:00",
+    "developmentTaskId": "",
+    "opportunityId": "",
+    "decisionId": ""
+  },
+  "interventions": [
+    {
+      "action": "CREATE_PAGE",
+      "primaryUrl": "/mortal-shell-ii/tar-golem/",
+      "affectedUrls": [
+        "/mortal-shell-ii/tar-golem/",
+        "/mortal-shell-ii/skip-prologue/"
+      ],
+      "triggerType": "mixed",
+      "triggerQueries": ["mortal shell 2 tar golem"],
+      "triggerSummary": "Fresh trophy/missable demand",
+      "sourceRefs": ["Batch 5 Fresh Discovery"],
+      "changeSummary": "Created Tar Golem trophy guide and linked it from Skip Prologue.",
+      "reason": "Distinct missable trophy intent with no existing intent-owning page."
+    },
+    {
+      "action": "CREATE_PAGE",
+      "primaryUrl": "/mortal-shell-ii/seedbearers-scripture/",
+      "affectedUrls": ["/mortal-shell-ii/axatana/"],
+      "triggerType": "mixed",
+      "triggerQueries": ["mortal shell 2 seedbearer's scripture"],
+      "triggerSummary": "Fresh item demand",
+      "sourceRefs": ["Batch 5 Fresh Discovery"],
+      "changeSummary": "Created Seedbearer's Scripture guide.",
+      "reason": "Distinct item intent with no existing intent-owning page."
+    },
+    {
+      "action": "UPDATE_PAGE",
+      "primaryUrl": "/mortal-shell-ii/skip-prologue/",
+      "affectedUrls": [
+        "/mortal-shell-ii/skip-prologue/",
+        "/mortal-shell-ii/tar-golem/"
+      ],
+      "triggerType": "mixed",
+      "triggerQueries": ["mortal shell 2 skip prologue"],
+      "triggerSummary": "Existing page promotion and reciprocal linking",
+      "sourceRefs": ["Batch 5 Fresh Discovery"],
+      "changeSummary": "Updated Skip Prologue with links to the new guides.",
+      "reason": "Keep the existing intent owner while improving discovery of related pages."
+    }
+  ]
+}

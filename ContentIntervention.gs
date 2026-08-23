@@ -11,15 +11,28 @@ function ensureContentUpdateHeader_() {
   var sheet = getSpreadsheet_().getSheetByName(SHEET_NAMES.CONTENT_UPDATES);
   if (!sheet) return;
   ensureSheetGrid_(sheet, 1, CONTENT_UPDATE_HEADERS.length);
-  var lastCol = Math.max(sheet.getLastColumn(), CONTENT_UPDATE_HEADERS.length);
+  var lastCol = Math.max(sheet.getLastColumn(), 1);
   var header = sheet.getRange(1, 1, 1, lastCol).getValues()[0];
-  var actual = [];
-  for (var i = 0; i < CONTENT_UPDATE_HEADERS.length; i++) {
-    actual.push(String(header[i] || '').trim());
+  for (var i = 0; i < 7; i++) {
+    var actual = String(header[i] || '').trim();
+    if (actual !== CONTENT_UPDATE_HEADERS[i]) {
+      throw new Error(
+        '内容更新记录 legacy header mismatch at column ' + (i + 1) +
+        ': expected=' + CONTENT_UPDATE_HEADERS[i] + ' actual=' + actual
+      );
+    }
   }
-  if (actual.join('|') === CONTENT_UPDATE_HEADERS.join('|')) return;
-  sheet.getRange(1, 1, 1, CONTENT_UPDATE_HEADERS.length).setValues([CONTENT_UPDATE_HEADERS]);
-  sheet.getRange(1, 1, 1, CONTENT_UPDATE_HEADERS.length).setFontWeight('bold');
+  var have = headerIndexMap_(header);
+  var toAdd = [];
+  for (var n = 7; n < CONTENT_UPDATE_HEADERS.length; n++) {
+    if (have[CONTENT_UPDATE_HEADERS[n]] === undefined) toAdd.push(CONTENT_UPDATE_HEADERS[n]);
+  }
+  if (!toAdd.length) return;
+  var startCol = lastCol + 1;
+  if (!String(header[lastCol - 1] || '').trim()) startCol = lastCol;
+  ensureSheetGrid_(sheet, 1, startCol + toAdd.length - 1);
+  sheet.getRange(1, startCol, 1, toAdd.length).setValues([toAdd]);
+  sheet.getRange(1, startCol, 1, toAdd.length).setFontWeight('bold');
 }
 
 /**

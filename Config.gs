@@ -34,6 +34,8 @@ var SHEET_NAMES = {
   RESEARCH_REVIEW: '研究审核',
   DEVELOPMENT_TASKS: '开发任务',
   CONTENT_UPDATES: '内容更新记录',
+  INTERVENTION_OBSERVATIONS: '干预观察',
+  INTERVENTION_TIMELINE: '干预时间线',
   /** 旧/实验层：仅用于识别与隐藏，setup 不会创建 */
   PAGE_OPPORTUNITIES: 'PAGE_OPPORTUNITIES'
 };
@@ -69,6 +71,8 @@ var SHEET_UI_ORDER = [
   SHEET_NAMES.EVALUATION_ELIGIBILITY,
   SHEET_NAMES.OUTCOME_DELTA,
   SHEET_NAMES.EFFECT_EVALUATION,
+  SHEET_NAMES.INTERVENTION_OBSERVATIONS,
+  SHEET_NAMES.INTERVENTION_TIMELINE,
   SHEET_NAMES.RULES,
   SHEET_NAMES.DAILY,
   SHEET_NAMES.QUERIES,
@@ -725,7 +729,35 @@ var TODAY_ACTION_EXCLUDED = {
  * DecisionID / 更新类型追加在末尾，不移动 cooldown 依赖的前 5 列。
  */
 var CONTENT_UPDATE_HEADERS = [
-  '更新时间', '站点', '页面路径', '来源', '更新说明', '更新类型', 'DecisionID'
+  '更新时间', '站点', '页面路径', '来源', '更新说明', '更新类型', 'DecisionID',
+  'InterventionID', 'SiteID', 'BatchID', 'Action', 'PrimaryURL', 'AffectedURLs',
+  'TriggerType', 'TriggerQueries', 'TriggerSummary', 'SourceRefs', 'Reason',
+  'LifecyclePhase', 'ReleaseDate', 'ReleaseOffsetDay', 'CommitSHA',
+  'DeploymentURL', 'ProductionURL', 'ProductionDeployedAt', 'DevelopmentTaskID',
+  'OpportunityID', 'RecordedMode', 'BaselineDataDate', 'BaselinePageClicks7D',
+  'BaselinePageImpressions7D', 'BaselinePageCTR', 'BaselinePagePosition',
+  'BaselinePageQueryCount7D', 'BaselineSiteClicks7D', 'BaselineSiteImpressions7D',
+  'ReceiptKey', 'RecordedAt'
+];
+
+/** Automatic Experiment Ledger V1：GSC-owned intervention observations. */
+var INTERVENTION_OBSERVATION_HEADERS = [
+  'ObservationID', 'InterventionID', 'DecisionID', 'SiteID', 'Site', 'PrimaryURL',
+  'Horizon', 'TargetDate', 'ObservedDataDate', 'Status', 'BaselineDataDate',
+  'BaselineClicks7D', 'BaselineImpressions7D', 'BaselineCTR', 'BaselinePosition',
+  'BaselineQueryCount7D', 'ObservedClicks7D', 'ObservedImpressions7D',
+  'ObservedCTR', 'ObservedPosition', 'ObservedQueryCount7D', 'ClicksDelta',
+  'ImpressionsDelta', 'CTRDelta', 'PositionImprovement', 'QueryCountDelta',
+  'BaselineSiteImpressions7D', 'ObservedSiteImpressions7D', 'AttributionMode',
+  'UpdatedAt'
+];
+
+/** Materialized human-readable ledger; old retrospective rows remain untouched. */
+var INTERVENTION_TIMELINE_HEADERS = [
+  'InterventionID', '时间（UTC+8）', '相对发售日', '生命周期', '批次/阶段',
+  '动作类型', '目标页面/范围', '触发信号', '动作前证据', 'Git Commit',
+  '证据来源', '观察窗口', '观察到的数据变化', '归因判断', '置信度',
+  'DecisionID', '回溯状态', '混杂因素', '下次评估', '备注'
 ];
 
 /**

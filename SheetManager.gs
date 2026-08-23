@@ -168,7 +168,25 @@ function applyColumnWidths_(sheet, name) {
     };
   } else if (name === SHEET_NAMES.CONTENT_UPDATES) {
     widths = {
-      1: 110, 2: 220, 3: 240, 4: 120, 5: 360, 6: 140, 7: 280
+      1: 110, 2: 220, 3: 240, 4: 120, 5: 360, 6: 140, 7: 280,
+      8: 300, 9: 150, 10: 220, 11: 160, 12: 260, 13: 420,
+      14: 150, 15: 360, 16: 420, 17: 360, 18: 420, 19: 140,
+      20: 110, 21: 110, 22: 300, 23: 300, 24: 300, 25: 220,
+      26: 260, 27: 220, 28: 170, 29: 120, 30: 130, 31: 130,
+      32: 120, 33: 120, 34: 140, 35: 140, 36: 170, 37: 340, 38: 180
+    };
+  } else if (name === SHEET_NAMES.INTERVENTION_OBSERVATIONS) {
+    widths = {
+      1: 300, 2: 300, 3: 260, 4: 150, 5: 220, 6: 300, 7: 90, 8: 110,
+      9: 120, 10: 130, 11: 120, 12: 130, 13: 150, 14: 120, 15: 120,
+      16: 150, 17: 130, 18: 150, 19: 120, 20: 120, 21: 150, 22: 120,
+      23: 130, 24: 120, 25: 150, 26: 130, 27: 170, 28: 180, 29: 220, 30: 180
+    };
+  } else if (name === SHEET_NAMES.INTERVENTION_TIMELINE) {
+    widths = {
+      1: 300, 2: 180, 3: 110, 4: 120, 5: 180, 6: 180, 7: 360,
+      8: 420, 9: 480, 10: 300, 11: 360, 12: 120, 13: 480, 14: 240,
+      15: 120, 16: 260, 17: 190, 18: 360, 19: 120, 20: 480
     };
   } else if (name === SHEET_NAMES.FEEDBACK_SAMPLES) {
     widths = {
@@ -618,6 +636,8 @@ function setupSheets() {
   ensureSheet_(SHEET_NAMES.DEVELOPMENT_TASKS, DEVELOPMENT_TASK_HEADERS);
   ensureSheet_(SHEET_NAMES.CONTENT_UPDATES, CONTENT_UPDATE_HEADERS);
   ensureContentUpdateHeader_();
+  ensureSheet_(SHEET_NAMES.INTERVENTION_OBSERVATIONS, INTERVENTION_OBSERVATION_HEADERS);
+  ensureSheet_(SHEET_NAMES.INTERVENTION_TIMELINE, INTERVENTION_TIMELINE_HEADERS);
 
   // 不 ensure PAGE_OPPORTUNITIES：旧实验页只识别/排序/隐藏，不新建
   ensureUsageGuideSheet_();
