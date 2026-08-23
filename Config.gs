@@ -1013,20 +1013,23 @@ var RESEARCH_JOB_STATUS_LABELS = {
 var RESEARCH_REVIEW_DECISION = {
   APPROVE: 'APPROVE',
   WATCH: 'WATCH',
-  NO_ACTION: 'NO_ACTION'
+  NO_ACTION: 'NO_ACTION',
+  RESEARCH: 'RESEARCH'
 };
 
 var RESEARCH_REVIEW_DECISION_LABELS = {
   APPROVE: '批准开发',
   WATCH: '继续观察',
-  NO_ACTION: '无需处理'
+  NO_ACTION: '无需处理',
+  RESEARCH: '重新研究'
 };
 
 /** Sheet「审核决定」下拉选项（中文，顺序固定） */
 var RESEARCH_REVIEW_DECISION_OPTIONS = [
   RESEARCH_REVIEW_DECISION_LABELS.APPROVE,
   RESEARCH_REVIEW_DECISION_LABELS.WATCH,
-  RESEARCH_REVIEW_DECISION_LABELS.NO_ACTION
+  RESEARCH_REVIEW_DECISION_LABELS.NO_ACTION,
+  RESEARCH_REVIEW_DECISION_LABELS.RESEARCH
 ];
 
 /** hotword-engine 回写的研究结果建议（与内容机会「建议动作」不同） */
@@ -2016,7 +2019,7 @@ function getMetricGuideRows_() {
       '研究审核 / 研究任务审核决定',
       '人工判断',
       '产品经理 / 运营',
-      '人工确认来源真实、Evidence 相关、无跨游戏污染、是否支撑改内容；决定批准开发 / 继续观察 / 无需处理',
+      '人工确认来源真实、Evidence 相关、无跨游戏污染、是否支撑改内容；决定批准开发 / 继续观察 / 无需处理 / 重新研究',
       '防止错误研究直接驱动改站',
       '是（开发任务入口）',
       '无自动阈值可替代',

@@ -3246,7 +3246,7 @@ function ensureResearchJobHeader_() {
 }
 
 /**
- * 「审核决定」列中文下拉：批准开发 / 继续观察 / 无需处理。
+ * 「审核决定」列中文下拉：批准开发 / 继续观察 / 无需处理 / 重新研究。
  * 仅约束该列；不改已有单元格内容。
  */
 function applyResearchReviewDecisionValidation_() {
@@ -3347,7 +3347,8 @@ function processResearchReviewDecisions() {
       continue;
     }
 
-    var nextStatus = statusAfterResearchReviewDecision_(decisionLabel);
+    var researchType = String(cell_(row, col, '研究类型') || '').trim();
+    var nextStatus = statusAfterResearchReviewDecision_(decisionLabel, researchType);
     if (!nextStatus) {
       skippedUnknown++;
       writeLog_(
@@ -3359,8 +3360,15 @@ function processResearchReviewDecisions() {
     }
 
     var sheetRow = i + 2;
+    var requeue = isResearchReviewRequeue_(decisionLabel, researchType);
     setCellIf_(sheet, sheetRow, col, '任务状态', nextStatus);
-    setCellIf_(sheet, sheetRow, col, '审核时间', now);
+    if (requeue) {
+      // 只清空触发器；原 JobID、ActionContext 与旧 Evidence 保留到新 callback。
+      setCellIf_(sheet, sheetRow, col, '审核决定', '');
+      setCellIf_(sheet, sheetRow, col, '审核时间', '');
+    } else {
+      setCellIf_(sheet, sheetRow, col, '审核时间', now);
+    }
     processed++;
     writeLog_(
       'INFO',
@@ -3420,11 +3428,20 @@ function isResearchJobAwaitingReview_(status) {
  * 审核决定（中文或内部 enum）→ 新任务状态中文标签。
  * @return {string} 空字符串表示无法识别
  */
-function statusAfterResearchReviewDecision_(decisionLabel) {
-  var decisionEnum = enumFromLabel_(
+function researchReviewDecisionEnum_(decisionLabel) {
+  return enumFromLabel_(
     RESEARCH_REVIEW_DECISION_LABELS,
     String(decisionLabel || '').trim()
   );
+}
+
+function isResearchReviewRequeue_(decisionLabel, researchType) {
+  return researchReviewDecisionEnum_(decisionLabel) === RESEARCH_REVIEW_DECISION.RESEARCH &&
+    !!ACTION_RESEARCH_TYPES[String(researchType || '').trim()];
+}
+
+function statusAfterResearchReviewDecision_(decisionLabel, researchType) {
+  var decisionEnum = researchReviewDecisionEnum_(decisionLabel);
   if (decisionEnum === RESEARCH_REVIEW_DECISION.APPROVE) {
     return RESEARCH_JOB_STATUS_LABELS.APPROVED;
   }
@@ -3433,6 +3450,9 @@ function statusAfterResearchReviewDecision_(decisionLabel) {
   }
   if (decisionEnum === RESEARCH_REVIEW_DECISION.NO_ACTION) {
     return RESEARCH_JOB_STATUS_LABELS.ARCHIVED;
+  }
+  if (decisionEnum === RESEARCH_REVIEW_DECISION.RESEARCH && isResearchReviewRequeue_(decisionLabel, researchType)) {
+    return RESEARCH_JOB_STATUS_LABELS.PENDING;
   }
   return '';
 }
@@ -4096,8 +4116,8 @@ function debugResearchJobsSelfCheck() {
   assert(hasResearchReviewProcessed_(new Date()) === true, 'Date 审核时间 processed');
   assert(
     RESEARCH_REVIEW_DECISION_OPTIONS.join('|') ===
-      '批准开发|继续观察|无需处理',
-    '审核决定下拉中文三项'
+      '批准开发|继续观察|无需处理|重新研究',
+    '审核决定下拉中文四项'
   );
   assert(
     opportunityLabel_(RESEARCH_RESULT_RECOMMENDATION_LABELS, 'EXPAND_EXISTING') ===
