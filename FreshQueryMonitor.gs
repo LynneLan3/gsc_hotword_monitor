@@ -79,7 +79,6 @@ function runFreshQueryMonitorUnlocked_() {
     errors;
   writeLog_('INFO', '', summary);
   Logger.log(summary);
-  alertUi_(summary);
   return summary;
 }
 
@@ -100,10 +99,17 @@ function collectFreshQueryMonitorSite_(site, generatedAt, range) {
     range.endDate,
     FRESH_HOURLY_ROW_LIMIT
   );
+  var pagePacked = fetchHourlyPagesResult_(
+    site.propertyUrl,
+    range.startDate,
+    range.endDate,
+    FRESH_HOURLY_ROW_LIMIT
+  );
   var built = buildFreshQueryMonitorRows_(packed.rows, {
     site: site,
     generatedAt: generatedAt,
-    metadata: packed.metadata
+    metadata: packed.metadata,
+    pageHourlyRows: pagePacked.rows
   });
 
   if (site.name === 'Mortal Shell II') {
@@ -115,6 +121,8 @@ function collectFreshQueryMonitorSite_(site, generatedAt, range) {
     site.name,
     'Fresh hourly | apiRows=' +
       ((packed.rows && packed.rows.length) || 0) +
+      ' | pageApiRows=' +
+      ((pagePacked.rows && pagePacked.rows.length) || 0) +
       ' | queries=' +
       built.all.length +
       ' | triggered=' +
@@ -144,6 +152,10 @@ function buildFreshQueryMonitorRows_(hourlyRows, opts) {
   var metadata = opts.metadata || null;
   var incomplete = isFreshHourlyIncomplete_(metadata);
   var windows = splitFreshQueryWindows_(hourlyRows);
+  var pageHourlyRows = opts.pageHourlyRows !== undefined ? opts.pageHourlyRows : null;
+  var pageWindows = pageHourlyRows === null
+    ? windows
+    : splitFreshQueryWindows_(pageHourlyRows, windows.maxHourMs);
   var queries = aggregateFreshQueryWindows_(windows.recent, windows.previous);
   var cutoffHour = windows.cutoffHour || '';
   var intentSnapshot = null;
@@ -151,6 +163,7 @@ function buildFreshQueryMonitorRows_(hourlyRows, opts) {
     intentSnapshot = buildIntentOpportunitySnapshot_(windows.recent, {
       site: opts.site || {},
       previousRows: windows.previous,
+      pageRows: pageWindows.recent,
       cutoffHour: cutoffHour,
       incomplete: incomplete
     });
@@ -203,17 +216,20 @@ function isFreshHourlyIncomplete_(metadata) {
  * 用返回数据里最晚的 hour 作为截止点，切近 24h / 前 24h。
  * recent: (max-24h, max]；previous: (max-48h, max-24h]。
  */
-function splitFreshQueryWindows_(hourlyRows) {
+function splitFreshQueryWindows_(hourlyRows, forcedMaxHourMs) {
   var empty = { recent: [], previous: [], cutoffHour: '', maxHourMs: 0 };
   if (!hourlyRows || !hourlyRows.length) return empty;
 
-  var maxHourMs = 0;
+  var forcedMax = Number(forcedMaxHourMs) || 0;
+  var maxHourMs = forcedMax;
   var cutoffHour = '';
   for (var i = 0; i < hourlyRows.length; i++) {
     var row = hourlyRows[i];
     if (!row || row.hourMs == null) continue;
-    if (row.hourMs > maxHourMs) {
+    if (!forcedMax && row.hourMs > maxHourMs) {
       maxHourMs = row.hourMs;
+      cutoffHour = row.hour || '';
+    } else if (forcedMax && row.hourMs === maxHourMs && !cutoffHour) {
       cutoffHour = row.hour || '';
     }
   }

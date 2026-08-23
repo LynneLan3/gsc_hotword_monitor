@@ -1,8 +1,9 @@
 /**
  * Query Cluster → Page Hotspot → Action（M0）。
  *
- * 输入是现有 hourly_all 的 Query×Page 行；输出为纯聚合结果，随后由
- * runFreshQueryMonitor 写入「Intent机会」。不调用 LLM，不改变 Query 明细。
+ * 输入是现有 hourly_all 的 Query×Page 行，以及独立的 hourly Page 行；输出为
+ * 纯聚合结果，随后由 runFreshQueryMonitor 写入「Intent机会」。不调用 LLM，
+ * 不改变 Query 明细。
  */
 
 function buildIntentOpportunitySnapshot_(recentRows, opts) {
@@ -12,9 +13,22 @@ function buildIntentOpportunitySnapshot_(recentRows, opts) {
   var pagesByPath = {};
   var previousByKey = {};
   var rows = recentRows || [];
+  var pageRows = opts.pageRows !== undefined ? opts.pageRows : null;
+  var useQueryRowsForPageHotspots = pageRows === null;
 
   for (var i = 0; i < rows.length; i++) {
-    addIntentAggregateRow_(rows[i], site, clustersByKey, pagesByPath);
+    addIntentAggregateRow_(
+      rows[i],
+      site,
+      clustersByKey,
+      pagesByPath,
+      useQueryRowsForPageHotspots
+    );
+  }
+  if (pageRows !== null) {
+    for (var pr = 0; pr < pageRows.length; pr++) {
+      addIntentPageAggregateRow_(pageRows[pr], pagesByPath);
+    }
   }
   for (var p = 0; p < (opts.previousRows || []).length; p++) {
     var previous = opts.previousRows[p] || {};
@@ -76,7 +90,7 @@ function buildIntentOpportunitySnapshot_(recentRows, opts) {
   };
 }
 
-function addIntentAggregateRow_(row, site, clustersByKey, pagesByPath) {
+function addIntentAggregateRow_(row, site, clustersByKey, pagesByPath, includePageMetrics) {
   row = row || {};
   var query = String(row.query || '').trim();
   var pagePath = intentPagePath_(row.page || row.pageUrl || '');
@@ -136,9 +150,32 @@ function addIntentAggregateRow_(row, site, clustersByKey, pagesByPath) {
   clusterPage.impressions += impressions;
   clusterPage.positionWeight += position * impressions;
 
-  var page = pagesByPath[pagePath];
-  if (!page) {
-    page = pagesByPath[pagePath] = {
+  var page = ensureIntentPageAggregate_(pagesByPath, pagePath);
+  if (includePageMetrics) {
+    page.clicks += clicks;
+    page.impressions += impressions;
+    page.positionWeight += position * impressions;
+  }
+  page.clusterSet[key] = true;
+  page.clusterImpressions[key] = (page.clusterImpressions[key] || 0) + impressions;
+}
+
+function addIntentPageAggregateRow_(row, pagesByPath) {
+  row = row || {};
+  var pagePath = intentPagePath_(row.page || row.pageUrl || '');
+  if (!pagePath) return;
+  var page = ensureIntentPageAggregate_(pagesByPath, pagePath);
+  var clicks = intentMetricNumber_(row.clicks);
+  var impressions = intentMetricNumber_(row.impressions);
+  var position = intentMetricNumber_(row.position);
+  page.clicks += clicks;
+  page.impressions += impressions;
+  page.positionWeight += position * impressions;
+}
+
+function ensureIntentPageAggregate_(pagesByPath, pagePath) {
+  if (!pagesByPath[pagePath]) {
+    pagesByPath[pagePath] = {
       page: pagePath,
       clicks: 0,
       impressions: 0,
@@ -147,11 +184,7 @@ function addIntentAggregateRow_(row, site, clustersByKey, pagesByPath) {
       clusterImpressions: {}
     };
   }
-  page.clicks += clicks;
-  page.impressions += impressions;
-  page.positionWeight += position * impressions;
-  page.clusterSet[key] = true;
-  page.clusterImpressions[key] = (page.clusterImpressions[key] || 0) + impressions;
+  return pagesByPath[pagePath];
 }
 
 function finalizeIntentCluster_(cluster, site, previousImpressions) {
@@ -217,6 +250,12 @@ function classifyIntentAction_(cluster) {
   }
   if (cluster.possibleCannibalization) {
     return INTENT_CLUSTER_ACTIONS.CANNIBALIZATION;
+  }
+  // Gloombound Flame is an existing entity/task cluster. An unmapped alias
+  // must not become a new page research opportunity just because the current
+  // query rows did not expose its canonical page.
+  if (cluster.knownEntity === 'GLOOMBOUND_FLAME' && !cluster.hasExistingPage) {
+    return INTENT_CLUSTER_ACTIONS.OBSERVE;
   }
   if (cluster.impressions >= t.NEW_INTENT_IMPRESSIONS && !cluster.hasExistingPage) {
     return INTENT_CLUSTER_ACTIONS.RESEARCH_NEW_INTENT;

@@ -41,6 +41,8 @@ assert(/ensureSheet_\(SHEET_NAMES\.FRESH_QUERY_MONITOR/.test(sheetSrc), 'setup c
 assert(/实时Query监控：用 GSC hourly/.test(sheetSrc), 'usage mentions bypass');
 assert(/dataState:\s*'hourly_all'/.test(searchSrc), 'hourly_all request');
 assert(/dimensions:\s*\['hour', 'query', 'page'\]/.test(searchSrc), 'hour+query+page');
+assert(/function fetchHourlyPagesResult_/.test(searchSrc), 'independent page fetch');
+assert(/dimensions:\s*\['hour', 'page'\]/.test(searchSrc), 'hour+page');
 assert(/function searchAnalyticsQueryAllRows_/.test(searchSrc), 'pagination helper');
 assert(!/startRow/.test(extractFn(searchSrc, 'fetchFreshQueryPages')), 'existing fetch stays unpaged');
 assert(!/hourly_all/.test(extractFn(searchSrc, 'fetchFreshQueriesResult_')), 'daily fresh stays dataState=all');
@@ -54,6 +56,8 @@ assert(!/SHEET_NAMES\.DAILY|upsertDailyRow_/.test(freshSrc), 'must not write GSC
 assert(!/upsertQueryRow_|SHEET_NAMES\.QUERIES/.test(freshSrc), 'must not write Query明细');
 assert(!/SHEET_NAMES\.QUERY_PAGES|upsertQueryPage/.test(freshSrc), 'must not write Query页面明细');
 assert(!/runDecisionEngine|rebuildEffectEvaluation|createResearchJobs/.test(freshSrc), 'must not hook decision/eval/research');
+assert(!/alertUi_\(summary\)/.test(extractFn(freshSrc, 'runFreshQueryMonitorUnlocked_')), 'formal runtime has no blocking alert');
+assert(/pageHourlyRows/.test(freshSrc), 'fresh monitor passes independent page rows');
 assert(!/runFreshQueryMonitor/.test(decisionSrc), 'decision engine unchanged');
 
 var FRESH_QUERY_MONITOR_HEADERS = extractAssign(configSrc, 'FRESH_QUERY_MONITOR_HEADERS');

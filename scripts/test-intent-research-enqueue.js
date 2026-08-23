@@ -86,12 +86,12 @@ context.writeLog_ = function () {};
 
 var candidate = {
   site: 'Mortal Shell II',
-  key: 'GLOOMBOUND_FLAME',
-  label: 'Gloombound Flame',
+  key: 'QUERY_BEACONS_MAP',
+  label: 'Beacons Map',
   action: 'RESEARCH_NEW_INTENT',
-  clusterLabel: 'Gloombound Flame',
-  topQuery: 'light extinguished lantern mortal shell 2',
-  queries: [{ query: 'light extinguished lantern mortal shell 2' }, { query: 'mortal shell 2 lantern' }],
+  clusterLabel: 'Beacons Map',
+  topQuery: 'mortal shell 2 beacons map',
+  queries: [{ query: 'mortal shell 2 beacons map' }],
   hotspotLevel: 'MEDIUM'
 };
 

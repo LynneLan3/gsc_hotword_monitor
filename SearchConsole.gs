@@ -385,6 +385,37 @@ function normalizeHourlyQueryPageRows_(rows) {
 }
 
 /**
+ * 将 hour+page 行标准化。约定 keys[0]=hour, keys[1]=page。
+ * 缺键或 hour 无法解析则跳过，不造假值。
+ * @param {Array=} rows
+ * @return {Array<{hour:string,hourMs:number,page:string,clicks:number,impressions:number,position:number}>}
+ */
+function normalizeHourlyPageRows_(rows) {
+  var out = [];
+  if (!rows || !rows.length) return out;
+
+  for (var i = 0; i < rows.length; i++) {
+    var r = rows[i];
+    var keys = r && r.keys;
+    if (!keys || keys.length < 2) continue;
+    var hour = keys[0];
+    var page = keys[1];
+    if (!hour || !page) continue;
+    var hourMs = parseGscHourMs_(hour);
+    if (hourMs === null) continue;
+    out.push({
+      hour: String(hour),
+      hourMs: hourMs,
+      page: String(page),
+      clicks: r.clicks || 0,
+      impressions: r.impressions || 0,
+      position: r.position || 0
+    });
+  }
+  return out;
+}
+
+/**
  * Fresh hourly Query × Page（dataState=hourly_all）。
  * 只供实时 Query 监控旁路使用，不要写入 GSC日数据 / Query明细 / Decision。
  * @param {string} siteUrl
@@ -404,6 +435,31 @@ function fetchHourlyQueryPagesResult_(siteUrl, startDate, endDate, rowLimit) {
   });
   return {
     rows: normalizeHourlyQueryPageRows_(packed.rows),
+    metadata: packed.metadata,
+    result: packed.result || {}
+  };
+}
+
+/**
+ * Fresh hourly Page-only（dataState=hourly_all）。
+ * Page Hotspot 必须使用该独立维度，不能由 Query×Page rows 反推。
+ * @param {string} siteUrl
+ * @param {string} startDate yyyy-MM-dd
+ * @param {string} endDate yyyy-MM-dd
+ * @param {number=} rowLimit
+ * @return {{rows:Array, metadata:Object|null, result:Object}}
+ */
+function fetchHourlyPagesResult_(siteUrl, startDate, endDate, rowLimit) {
+  rowLimit = rowLimit || FRESH_HOURLY_ROW_LIMIT;
+  var packed = searchAnalyticsQueryAllRows_(siteUrl, {
+    startDate: startDate,
+    endDate: endDate,
+    dimensions: ['hour', 'page'],
+    dataState: 'hourly_all',
+    rowLimit: rowLimit
+  });
+  return {
+    rows: normalizeHourlyPageRows_(packed.rows),
     metadata: packed.metadata,
     result: packed.result || {}
   };

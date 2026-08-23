@@ -82,7 +82,27 @@ var light = context.buildIntentOpportunitySnapshot_(lightRows, { site: site }).c
 assert(light.key === 'GLOOMBOUND_FLAME', 'lantern queries map to GLOOMBOUND_FLAME');
 assert(light.impressions === 26, 'light cluster reaches 26 impressions');
 assert(light.hasExistingPage === false, 'home is not an explicit content page');
-assert(light.action === 'RESEARCH_NEW_INTENT', 'unmapped 26-impression entity enters research');
+assert(light.action === 'OBSERVE', 'known Gloombound entity does not enter new-page research');
+
+var independentPageSnapshot = context.buildIntentOpportunitySnapshot_([
+  row('mortal shell 2 skip prologue', skipPage, 4, 113, 8)
+], {
+  site: site,
+  pageRows: [
+    row('', skipPage, 22, 568, 7),
+    row('', '/mortal-shell-ii/crashing-pc/', 5, 213, 8),
+    row('', '/mortal-shell-ii/gloombound-flame/', 2, 140, 9),
+    row('', '/mortal-shell-ii/slayer-seal-difficulty/', 1, 116, 11)
+  ]
+});
+var independentSkip = independentPageSnapshot.clusters[0];
+var independentPages = {};
+independentPageSnapshot.pageHotspots.forEach(function (p) { independentPages[p.page] = p; });
+assert(independentSkip.impressions === 113, 'cluster keeps Query×Page impressions');
+assert(independentPages['/mortal-shell-ii/skip-prologue'].impressions === 568, 'page hotspot uses page rows');
+assert(independentPages['/mortal-shell-ii/crashing-pc'].impressions === 213, 'page-only hotspot is retained');
+assert(independentPages['/mortal-shell-ii/gloombound-flame'].impressions === 140, 'page-only Gloombound hotspot');
+assert(independentPages['/mortal-shell-ii/slayer-seal-difficulty'].impressions === 116, 'page-only Slayer hotspot');
 
 var optimize = context.buildIntentOpportunitySnapshot_([
   row('mortal shell 2 crashing pc', '/mortal-shell-ii/crashing-pc/', 1, 120, 8)
