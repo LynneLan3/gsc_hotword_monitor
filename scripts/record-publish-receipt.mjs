@@ -28,7 +28,8 @@ if (receipt?.schemaVersion !== 'hotword-publish-receipt-v1' || missing.length ||
 }
 
 const params = JSON.stringify([receipt]);
-const result = spawnSync('clasp', ['run', 'recordPublishedBatch', '--params', params], {
+const claspUser = process.env.HOTWORD_CLASP_USER?.trim() || 'hotword-ledger';
+const result = spawnSync('clasp', ['--json', 'run', 'recordPublishedBatch', '--user', claspUser, '--params', params], {
   cwd: path.resolve(path.dirname(new URL(import.meta.url).pathname), '..'),
   encoding: 'utf8'
 });
@@ -48,7 +49,7 @@ try {
   process.exit(1);
 }
 
-const value = response && response.result ? response.result : response;
+const value = response && (response.response || response.result) ? (response.response || response.result) : response;
 if (!value || value.ok !== true) {
   console.error(`FAIL ledger writeback: ${stdout}`);
   process.exit(1);
