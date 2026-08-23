@@ -3895,7 +3895,7 @@ function researchJobSheetRow_(job, site, createdAt) {
     '', '', '', '', // Recommendation linkage
     job.source_action || '',
     job.action_context ? JSON.stringify(job.action_context) : '',
-    '', '', '', '', '', '', '', '', '', ''
+    '', '', '', '', '', '', '', '', '', '', '' // DecisionID ... DecisionCreatedAt
   ];
 }
 
