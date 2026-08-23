@@ -27,6 +27,9 @@ function doGet(e) {
   if (action === 'pendingSearchDemandJobs') {
     return jsonOutput_({ jobs: loadSearchDemandReadyJobs_() });
   }
+  if (action === 'pendingResearchRecommendationJobs') {
+    return jsonOutput_({ jobs: loadPendingResearchRecommendationJobs_() });
+  }
   if (action === 'pendingGameWideDiscoveryJobs') {
     return jsonOutput_({ jobs: loadGameWideDiscoveryReadyJobs_() });
   }
@@ -415,7 +418,7 @@ function buildGameWideDiscoveryJobContract_(siteName, gameName, createdAt, opts)
 }
 
 /**
- * 将 GAME_WIDE 合同转为「研究任务」Sheet 行（30 列）。
+ * 将 GAME_WIDE 合同转为「研究任务」Sheet 行。
  */
 function gameWideDiscoveryResearchJobSheetRow_(contract, site, createdAt) {
   return [
@@ -446,7 +449,8 @@ function gameWideDiscoveryResearchJobSheetRow_(contract, site, createdAt) {
     JSON.stringify(contract.source_families_requested || []),             // 来源族请求
     String(contract.source_signal_summary || '').trim(),                  // 信号摘要
     String(contract.discovery_cycle_date || '').trim(),                   // 发现周期日期
-    String(contract.opportunity_id || '').trim()                           // OpportunityID
+    String(contract.opportunity_id || '').trim(),                          // OpportunityID
+    '', '', '', ''                                                         // Recommendation linkage
   ];
 }
 
@@ -809,6 +813,7 @@ function handleGameWideDiscoveryCallback_(payload) {
   }
 
   jobSheet.getRange(found.sheetRow, 1, 1, lastCol).setValues([row]);
+  enqueueReadyResearchRecommendationJobs_();
   var merge = null;
   if (executionStatus === 'COMPLETED' && typeof runExternalOpportunityMergeM0 === 'function') {
     try {
@@ -1097,7 +1102,10 @@ function handleSearchDemandCallback_(payload) {
   );
   jobSheet.getRange(found.sheetRow, 1, 1, jobLastCol).setValues([nextJobRow]);
 
-  if (executionStatus === 'FAILED') return { ok: true, job_id: jobId, status: 'FAILED' };
+  if (executionStatus === 'FAILED') {
+    enqueueReadyResearchRecommendationJobs_();
+    return { ok: true, job_id: jobId, status: 'FAILED' };
+  }
 
   var radarLastCol = Math.max(radarSheet.getLastColumn(), DEMAND_RADAR_HEADERS.length);
   var radarHeader = radarSheet.getRange(1, 1, 1, radarLastCol).getValues()[0];
@@ -1117,6 +1125,8 @@ function handleSearchDemandCallback_(payload) {
     radarSheet.getRange(i + 2, 1, 1, radarLastCol).setValues([nextRadarRow]);
     break;
   }
+
+  enqueueReadyResearchRecommendationJobs_();
 
   return {
     ok: true,
@@ -1549,6 +1559,9 @@ function loadPendingResearchJobs_() {
   var rows = sheet.getRange(2, 1, sheet.getLastRow() - 1, lastCol).getValues();
   var jobs = [];
   for (var i = 0; i < rows.length; i++) {
+    if (String(cell_(rows[i], col, '研究类型') || '').trim() === RESEARCH_TYPE.RESEARCH_RECOMMENDATION) {
+      continue;
+    }
     if (!isResearchJobPending_(String(cell_(rows[i], col, '任务状态') || '').trim())) {
       continue;
     }
@@ -2097,7 +2110,8 @@ function demandDiscoveryResearchJobSheetRow_(contract, site, createdAt) {
     JSON.stringify(contract.source_families_requested || []),
     String(contract.source_signal_summary || '').trim(),
     String(contract.discovery_cycle_date || '').trim(),
-    String(contract.opportunity_id || '').trim()
+    String(contract.opportunity_id || '').trim(),
+    '', '', '', '' // Recommendation linkage
   ];
 }
 
@@ -2289,7 +2303,8 @@ function searchDemandResearchJobSheetRow_(contract, site, createdAt) {
     JSON.stringify(contract.search_sources_requested || []),
     String(contract.source_signal_summary || '').trim(),
     String(contract.search_cycle_date || '').trim(),
-    String(contract.opportunity_id || '').trim()
+    String(contract.opportunity_id || '').trim(),
+    '', '', '', '' // Recommendation linkage
   ];
 }
 
@@ -2333,6 +2348,304 @@ function searchDemandRowToApi_(row, col) {
     search_cycle_date: cycleDate,
     created_at: createdAt
   };
+}
+
+// ---------------------------------------------------------------------------
+// M6A — RESEARCH_RECOMMENDATION enqueue / pending GET
+// ---------------------------------------------------------------------------
+
+/**
+ * Resolve the pairing identity already present on a Research Job row.
+ * site_id is consumed when an existing/legacy header exposes it; otherwise
+ * the exact existing site field is the compatibility fallback. No identity
+ * is generated or inferred here.
+ */
+function researchRecommendationSiteIdentity_(row, col) {
+  var siteId = '';
+  if (col['site_id'] !== undefined) siteId = String(row[col['site_id']] || '').trim();
+  if (!siteId && col['SiteID'] !== undefined) siteId = String(row[col['SiteID']] || '').trim();
+  if (siteId) {
+    return typeof getSiteIdentityKey_ === 'function'
+      ? getSiteIdentityKey_({ siteId: siteId })
+      : 'site_id:' + siteId;
+  }
+
+  var siteName = String(cell_(row, col, '站点') || '').trim();
+  if (!siteName) return '';
+  return typeof getSiteIdentityKey_ === 'function'
+    ? getSiteIdentityKey_({ name: siteName })
+    : 'site_name:' + siteName;
+}
+
+function researchRecommendationCycleDate_(row, col) {
+  var cycle = normalizeDemandDiscoveryDate_(cell_(row, col, '发现周期日期'));
+  if (cycle) return cycle;
+  return discoveryCycleDateFromJobId_(String(cell_(row, col, '任务ID') || '').trim());
+}
+
+function researchRecommendationGameMatches_(leftRow, rightRow, col) {
+  var left = String(cell_(leftRow, col, '游戏') || '').trim().toLowerCase();
+  var right = String(cell_(rightRow, col, '游戏') || '').trim().toLowerCase();
+  return !left || !right || left === right;
+}
+
+function researchRecommendationStatusIs_(row, col, key) {
+  var value = String(cell_(row, col, '任务状态') || '').trim();
+  return value === RESEARCH_JOB_STATUS[key] || value === RESEARCH_JOB_STATUS_LABELS[key];
+}
+
+function isResearchRecommendationSearchCompleted_(row, col) {
+  var status = String(cell_(row, col, '任务状态') || '').trim().toUpperCase();
+  return (
+    researchRecommendationStatusIs_(row, col, 'SEARCH_CONFIRMED') ||
+    researchRecommendationStatusIs_(row, col, 'SEARCH_NO_SIGNAL') ||
+    status === 'COMPLETED' ||
+    status === '已完成'
+  );
+}
+
+function isResearchRecommendationGameWideCompleted_(row, col) {
+  var status = String(cell_(row, col, '任务状态') || '').trim().toUpperCase();
+  return (
+    researchRecommendationStatusIs_(row, col, 'DISCOVERY_DONE') ||
+    researchRecommendationStatusIs_(row, col, 'DISCOVERY_NO_SIGNAL') ||
+    status === 'COMPLETED' ||
+    status === '已完成'
+  );
+}
+
+function isResearchRecommendationFailed_(row, col) {
+  var status = String(cell_(row, col, '任务状态') || '').trim();
+  return status === RESEARCH_JOB_STATUS.FAILED ||
+    status === RESEARCH_JOB_STATUS_LABELS.FAILED ||
+    status.toUpperCase() === 'FAILED' ||
+    status === '失败';
+}
+
+function isResearchRecommendationPendingOrRunning_(row, col) {
+  var raw = String(cell_(row, col, '任务状态') || '').trim();
+  var upper = raw.toUpperCase();
+  return (
+    isResearchJobPending_(raw) ||
+    researchRecommendationStatusIs_(row, col, 'READY_FOR_DISCOVERY_RUNNER') ||
+    upper === 'RUNNING' ||
+    upper === 'IN_PROGRESS' ||
+    raw === '执行中' ||
+    raw === '进行中'
+  );
+}
+
+function buildResearchRecommendationJobId_(siteIdentity, cycleDate, searchJobId) {
+  var siteSlug = slugifyResearch_(siteIdentity) || 'site';
+  var searchSlug = slugifyResearch_(searchJobId) || 'search';
+  if (siteSlug.length > 40) siteSlug = siteSlug.substring(0, 40).replace(/-+$/, '');
+  if (searchSlug.length > 40) searchSlug = searchSlug.substring(searchSlug.length - 40);
+  var ymd = discoveryCycleDateToYmd_(cycleDate);
+  return 'recommend-' + siteSlug + (ymd ? '-' + ymd : '') + '-' + searchSlug;
+}
+
+function researchRecommendationSheetRow_(searchRow, socialRow, col, createdAt) {
+  var row = [];
+  for (var i = 0; i < RESEARCH_JOB_HEADERS.length; i++) row.push('');
+
+  var searchJobId = String(cell_(searchRow, col, '任务ID') || '').trim();
+  var socialJobId = socialRow ? String(cell_(socialRow, col, '任务ID') || '').trim() : '';
+  var site = String(cell_(searchRow, col, '站点') || '').trim();
+  var game = String(cell_(searchRow, col, '游戏') || '').trim();
+  var siteIdentity = researchRecommendationSiteIdentity_(searchRow, col);
+  var cycleDate = researchRecommendationCycleDate_(searchRow, col);
+
+  row[col['任务ID']] = buildResearchRecommendationJobId_(siteIdentity, cycleDate, searchJobId);
+  row[col['创建时间']] = createdAt || new Date();
+  row[col['站点']] = site;
+  row[col['游戏']] = game;
+  row[col['任务状态']] = opportunityLabel_(
+    RESEARCH_JOB_STATUS_LABELS,
+    RESEARCH_JOB_STATUS.PENDING
+  );
+  row[col['研究类型']] = RESEARCH_TYPE.RESEARCH_RECOMMENDATION;
+  row[col['雷达ID']] = String(cell_(searchRow, col, '雷达ID') || '').trim();
+  row[col['发现周期日期']] = cycleDate;
+  row[col['OpportunityID']] = String(cell_(searchRow, col, 'OpportunityID') || '').trim();
+  row[col['Search任务ID']] = searchJobId;
+  row[col['Social任务ID']] = socialJobId;
+  row[col['Search结果路径']] = String(cell_(searchRow, col, '结果路径') || '').trim();
+  row[col['Social结果路径']] = socialRow
+    ? String(cell_(socialRow, col, '结果路径') || '').trim()
+    : '';
+  return row;
+}
+
+/**
+ * Pure planner for M6A. Search is the required source. GAME_WIDE only gates
+ * while pending/running and contributes optional evidence when terminal.
+ */
+function planResearchRecommendationJobs_(jobRows, opts) {
+  opts = opts || {};
+  var createdAt = opts.createdAt || new Date();
+  var col = headerIndexMap_(RESEARCH_JOB_HEADERS);
+  var socialByPair = {};
+  var existingPairs = {};
+
+  for (var i = 0; i < (jobRows || []).length; i++) {
+    var row = jobRows[i] || [];
+    var researchType = String(cell_(row, col, '研究类型') || '').trim();
+    var siteIdentity = researchRecommendationSiteIdentity_(row, col);
+    var cycleDate = researchRecommendationCycleDate_(row, col);
+    if (researchType === RESEARCH_TYPE.RESEARCH_RECOMMENDATION) {
+      var existingSearchId = String(cell_(row, col, 'Search任务ID') || '').trim();
+      if (siteIdentity && cycleDate && existingSearchId) {
+        existingPairs[siteIdentity + '||' + cycleDate + '||' + existingSearchId] = true;
+      }
+      continue;
+    }
+    if (researchType !== RESEARCH_TYPE.DEMAND_DISCOVERY) continue;
+
+    var scope = safeJsonParse_(cell_(row, col, '发现范围') || '', {});
+    if (String((scope && scope.scope) || '').trim().toUpperCase() !== 'GAME_WIDE') continue;
+    if (!siteIdentity || !cycleDate) continue;
+    var pairKey = siteIdentity + '||' + cycleDate;
+    if (!socialByPair[pairKey]) socialByPair[pairKey] = [];
+    socialByPair[pairKey].push(row);
+  }
+
+  var toAppend = [];
+  var recommendations = [];
+  var skipped = 0;
+
+  for (var s = 0; s < (jobRows || []).length; s++) {
+    var searchRow = jobRows[s] || [];
+    if (String(cell_(searchRow, col, '研究类型') || '').trim() !== RESEARCH_TYPE.SEARCH_DEMAND) continue;
+    if (!isResearchRecommendationSearchCompleted_(searchRow, col)) continue;
+
+    var searchPath = String(cell_(searchRow, col, '结果路径') || '').trim();
+    if (!searchPath) continue;
+    var searchSite = researchRecommendationSiteIdentity_(searchRow, col);
+    var searchCycle = researchRecommendationCycleDate_(searchRow, col);
+    var searchId = String(cell_(searchRow, col, '任务ID') || '').trim();
+    if (!searchSite || !searchCycle || !searchId) continue;
+
+    var pairKey = searchSite + '||' + searchCycle;
+    var socialCandidates = socialByPair[pairKey] || [];
+    var matchingSocial = [];
+    for (var c = 0; c < socialCandidates.length; c++) {
+      if (researchRecommendationGameMatches_(searchRow, socialCandidates[c], col)) {
+        matchingSocial.push(socialCandidates[c]);
+      }
+    }
+
+    var socialRow = null;
+    var socialBlocked = false;
+    for (var m = 0; m < matchingSocial.length; m++) {
+      if (isResearchRecommendationPendingOrRunning_(matchingSocial[m], col)) {
+        socialBlocked = true;
+        break;
+      }
+    }
+    if (socialBlocked) {
+      skipped += 1;
+      continue;
+    }
+
+    for (var x = 0; x < matchingSocial.length; x++) {
+      if (isResearchRecommendationGameWideCompleted_(matchingSocial[x], col)) {
+        socialRow = matchingSocial[x];
+        break;
+      }
+      if (!socialRow && isResearchRecommendationFailed_(matchingSocial[x], col)) {
+        socialRow = matchingSocial[x];
+      }
+    }
+
+    var dedupeKey = searchSite + '||' + searchCycle + '||' + searchId;
+    if (existingPairs[dedupeKey]) {
+      skipped += 1;
+      continue;
+    }
+
+    var recommendationRow = researchRecommendationSheetRow_(searchRow, socialRow, col, createdAt);
+    toAppend.push(recommendationRow);
+    recommendations.push(recommendationRow);
+    existingPairs[dedupeKey] = true;
+  }
+
+  return {
+    created: toAppend.length,
+    skipped: skipped,
+    jobRowsToAppend: toAppend,
+    recommendations: recommendations
+  };
+}
+
+/** Write-side helper invoked after either source callback reaches terminal state. */
+function enqueueReadyResearchRecommendationJobs_() {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  if (!ss) return { created: 0, skipped: 0 };
+  var sheet = ss.getSheetByName(SHEET_NAMES.RESEARCH_JOBS);
+  if (!sheet) return { created: 0, skipped: 0, error: 'research_jobs_missing' };
+
+  ensureResearchJobResultColumns_(sheet);
+  var lastCol = Math.max(sheet.getLastColumn(), RESEARCH_JOB_HEADERS.length);
+  var header = sheet.getRange(1, 1, 1, lastCol).getValues()[0];
+  var col = headerIndexMap_(header);
+  var rows = sheet.getLastRow() >= 2
+    ? sheet.getRange(2, 1, sheet.getLastRow() - 1, lastCol).getValues()
+    : [];
+  var plan = planResearchRecommendationJobs_(rows, { createdAt: new Date() });
+  if (plan.jobRowsToAppend.length) {
+    var start = sheet.getLastRow() + 1;
+    if (start < 2) start = 2;
+    sheet.getRange(start, 1, plan.jobRowsToAppend.length, RESEARCH_JOB_HEADERS.length)
+      .setValues(plan.jobRowsToAppend);
+  }
+  return { created: plan.created, skipped: plan.skipped };
+}
+
+function isResearchRecommendationPending_(status) {
+  var s = String(status || '').trim();
+  return isResearchJobPending_(s) ||
+    s === 'READY_FOR_RECOMMENDATION_RUNNER' ||
+    s === '待推荐执行';
+}
+
+/** Read-only M5 adapter. It never ensures headers, appends rows, or changes state. */
+function loadPendingResearchRecommendationJobs_() {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  if (!ss) return [];
+  var sheet = ss.getSheetByName(SHEET_NAMES.RESEARCH_JOBS);
+  if (!sheet || sheet.getLastRow() < 2) return [];
+
+  var lastCol = Math.max(sheet.getLastColumn(), 1);
+  var header = sheet.getRange(1, 1, 1, lastCol).getValues()[0];
+  var col = headerIndexMap_(header);
+  var rows = sheet.getRange(2, 1, sheet.getLastRow() - 1, lastCol).getValues();
+  var jobs = [];
+  for (var i = 0; i < rows.length; i++) {
+    var row = rows[i];
+    if (String(cell_(row, col, '研究类型') || '').trim() !== RESEARCH_TYPE.RESEARCH_RECOMMENDATION) continue;
+    if (!isResearchRecommendationPending_(cell_(row, col, '任务状态'))) continue;
+    var jobId = String(cell_(row, col, '任务ID') || '').trim();
+    var searchPath = String(cell_(row, col, 'Search结果路径') || '').trim();
+    if (!jobId || !searchPath) continue;
+
+    var created = cell_(row, col, '创建时间');
+    var createdAt = '';
+    if (Object.prototype.toString.call(created) === '[object Date]' && !isNaN(created.getTime())) {
+      createdAt = typeof toIso8601_ === 'function' ? toIso8601_(created) : String(created);
+    } else {
+      createdAt = String(created || '').trim();
+    }
+    jobs.push({
+      job_id: jobId,
+      job_type: 'RESEARCH_RECOMMENDATION',
+      site_key: String(cell_(row, col, '站点') || '').trim(),
+      game_name: String(cell_(row, col, '游戏') || '').trim(),
+      search_result_path: searchPath,
+      social_result_path: String(cell_(row, col, 'Social结果路径') || '').trim(),
+      created_at: createdAt
+    });
+  }
+  return jobs;
 }
 
 function isSearchDemandReadyJob_(row, col) {
@@ -3403,7 +3716,8 @@ function researchJobSheetRow_(job, site, createdAt) {
     '',
     '',
     '',
-    '' // OpportunityID（CONTENT_RESEARCH 不绑定 GSC Opportunity）
+    '', // OpportunityID（CONTENT_RESEARCH 不绑定 GSC Opportunity）
+    '', '', '', '' // Recommendation linkage
   ];
 }
 

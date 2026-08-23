@@ -803,7 +803,9 @@ var RESEARCH_JOB_HEADERS = [
   // DEMAND_DISCOVERY / SEARCH_DEMAND 元数据（按 research_type 解释；append-only）
   '雷达ID', '触发类型', '锚点页面', '发现范围', '种子词', '来源族请求', '信号摘要',
   '发现周期日期',
-  'OpportunityID'
+  'OpportunityID',
+  // RESEARCH_RECOMMENDATION linkage（append-only；不复制 source evidence）
+  'Search任务ID', 'Social任务ID', 'Search结果路径', 'Social结果路径'
 ];
 
 /** 研究任务来源类型（单元格写英文；旧行空值视为 CONTENT_RESEARCH） */
@@ -811,7 +813,8 @@ var RESEARCH_TYPE = {
   CONTENT_RESEARCH: 'CONTENT_RESEARCH',
   ASSET_RESEARCH: 'ASSET_RESEARCH',
   DEMAND_DISCOVERY: 'DEMAND_DISCOVERY',
-  SEARCH_DEMAND: 'SEARCH_DEMAND'
+  SEARCH_DEMAND: 'SEARCH_DEMAND',
+  RESEARCH_RECOMMENDATION: 'RESEARCH_RECOMMENDATION'
 };
 
 /** Phase 7C-3A：每日 GAME_WIDE Demand Discovery 调度合同。 */
