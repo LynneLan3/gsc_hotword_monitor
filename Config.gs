@@ -29,6 +29,7 @@ var SHEET_NAMES = {
   OPPORTUNITIES: '内容机会',
   DEMAND_RADAR: '需求雷达',
   FRESH_QUERY_MONITOR: '实时Query监控',
+  INTENT_OPPORTUNITIES: 'Intent机会',
   RESEARCH_JOBS: '研究任务',
   RESEARCH_REVIEW: '研究审核',
   DEVELOPMENT_TASKS: '开发任务',
@@ -55,6 +56,7 @@ var SHEET_UI_ORDER = [
   SHEET_NAMES.OPPORTUNITIES,
   SHEET_NAMES.DEMAND_RADAR,
   SHEET_NAMES.FRESH_QUERY_MONITOR,
+  SHEET_NAMES.INTENT_OPPORTUNITIES,
   SHEET_NAMES.RESEARCH_JOBS,
   SHEET_NAMES.RESEARCH_REVIEW,
   SHEET_NAMES.SITE_STATUS,
@@ -152,6 +154,67 @@ var FRESH_QUERY_MONITOR_HEADERS = [
   '数据是否未完全',
   '数据截止小时'
 ];
+
+/** Query Cluster → Page Hotspot → Action 的 M0 聚合输出。 */
+var INTENT_OPPORTUNITY_HEADERS = [
+  'Site', 'ClusterKey', 'ClusterLabel', 'ClusterQueries', 'QueryCount',
+  'ClusterClicks', 'ClusterImpressions', 'ClusterCTR', 'ClusterPosition',
+  'ClusterPreviousImpressions', 'ClusterGrowthRate', 'TopQuery',
+  'TopPage', 'TopPageImpressions', 'TopPageShare',
+  'PageClicks', 'PageImpressions', 'PageCTR', 'PagePosition',
+  'PageClusterCount', 'PageTopCluster', 'PageTopClusterShare',
+  'HotspotLevel', 'SignalConfidence', 'HasDominantPage',
+  'PossibleCannibalization', 'HasExistingPage', 'Action', 'ActionReason',
+  'ResearchJobID', 'ResearchJobStatus', 'DataCutoff', 'DataIncomplete'
+];
+
+/** 已知实体/多语言 alias：只做 deterministic 归一，不调用 LLM。 */
+var INTENT_CLUSTER_ENTITY_ALIASES = [
+  {
+    siteId: 'mortal-shell-ii',
+    key: 'SKIP_PROLOGUE',
+    label: 'Skip Prologue',
+    aliases: ['skip prologue', 'skip intro', 'skip tutorial'],
+    multilingual: false
+  },
+  {
+    siteId: 'mortal-shell-ii',
+    key: 'GLOOMBOUND_FLAME',
+    label: 'Gloombound Flame',
+    aliases: [
+      'gloombound flame',
+      'düstergebundene flamme',
+      'dustergebundene flamme',
+      'light extinguished lantern',
+      'lantern'
+    ],
+    multilingual: true
+  }
+];
+
+var INTENT_CLUSTER_ACTIONS = {
+  RESEARCH_NEW_INTENT: 'RESEARCH_NEW_INTENT',
+  OPTIMIZE_EXISTING: 'OPTIMIZE_EXISTING',
+  EXISTING_GROWTH: 'EXISTING_GROWTH',
+  CANNIBALIZATION: 'CANNIBALIZATION',
+  MULTILINGUAL_ALIAS: 'MULTILINGUAL_ALIAS',
+  OBSERVE: 'OBSERVE',
+  NO_ACTION: 'NO_ACTION'
+};
+
+var INTENT_CLUSTER_THRESHOLDS = {
+  HIGH_IMPRESSIONS: 100,
+  HIGH_CLICKS: 3,
+  MEDIUM_IMPRESSIONS: 50,
+  NEW_INTENT_IMPRESSIONS: 20,
+  OPTIMIZE_POSITION_MAX: 10,
+  OPTIMIZE_CTR_MAX: 0.02,
+  DOMINANT_PAGE_SHARE: 0.60,
+  CANNIBAL_PAGE1_SHARE: 0.25,
+  CANNIBAL_PAGE2_SHARE: 0.20,
+  CANNIBAL_PAGE_MIN_IMPRESSIONS: 5,
+  CANNIBAL_CLUSTER_MIN_IMPRESSIONS: 10
+};
 var URL_INDEX_HEADERS = [
   'RunDate', 'Site', 'URL', 'Verdict', 'CoverageState', 'RobotsTxtState',
   'IndexingState', 'LastCrawlTime', 'PageFetchState',

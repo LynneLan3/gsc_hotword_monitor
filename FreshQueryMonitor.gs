@@ -32,6 +32,7 @@ function runFreshQueryMonitorUnlocked_() {
   var generatedAt = new Date();
   var range = getFreshQueryHourlyDateRange_();
   var allRows = [];
+  var intentSnapshots = [];
   var errors = 0;
 
   writeLog_(
@@ -49,8 +50,9 @@ function runFreshQueryMonitorUnlocked_() {
   for (var i = 0; i < sites.length; i++) {
     var site = sites[i];
     try {
-      var siteRows = collectFreshQueryMonitorSite_(site, generatedAt, range);
-      for (var r = 0; r < siteRows.length; r++) allRows.push(siteRows[r]);
+      var siteResult = collectFreshQueryMonitorSite_(site, generatedAt, range);
+      for (var r = 0; r < siteResult.triggered.length; r++) allRows.push(siteResult.triggered[r]);
+      if (siteResult.intentSnapshot) intentSnapshots.push(siteResult.intentSnapshot);
     } catch (e) {
       errors++;
       writeLog_('ERROR', site && site.name, 'Fresh Query 监控失败: ' + e.message);
@@ -59,6 +61,16 @@ function runFreshQueryMonitorUnlocked_() {
 
   allRows.sort(compareFreshQueryMonitorRows_);
   writeFreshQueryMonitorRows_(allRows);
+  var intentRecords = [];
+  for (var s = 0; s < intentSnapshots.length; s++) {
+    var snapshotClusters = intentSnapshots[s].clusters || [];
+    for (var c = 0; c < snapshotClusters.length; c++) {
+      snapshotClusters[c].site = intentSnapshots[s].site && intentSnapshots[s].site.name || '';
+      intentRecords.push(snapshotClusters[c]);
+    }
+  }
+  enqueueIntentResearchJobs_(intentRecords);
+  writeIntentOpportunityRows_(buildIntentOpportunityRowsFromSnapshots_(intentSnapshots));
 
   var summary =
     'runFreshQueryMonitor 完成 | triggered=' +
@@ -113,7 +125,10 @@ function collectFreshQueryMonitorSite_(site, generatedAt, range) {
       (built.incomplete ? '是' : '否')
   );
 
-  return built.triggered;
+  return {
+    triggered: built.triggered,
+    intentSnapshot: built.intentSnapshot
+  };
 }
 
 /**
@@ -131,6 +146,15 @@ function buildFreshQueryMonitorRows_(hourlyRows, opts) {
   var windows = splitFreshQueryWindows_(hourlyRows);
   var queries = aggregateFreshQueryWindows_(windows.recent, windows.previous);
   var cutoffHour = windows.cutoffHour || '';
+  var intentSnapshot = null;
+  if (typeof buildIntentOpportunitySnapshot_ === 'function') {
+    intentSnapshot = buildIntentOpportunitySnapshot_(windows.recent, {
+      site: opts.site || {},
+      previousRows: windows.previous,
+      cutoffHour: cutoffHour,
+      incomplete: incomplete
+    });
+  }
   var all = [];
   var triggered = [];
 
@@ -165,7 +189,8 @@ function buildFreshQueryMonitorRows_(hourlyRows, opts) {
     all: all,
     triggered: triggered,
     cutoffHour: cutoffHour,
-    incomplete: incomplete
+    incomplete: incomplete,
+    intentSnapshot: intentSnapshot
   };
 }
 
