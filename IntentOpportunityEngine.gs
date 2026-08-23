@@ -57,10 +57,13 @@ function buildIntentOpportunitySnapshot_(recentRows, opts) {
     page.topClusterShare = page.impressions > 0 && pageClusterImpressions.length
       ? pageClusterImpressions[0].impressions / page.impressions
       : 0;
+    page.isHub = intentIsHubPage_(page.page, site);
     page.hotspotLevel = intentHotspotLevel_(page.impressions, page.clicks);
     page.signalConfidence = page.hotspotLevel;
     page.ctr = page.impressions > 0 ? page.clicks / page.impressions : 0;
     page.position = page.impressions > 0 ? page.positionWeight / page.impressions : 0;
+    page.pageAction = classifyIntentPageAction_(page);
+    page.pageActionReason = buildIntentPageActionReason_(page);
     delete page.clusterSet;
     delete page.clusterImpressions;
     pageHotspots.push(page);
@@ -75,8 +78,8 @@ function buildIntentOpportunitySnapshot_(recentRows, opts) {
     var cluster = clustersByKey[clusterKeys[k]];
     finalizeIntentCluster_(cluster, site, previousByKey[cluster.key] || 0);
     cluster.pageHotspot = pageByPath[cluster.topPage] || null;
-    cluster.action = classifyIntentAction_(cluster);
-    cluster.actionReason = buildIntentActionReason_(cluster);
+    cluster.clusterAction = cluster.action;
+    cluster.clusterActionReason = cluster.actionReason;
     clusters.push(cluster);
   }
   clusters.sort(compareIntentImpressionsDesc_);
@@ -238,8 +241,11 @@ function finalizeIntentCluster_(cluster, site, previousImpressions) {
   }
   cluster.hotspotLevel = intentHotspotLevel_(cluster.impressions, cluster.clicks);
   cluster.signalConfidence = cluster.hotspotLevel;
-  cluster.action = classifyIntentAction_(cluster);
-  cluster.actionReason = buildIntentActionReason_(cluster);
+  cluster.clusterAction = classifyIntentAction_(cluster);
+  cluster.clusterActionReason = buildIntentActionReason_(cluster);
+  // Keep the old in-memory/sheet field as a ClusterAction compatibility alias.
+  cluster.action = cluster.clusterAction;
+  cluster.actionReason = cluster.clusterActionReason;
   return cluster;
 }
 
@@ -260,23 +266,43 @@ function classifyIntentAction_(cluster) {
   if (cluster.impressions >= t.NEW_INTENT_IMPRESSIONS && !cluster.hasExistingPage) {
     return INTENT_CLUSTER_ACTIONS.RESEARCH_NEW_INTENT;
   }
-  var page = cluster.pageHotspot || (cluster.pages.length ? cluster.pages[0] : null);
-  if (
-    cluster.hasExistingPage &&
-    page &&
-    page.impressions >= t.HIGH_IMPRESSIONS &&
-    page.position <= t.OPTIMIZE_POSITION_MAX &&
-    page.ctr < t.OPTIMIZE_CTR_MAX
-  ) {
-    return INTENT_CLUSTER_ACTIONS.OPTIMIZE_EXISTING;
-  }
-  if (cluster.hasExistingPage && cluster.hotspotLevel === 'HIGH') {
-    return INTENT_CLUSTER_ACTIONS.EXISTING_GROWTH;
-  }
   if (cluster.impressions > 0 || cluster.clicks > 0) {
     return INTENT_CLUSTER_ACTIONS.OBSERVE;
   }
   return INTENT_CLUSTER_ACTIONS.NO_ACTION;
+}
+
+function classifyIntentPageAction_(page) {
+  var t = INTENT_CLUSTER_THRESHOLDS;
+  if (!page || page.isHub || page.impressions <= 0) {
+    return INTENT_PAGE_ACTIONS.NO_ACTION;
+  }
+  if (
+    page.impressions >= t.HIGH_IMPRESSIONS &&
+    page.position <= t.OPTIMIZE_POSITION_MAX &&
+    page.ctr < t.OPTIMIZE_CTR_MAX
+  ) {
+    return INTENT_PAGE_ACTIONS.OPTIMIZE_EXISTING;
+  }
+  if (page.hotspotLevel === 'HIGH') return INTENT_PAGE_ACTIONS.EXISTING_GROWTH;
+  return INTENT_PAGE_ACTIONS.OBSERVE;
+}
+
+function buildIntentPageActionReason_(page) {
+  if (!page) return '没有页面信号，不采取动作。';
+  var text = 'Page ' + page.page + '：' + page.impressions + ' impressions / ' +
+    page.clicks + ' clicks / CTR ' + Math.round(page.ctr * 10000) / 100 +
+    '% / position ' + Math.round(page.position * 100) / 100;
+  if (page.pageAction === INTENT_PAGE_ACTIONS.OPTIMIZE_EXISTING) {
+    return text + '；已有页 impressions≥100、平均排名≤10 且 CTR<2%，建议优化。';
+  }
+  if (page.pageAction === INTENT_PAGE_ACTIONS.EXISTING_GROWTH) {
+    return text + '；已有页达到 HIGH Page Hotspot，继续现有内容增长。';
+  }
+  if (page.pageAction === INTENT_PAGE_ACTIONS.OBSERVE) {
+    return text + '；当前页面信号未达到动作阈值，继续观察。';
+  }
+  return text + '；没有足够页面信号，不采取动作。';
 }
 
 function buildIntentActionReason_(cluster) {
@@ -315,6 +341,7 @@ function buildIntentOpportunitySheetRows_(snapshot) {
   for (var i = 0; i < clusters.length; i++) {
     var c = clusters[i];
     var page = c.pageHotspot || (c.pages.length ? c.pages[0] : null);
+    var pageActionOwner = !!(page && page.topCluster === c.key);
     rows.push([
       snapshot.site && snapshot.site.name || '',
       c.key,
@@ -348,7 +375,12 @@ function buildIntentOpportunitySheetRows_(snapshot) {
       c.researchJobId || '',
       c.researchJobStatus || '',
       snapshot.cutoffHour || '',
-      snapshot.incomplete ? 'TRUE' : 'FALSE'
+      snapshot.incomplete ? 'TRUE' : 'FALSE',
+      c.clusterAction || c.action,
+      c.clusterActionReason || c.actionReason,
+      pageActionOwner ? page.pageAction : '',
+      pageActionOwner ? page.pageActionReason : '',
+      pageActionOwner ? 'TRUE' : 'FALSE'
     ]);
   }
   return rows;
@@ -370,7 +402,24 @@ function buildIntentOpportunityRowsFromSnapshots_(snapshots) {
 }
 
 function writeIntentOpportunityRows_(rows) {
+  ensureIntentOpportunityHeader_();
   replaceSheetDataRows_(SHEET_NAMES.INTENT_OPPORTUNITIES, INTENT_OPPORTUNITY_HEADERS, rows || []);
+}
+
+/** Append the M0.1 fields to an existing Intent机会 sheet without rewriting old columns. */
+function ensureIntentOpportunityHeader_() {
+  var sheet = ensureSheet_(SHEET_NAMES.INTENT_OPPORTUNITIES, INTENT_OPPORTUNITY_HEADERS);
+  ensureSheetGrid_(sheet, 1, INTENT_OPPORTUNITY_HEADERS.length);
+  var existing = sheet.getRange(1, 1, 1, INTENT_OPPORTUNITY_HEADERS.length).getValues()[0];
+  var merged = existing.slice();
+  var changed = false;
+  for (var i = 0; i < INTENT_OPPORTUNITY_HEADERS.length; i++) {
+    if (!String(merged[i] || '').trim()) {
+      merged[i] = INTENT_OPPORTUNITY_HEADERS[i];
+      changed = true;
+    }
+  }
+  if (changed) sheet.getRange(1, 1, 1, INTENT_OPPORTUNITY_HEADERS.length).setValues([merged]);
 }
 
 /**
@@ -382,7 +431,9 @@ function enqueueIntentResearchJobs_(intentRecords) {
   var seen = {};
   for (var i = 0; i < (intentRecords || []).length; i++) {
     var record = intentRecords[i];
-    if (!record || record.action !== INTENT_CLUSTER_ACTIONS.RESEARCH_NEW_INTENT) continue;
+    if (!record) continue;
+    var clusterAction = record.clusterAction || record.action;
+    if (clusterAction !== INTENT_CLUSTER_ACTIONS.RESEARCH_NEW_INTENT) continue;
     record.clusterKey = record.clusterKey || record.key;
     var key = intentResearchDedupeKey_(record.site, record.clusterKey);
     if (seen[key]) continue;
@@ -574,9 +625,20 @@ function intentClusterTokenize_(text) {
   } catch (e) {
     value = value.replace(/[üÜ]/g, 'u').replace(/[äÄ]/g, 'a').replace(/[öÖ]/g, 'o');
   }
+  value = value.replace(/[\u2018\u2019']s\b/g, '');
   value = value.replace(/ii/g, '2').replace(/[^a-z0-9]+/g, ' ').trim();
   if (!value) return [];
-  return value.split(/\s+/).filter(function (token) { return !!token; });
+  return value.split(/\s+/).filter(function (token) { return !!token; }).map(function (token) {
+    var canonical = {
+      crashed: 'crash',
+      crashes: 'crash',
+      crashing: 'crash',
+      loading: 'load',
+      keeps: 'keep',
+      martyrs: 'martyr'
+    };
+    return canonical[token] || token;
+  });
 }
 
 function intentClusterNormalizeText_(text) {

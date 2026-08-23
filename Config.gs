@@ -165,7 +165,9 @@ var INTENT_OPPORTUNITY_HEADERS = [
   'PageClusterCount', 'PageTopCluster', 'PageTopClusterShare',
   'HotspotLevel', 'SignalConfidence', 'HasDominantPage',
   'PossibleCannibalization', 'HasExistingPage', 'Action', 'ActionReason',
-  'ResearchJobID', 'ResearchJobStatus', 'DataCutoff', 'DataIncomplete'
+  'ResearchJobID', 'ResearchJobStatus', 'DataCutoff', 'DataIncomplete',
+  'ClusterAction', 'ClusterActionReason', 'PageAction', 'PageActionReason',
+  'PageActionOwner'
 ];
 
 /** 已知实体/多语言 alias：只做 deterministic 归一，不调用 LLM。 */
@@ -174,7 +176,7 @@ var INTENT_CLUSTER_ENTITY_ALIASES = [
     siteId: 'mortal-shell-ii',
     key: 'SKIP_PROLOGUE',
     label: 'Skip Prologue',
-    aliases: ['skip prologue', 'skip intro', 'skip tutorial'],
+    aliases: ['skip prologue', 'skip prologue or not', 'skip intro', 'skip tutorial'],
     multilingual: false
   },
   {
@@ -189,6 +191,20 @@ var INTENT_CLUSTER_ENTITY_ALIASES = [
       'lantern'
     ],
     multilingual: true
+  },
+  {
+    siteId: 'mortal-shell-ii',
+    key: 'CRASHING',
+    label: 'Crashing',
+    aliases: ['crash', 'crash pc', 'crash on load', 'keep crash'],
+    multilingual: false
+  },
+  {
+    siteId: 'mortal-shell-ii',
+    key: 'GREAT_MARTYRS_BLADE',
+    label: "Great Martyr's Blade",
+    aliases: ['great martyr blade', 'martyr blade'],
+    multilingual: false
   }
 ];
 
@@ -198,6 +214,13 @@ var INTENT_CLUSTER_ACTIONS = {
   EXISTING_GROWTH: 'EXISTING_GROWTH',
   CANNIBALIZATION: 'CANNIBALIZATION',
   MULTILINGUAL_ALIAS: 'MULTILINGUAL_ALIAS',
+  OBSERVE: 'OBSERVE',
+  NO_ACTION: 'NO_ACTION'
+};
+
+var INTENT_PAGE_ACTIONS = {
+  OPTIMIZE_EXISTING: 'OPTIMIZE_EXISTING',
+  EXISTING_GROWTH: 'EXISTING_GROWTH',
   OBSERVE: 'OBSERVE',
   NO_ACTION: 'NO_ACTION'
 };

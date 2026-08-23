@@ -88,6 +88,7 @@ var candidate = {
   site: 'Mortal Shell II',
   key: 'QUERY_BEACONS_MAP',
   label: 'Beacons Map',
+  clusterAction: 'RESEARCH_NEW_INTENT',
   action: 'RESEARCH_NEW_INTENT',
   clusterLabel: 'Beacons Map',
   topQuery: 'mortal shell 2 beacons map',
@@ -103,6 +104,7 @@ assert(candidate.researchJobId, 'candidate receives ResearchJobID');
 var againCandidate = {
   site: candidate.site,
   key: candidate.key,
+  clusterAction: candidate.clusterAction,
   action: candidate.action,
   clusterLabel: candidate.clusterLabel,
   topQuery: candidate.topQuery,
@@ -123,5 +125,17 @@ var alias = context.enqueueIntentResearchJobs_([{
   hotspotLevel: 'HIGH'
 }]);
 assert(alias.created === 0, 'MULTILINGUAL_ALIAS never creates research');
+
+var pageOnly = context.enqueueIntentResearchJobs_([{
+  site: 'Mortal Shell II',
+  key: 'QUERY_PAGE_SIGNAL',
+  clusterAction: 'OBSERVE',
+  action: 'OBSERVE',
+  clusterLabel: 'Page Signal',
+  topQuery: 'mortal shell 2 page signal',
+  queries: [],
+  hotspotLevel: 'HIGH'
+}]);
+assert(pageOnly.created === 0 && pageOnly.skipped === 0, 'Page/observe action never creates research');
 
 console.log('PASS scripts/test-intent-research-enqueue.js');
