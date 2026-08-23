@@ -246,7 +246,9 @@ assert(/function handleSearchDemandCallback_[\s\S]*?enqueueReadyResearchRecommen
   'Search callback triggers enqueue');
 assert(/function handleGameWideDiscoveryCallback_[\s\S]*?enqueueReadyResearchRecommendationJobs_\(\)/.test(callbackSource),
   'GAME_WIDE callback triggers enqueue');
-assert(RESEARCH_JOB_HEADERS.slice(-4).join('|') === 'Search任务ID|Social任务ID|Search结果路径|Social结果路径',
-  'linkage headers append-only');
+var linkageStart = RESEARCH_JOB_HEADERS.indexOf('Search任务ID');
+assert(linkageStart >= 0 && RESEARCH_JOB_HEADERS.slice(linkageStart, linkageStart + 4).join('|') ===
+  'Search任务ID|Social任务ID|Search结果路径|Social结果路径',
+  'linkage headers remain append-only before M1 fields');
 
 console.log('PASS scripts/test-research-recommendation-enqueue-m6a.js');

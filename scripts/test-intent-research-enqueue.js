@@ -23,6 +23,7 @@ var headers = extractAssign(configSrc, 'RESEARCH_JOB_HEADERS');
 var context = {
   INTENT_CLUSTER_ENTITY_ALIASES: extractAssign(configSrc, 'INTENT_CLUSTER_ENTITY_ALIASES'),
   INTENT_CLUSTER_ACTIONS: extractAssign(configSrc, 'INTENT_CLUSTER_ACTIONS'),
+  INTENT_PAGE_ACTIONS: extractAssign(configSrc, 'INTENT_PAGE_ACTIONS'),
   INTENT_CLUSTER_THRESHOLDS: extractAssign(configSrc, 'INTENT_CLUSTER_THRESHOLDS'),
   OPPORTUNITY_HUB_SLUGS: extractAssign(configSrc, 'OPPORTUNITY_HUB_SLUGS'),
   OPPORTUNITY_LEVELS: extractAssign(configSrc, 'OPPORTUNITY_LEVELS'),
@@ -65,7 +66,10 @@ context.headerIndexMap_ = function (row) {
   row.forEach(function (name, i) { out[name] = i; });
   return out;
 };
-context.cell_ = function (row, col, name) { return col[name] === undefined ? '' : row[col[name]]; };
+  context.cell_ = function (row, col, name) { return col[name] === undefined ? '' : row[col[name]]; };
+context.safeJsonParse_ = function (text, fallback) {
+  try { return JSON.parse(String(text || '')); } catch (e) { return fallback; }
+};
 context.makeResearchJobId_ = function (site, page, topic) {
   return 'ms2-' + String(topic).toLowerCase().replace(/[^a-z]+/g, '-') + '-20260823';
 };
@@ -80,6 +84,9 @@ context.researchJobSheetRow_ = function (job, site) {
   row[col['source_query']] = job.source_query;
   row[col['任务状态']] = context.RESEARCH_JOB_STATUS_LABELS.PENDING;
   row[col['建议动作']] = job.recommended_action;
+  row[col['研究类型']] = job.research_type || context.RESEARCH_TYPE.CONTENT_RESEARCH;
+  row[col['SourceAction']] = job.source_action || '';
+  row[col['ActionContext']] = job.action_context ? JSON.stringify(job.action_context) : '';
   return row;
 };
 context.writeLog_ = function () {};
@@ -114,6 +121,43 @@ var againCandidate = {
 var second = context.enqueueIntentResearchJobs_([againCandidate]);
 assert(second.created === 0 && second.skipped === 1, 'same Site+ClusterKey open job is deduped');
 assert(againCandidate.researchJobId === candidate.researchJobId, 'dedupe returns existing job id');
+
+var pageOwner = {
+  site: 'Mortal Shell II',
+  key: 'GLOOMBOUND_FLAME',
+  clusterAction: 'MULTILINGUAL_ALIAS',
+  pageAction: 'OPTIMIZE_EXISTING',
+  pageActionOwner: true,
+  clusterLabel: 'Gloombound Flame',
+  topQuery: 'mortal shell 2 gloombound flame',
+  topPage: '/mortal-shell-ii/gloombound-flame/',
+  pageHotspot: {
+    page: '/mortal-shell-ii/gloombound-flame/',
+    pageAction: 'OPTIMIZE_EXISTING',
+    pageActionOwner: true,
+    clusterDetails: []
+  },
+  queries: [],
+  hotspotLevel: 'HIGH'
+};
+var pageFirst = context.enqueueIntentResearchJobs_([pageOwner]);
+assert(pageFirst.created === 1, 'PageAction owner creates one optimization research');
+assert(sheetRows[sheetRows.length - 1][headers.indexOf('研究类型')] === 'PAGE_OPTIMIZATION_RESEARCH', 'page research type');
+var pageAgain = Object.assign({}, pageOwner);
+var pageSecond = context.enqueueIntentResearchJobs_([pageAgain]);
+assert(pageSecond.created === 0 && pageSecond.skipped === 1, 'same page optimization job is deduped');
+
+var nonOwner = Object.assign({}, pageOwner, { key: 'SLAYER_SEAL', pageActionOwner: false });
+assert(context.enqueueIntentResearchJobs_([nonOwner]).created === 0, 'non-owner PageAction does not create a second job');
+
+var cannibal = {
+  site: 'Mortal Shell II', key: 'CRASHING', clusterAction: 'CANNIBALIZATION',
+  clusterLabel: 'Crashing', topQuery: 'mortal shell 2 crashing', queries: [],
+  pages: [{ page: '/a/', impressions: 30 }, { page: '/b/', impressions: 25 }],
+  topPage: '/a/', hotspotLevel: 'HIGH'
+};
+assert(context.enqueueIntentResearchJobs_([cannibal]).created === 1, 'cannibalization creates research');
+assert(sheetRows[sheetRows.length - 1][headers.indexOf('研究类型')] === 'CANNIBALIZATION_RESEARCH', 'cannibalization research type');
 
 var alias = context.enqueueIntentResearchJobs_([{
   site: 'Mortal Shell II',

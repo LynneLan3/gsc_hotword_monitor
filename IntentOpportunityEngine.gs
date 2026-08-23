@@ -84,6 +84,40 @@ function buildIntentOpportunitySnapshot_(recentRows, opts) {
   }
   clusters.sort(compareIntentImpressionsDesc_);
 
+  // PageAction research needs the complete set of clusters visible for that
+  // page, while keeping Query Cluster aggregation independent from Page rows.
+  for (var ph = 0; ph < pageHotspots.length; ph++) {
+    var hotspot = pageHotspots[ph];
+    hotspot.clusterDetails = [];
+    for (var cd = 0; cd < clusters.length; cd++) {
+      var clusterForPage = clusters[cd];
+      for (var cp = 0; cp < clusterForPage.pages.length; cp++) {
+        if (clusterForPage.pages[cp].page !== hotspot.page) continue;
+        hotspot.clusterDetails.push({
+          key: clusterForPage.key,
+          label: clusterForPage.label,
+          queries: clusterForPage.queries,
+          clicks: clusterForPage.clicks,
+          impressions: clusterForPage.impressions,
+          ctr: clusterForPage.ctr,
+          position: clusterForPage.position,
+          pageImpressions: clusterForPage.pages[cp].impressions,
+          pageShare: clusterForPage.impressions > 0
+            ? clusterForPage.pages[cp].impressions / clusterForPage.impressions
+            : 0
+        });
+        break;
+      }
+    }
+    hotspot.clusterDetails.sort(compareIntentImpressionsDesc_);
+  }
+  for (var co = 0; co < clusters.length; co++) {
+    clusters[co].pageActionOwner = !!(
+      clusters[co].pageHotspot &&
+      clusters[co].pageHotspot.topCluster === clusters[co].key
+    );
+  }
+
   return {
     site: site,
     clusters: clusters,
@@ -341,7 +375,7 @@ function buildIntentOpportunitySheetRows_(snapshot) {
   for (var i = 0; i < clusters.length; i++) {
     var c = clusters[i];
     var page = c.pageHotspot || (c.pages.length ? c.pages[0] : null);
-    var pageActionOwner = !!(page && page.topCluster === c.key);
+    var pageActionOwner = c.pageActionOwner === true || !!(page && page.topCluster === c.key);
     rows.push([
       snapshot.site && snapshot.site.name || '',
       c.key,
@@ -423,22 +457,25 @@ function ensureIntentOpportunityHeader_() {
 }
 
 /**
- * RESEARCH_NEW_INTENT → 既有「研究任务」Sheet。
- * 仅 PENDING/active 任务参与去重；已归档/终态不阻止新的实时信号再次进入队列。
+ * Action → 既有「研究任务」Sheet。
+ * 只消费三类需要研究的 Action；PageAction 仅接受 owner 行。
  */
 function enqueueIntentResearchJobs_(intentRecords) {
   var candidates = [];
   var seen = {};
   for (var i = 0; i < (intentRecords || []).length; i++) {
-    var record = intentRecords[i];
-    if (!record) continue;
-    var clusterAction = record.clusterAction || record.action;
-    if (clusterAction !== INTENT_CLUSTER_ACTIONS.RESEARCH_NEW_INTENT) continue;
-    record.clusterKey = record.clusterKey || record.key;
-    var key = intentResearchDedupeKey_(record.site, record.clusterKey);
+    var sourceRecord = intentRecords[i];
+    var candidate = buildIntentResearchCandidate_(sourceRecord);
+    if (!candidate) continue;
+    candidate.sourceRecord = sourceRecord;
+    var key = intentResearchDedupeKey_(
+      candidate.site,
+      candidate.dedupeIdentity,
+      candidate.researchType
+    );
     if (seen[key]) continue;
     seen[key] = true;
-    candidates.push(record);
+    candidates.push(candidate);
   }
   if (!candidates.length) return { created: 0, skipped: 0, jobs: {} };
 
@@ -458,7 +495,12 @@ function enqueueIntentResearchJobs_(intentRecords) {
     var site = String(cell_(rows[r], col, '站点') || '').trim();
     var source = String(cell_(rows[r], col, 'source_query') || '').trim();
     var topic = String(cell_(rows[r], col, '搜索词 / topic') || '').trim();
-    var existingKey = intentResearchDedupeKey_(site, intentClusterKeyForQuery_(source || topic, { name: site }));
+    var researchType = String(cell_(rows[r], col, '研究类型') || '').trim() || RESEARCH_TYPE.CONTENT_RESEARCH;
+    var context = safeJsonParse_(cell_(rows[r], col, 'ActionContext'), {});
+    var identity = researchType === RESEARCH_TYPE.PAGE_OPTIMIZATION_RESEARCH
+      ? intentPageResearchIdentity_(context.pagePath || cell_(rows[r], col, '页面路径'))
+      : context.clusterKey || intentClusterKeyForQuery_(source || topic, { name: site });
+    var existingKey = intentResearchDedupeKey_(site, identity, researchType);
     if (site && existingKey) {
       existing[existingKey] = {
         jobId: String(cell_(rows[r], col, '任务ID') || '').trim(),
@@ -473,25 +515,41 @@ function enqueueIntentResearchJobs_(intentRecords) {
   var skipped = 0;
   for (var c = 0; c < candidates.length; c++) {
     var candidate = candidates[c];
-    var dedupeKey = intentResearchDedupeKey_(candidate.site, candidate.clusterKey);
+    var dedupeKey = intentResearchDedupeKey_(
+      candidate.site,
+      candidate.dedupeIdentity,
+      candidate.researchType
+    );
     if (existing[dedupeKey]) {
       candidate.researchJobId = existing[dedupeKey].jobId;
       candidate.researchJobStatus = existing[dedupeKey].status;
+      candidate.sourceRecord.researchJobId = candidate.researchJobId;
+      candidate.sourceRecord.researchJobStatus = candidate.researchJobStatus;
       skipped++;
       continue;
     }
     var job = {
-      job_id: makeResearchJobId_(candidate.site, '', candidate.clusterLabel, candidate.topQuery, now),
+      job_id: makeResearchJobId_(
+        candidate.site,
+        candidate.pagePath || '',
+        candidate.clusterLabel,
+        candidate.topQuery,
+        now
+      ),
       game: candidate.site,
       topic: candidate.clusterLabel,
-      existing_page: '',
+      existing_page: candidate.pagePath || '',
       opportunity_level: candidate.hotspotLevel === 'HIGH' ? OPPORTUNITY_LEVELS.HIGH : OPPORTUNITY_LEVELS.MEDIUM,
-      recommended_action: OPPORTUNITY_ACTIONS.RESEARCH_NEW_CONTENT,
+      recommended_action: candidate.researchType === RESEARCH_TYPE.PAGE_OPTIMIZATION_RESEARCH
+        ? OPPORTUNITY_ACTIONS.RESEARCH_EXPAND_EXISTING
+        : OPPORTUNITY_ACTIONS.RESEARCH_NEW_CONTENT,
       source_query: candidate.topQuery,
-      related_queries: (candidate.queries || []).map(function (q) {
+      related_queries: (candidate.relatedQueries || candidate.queries || []).map(function (q) {
         return typeof q === 'string' ? q : q.query;
       }).join(' | '),
-      research_type: RESEARCH_TYPE.CONTENT_RESEARCH
+      research_type: candidate.researchType,
+      source_action: candidate.sourceAction,
+      action_context: candidate.actionContext
     };
     if (existingJobsById_(createdRows, job.job_id)) {
       job.job_id = uniquifyResearchJobId_(job.job_id, candidate.clusterKey);
@@ -504,6 +562,8 @@ function enqueueIntentResearchJobs_(intentRecords) {
     };
     candidate.researchJobId = job.job_id;
     candidate.researchJobStatus = RESEARCH_JOB_STATUS_LABELS.PENDING || '待处理';
+    candidate.sourceRecord.researchJobId = candidate.researchJobId;
+    candidate.sourceRecord.researchJobStatus = candidate.researchJobStatus;
     jobs[dedupeKey] = job.job_id;
   }
   if (createdRows.length) {
@@ -513,6 +573,101 @@ function enqueueIntentResearchJobs_(intentRecords) {
   }
   writeLog_('INFO', '', 'enqueueIntentResearchJobs created=' + createdRows.length + ' skipped=' + skipped);
   return { created: createdRows.length, skipped: skipped, jobs: jobs };
+}
+
+function buildIntentResearchCandidate_(record) {
+  if (!record) return null;
+  var clusterAction = record.clusterAction || record.action || '';
+  var pageAction = record.pageAction || (record.pageHotspot && record.pageHotspot.pageAction) || '';
+  var researchType = '';
+  if (clusterAction === INTENT_CLUSTER_ACTIONS.RESEARCH_NEW_INTENT) {
+    researchType = RESEARCH_TYPE.NEW_INTENT_RESEARCH;
+  } else if (clusterAction === INTENT_CLUSTER_ACTIONS.CANNIBALIZATION) {
+    researchType = RESEARCH_TYPE.CANNIBALIZATION_RESEARCH;
+  } else if (
+    pageAction === INTENT_PAGE_ACTIONS.OPTIMIZE_EXISTING &&
+    record.pageActionOwner === true
+  ) {
+    researchType = RESEARCH_TYPE.PAGE_OPTIMIZATION_RESEARCH;
+  }
+  // Legacy direct callers that only provide Action remain NEW_INTENT compatible.
+  if (!researchType && clusterAction === INTENT_CLUSTER_ACTIONS.RESEARCH_NEW_INTENT) {
+    researchType = RESEARCH_TYPE.NEW_INTENT_RESEARCH;
+  }
+  if (!researchType) return null;
+
+  var page = record.pageHotspot || {};
+  var pagePath = record.pagePath || page.page || record.topPage || '';
+  var clusterKey = record.clusterKey || record.key || '';
+  var identity = researchType === RESEARCH_TYPE.PAGE_OPTIMIZATION_RESEARCH
+    ? intentPageResearchIdentity_(pagePath)
+    : clusterKey;
+  if (!record.site || !identity) return null;
+
+  var context = buildIntentResearchContext_(record, researchType, pagePath);
+  var relatedQueries = record.queries || [];
+  if (researchType === RESEARCH_TYPE.PAGE_OPTIMIZATION_RESEARCH && page.clusterDetails) {
+    relatedQueries = [];
+    for (var i = 0; i < page.clusterDetails.length; i++) {
+      relatedQueries = relatedQueries.concat(page.clusterDetails[i].queries || []);
+    }
+  }
+  return {
+    site: record.site,
+    clusterKey: clusterKey,
+    clusterLabel: record.label || record.clusterLabel || page.topCluster || clusterKey,
+    topQuery: record.topQuery || '',
+    queries: record.queries || [],
+    relatedQueries: relatedQueries,
+    hotspotLevel: record.hotspotLevel || page.hotspotLevel || 'LOW',
+    pagePath: pagePath,
+    researchType: researchType,
+    sourceAction: researchType === RESEARCH_TYPE.PAGE_OPTIMIZATION_RESEARCH
+      ? pageAction
+      : clusterAction,
+    dedupeIdentity: identity,
+    actionContext: context
+  };
+}
+
+function buildIntentResearchContext_(record, researchType, pagePath) {
+  var page = record.pageHotspot || {};
+  var context = {
+    site: record.site || '',
+    researchType: researchType,
+    sourceAction: researchType === RESEARCH_TYPE.PAGE_OPTIMIZATION_RESEARCH
+      ? (page.pageAction || record.pageAction || '')
+      : (record.clusterAction || record.action || ''),
+    clusterKey: record.clusterKey || record.key || '',
+    clusterLabel: record.label || record.clusterLabel || '',
+    clusterQueries: record.queries || [],
+    clusterImpressions: Number(record.impressions || 0),
+    clusterClicks: Number(record.clicks || 0),
+    clusterCTR: Number(record.ctr || 0),
+    clusterPosition: Number(record.position || 0),
+    topQuery: record.topQuery || '',
+    topPage: record.topPage || pagePath || '',
+    topPageShare: Number(record.topPageShare || 0),
+    actionReason: record.clusterActionReason || record.actionReason || '',
+    dataCutoff: record.dataCutoff || ''
+  };
+  if (researchType === RESEARCH_TYPE.PAGE_OPTIMIZATION_RESEARCH) {
+    context.pagePath = pagePath || page.page || '';
+    context.pageClicks = Number(page.clicks || 0);
+    context.pageImpressions = Number(page.impressions || 0);
+    context.pageCTR = Number(page.ctr || 0);
+    context.pagePosition = Number(page.position || 0);
+    context.hotspotLevel = page.hotspotLevel || record.hotspotLevel || '';
+    context.pageTopCluster = page.topCluster || '';
+    context.pageClusterCount = Number(page.clusterCount || 0);
+    context.pageActionReason = page.pageActionReason || '';
+    context.clusters = page.clusterDetails || [];
+  }
+  if (researchType === RESEARCH_TYPE.CANNIBALIZATION_RESEARCH) {
+    context.competingPages = record.pages || [];
+    context.primaryCandidate = record.topPage || '';
+  }
+  return context;
 }
 
 function existingJobsById_(rows, jobId) {
@@ -526,13 +681,20 @@ function isIntentResearchJobOpen_(status) {
   var s = String(status || '').trim();
   return !s || s === RESEARCH_JOB_STATUS_LABELS.PENDING || s === RESEARCH_JOB_STATUS_LABELS.REVIEW ||
     s === RESEARCH_JOB_STATUS_LABELS.APPROVED || s === RESEARCH_JOB_STATUS_LABELS.WATCH ||
-    s === RESEARCH_JOB_STATUS_LABELS.READY_FOR_DISCOVERY_RUNNER;
+    s === RESEARCH_JOB_STATUS_LABELS.READY_FOR_DISCOVERY_RUNNER ||
+    s === RESEARCH_JOB_STATUS.RUNNING || s === '运行中' || s === 'ACTIVE' || s === 'active';
 }
 
-function intentResearchDedupeKey_(site, clusterKey) {
+function intentResearchDedupeKey_(site, identity, researchType) {
   var s = String(site || '').trim();
-  var c = String(clusterKey || '').trim();
-  return s && c ? s + '||' + c : '';
+  var c = String(identity || '').trim();
+  var t = String(researchType || '').trim();
+  return s && c ? s + '||' + c + (t ? '||' + t : '') : '';
+}
+
+function intentPageResearchIdentity_(pagePath) {
+  var p = intentPagePath_(pagePath);
+  return p && p !== '/' ? p : '';
 }
 
 function classifyIntentCluster_(query, site) {

@@ -109,6 +109,63 @@ function syncDevelopmentTasksFromApprovedDecisions() {
   return summary;
 }
 
+/**
+ * M1: high-confidence ContentDecision → existing DevelopmentTasks queue.
+ * This is a direct structured-decision handoff; it does not add a new review gate.
+ */
+function createDevelopmentTaskFromContentDecision_(jobRow, jobCol, decision, createdAt) {
+  if (!isContentDecisionImplementationEligible_(decision)) {
+    return { created: 0, skipped: 1, reason: 'decision_not_implementation_eligible' };
+  }
+  ensureDevelopmentTaskSheets_();
+  var sheet = getSpreadsheet_().getSheetByName(SHEET_NAMES.DEVELOPMENT_TASKS);
+  if (!sheet) return { created: 0, skipped: 1, reason: 'sheet_missing' };
+  var existing = loadExistingDevelopmentTaskKeys_(sheet);
+  var sourceId = String(cell_(jobRow, jobCol, '任务ID') || '').trim();
+  var actionType = contentDecisionDevelopmentAction_(decision.primaryDecision);
+  var site = String(cell_(jobRow, jobCol, '站点') || '').trim();
+  var pagePath = String(decision.pagePath || cell_(jobRow, jobCol, '页面路径') || '').trim();
+  var siteRefs = loadDevelopmentSiteReferences_();
+  var task = buildDevelopmentTaskFromResearchRow_(jobRow, jobCol, createdAt, {
+    decisionId: decision.decisionId,
+    siteId: siteRefs[site] || '',
+    actionType: actionType
+  });
+  task.page_path = pagePath;
+  task.goal = decision.primaryDecision === CONTENT_DECISION_PRIMARY_ACTIONS.CREATE_NEW_PAGE
+    ? DEVELOPMENT_GOAL_LABELS.NEW_PAGE
+    : DEVELOPMENT_GOAL_LABELS.EXPAND_EXISTING;
+  task.task_type = 'CONTENT_IMPLEMENTATION';
+  task.task_reason = 'ContentDecision ' + decision.decisionId + '：' + (decision.decisionReason || decision.primaryDecision);
+  task.source_reference = '研究任务/' + sourceId + ' / Decision/' + decision.decisionId;
+  if (developmentTaskAlreadyExists_(existing, task)) {
+    return { created: 0, skipped: 1, developmentTaskId: task.development_task_id };
+  }
+  var start = Math.max(2, sheet.getLastRow() + 1);
+  sheet.getRange(start, 1, 1, DEVELOPMENT_TASK_HEADERS.length).setValues([developmentTaskSheetRow_(task)]);
+  return { created: 1, skipped: 0, developmentTaskId: task.development_task_id };
+}
+
+function isContentDecisionImplementationEligible_(decision) {
+  if (!decision || String(decision.confidence || '').toUpperCase() !== 'HIGH') return false;
+  var primary = String(decision.primaryDecision || '').toUpperCase();
+  return primary === CONTENT_DECISION_PRIMARY_ACTIONS.CREATE_NEW_PAGE ||
+    primary === CONTENT_DECISION_PRIMARY_ACTIONS.EXPAND_EXISTING ||
+    primary === CONTENT_DECISION_PRIMARY_ACTIONS.REWRITE_SECTION ||
+    primary === CONTENT_DECISION_PRIMARY_ACTIONS.ADD_FAQ ||
+    primary === CONTENT_DECISION_PRIMARY_ACTIONS.ADD_ENTITY_SECTION ||
+    primary === CONTENT_DECISION_PRIMARY_ACTIONS.ADD_COMPARISON ||
+    primary === CONTENT_DECISION_PRIMARY_ACTIONS.ADD_STEPS ||
+    primary === CONTENT_DECISION_PRIMARY_ACTIONS.REFOCUS_SECONDARY ||
+    primary === CONTENT_DECISION_PRIMARY_ACTIONS.FIX_INTERNAL_LINKING;
+}
+
+function contentDecisionDevelopmentAction_(primaryDecision) {
+  return primaryDecision === CONTENT_DECISION_PRIMARY_ACTIONS.CREATE_NEW_PAGE
+    ? 'CREATE_PAGE'
+    : 'UPDATE_PAGE';
+}
+
 function ensureDevelopmentTaskSheets_() {
   ensureSheet_(SHEET_NAMES.DEVELOPMENT_TASKS, DEVELOPMENT_TASK_HEADERS);
   ensureDevelopmentTaskHeader_();

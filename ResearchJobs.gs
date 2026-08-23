@@ -21,6 +21,9 @@ function doGet(e) {
   if (action === 'pendingResearchJobs') {
     return jsonOutput_({ jobs: loadPendingResearchJobs_() });
   }
+  if (action === 'pendingActionResearchJobs') {
+    return jsonOutput_({ jobs: loadPendingActionResearchJobs_() });
+  }
   if (action === 'pendingDemandDiscoveryJobs') {
     return jsonOutput_({ jobs: loadDemandDiscoveryReadyJobs_() });
   }
@@ -450,7 +453,8 @@ function gameWideDiscoveryResearchJobSheetRow_(contract, site, createdAt) {
     String(contract.source_signal_summary || '').trim(),                  // 信号摘要
     String(contract.discovery_cycle_date || '').trim(),                   // 发现周期日期
     String(contract.opportunity_id || '').trim(),                          // OpportunityID
-    '', '', '', ''                                                         // Recommendation linkage
+    '', '', '', '',                                                        // Recommendation linkage
+    '', '', '', '', '', '', '', '', '', '', '', '', ''                     // M1 action context + ContentDecision
   ];
 }
 
@@ -1227,6 +1231,7 @@ function writeResearchJobResult_(body) {
 
   var found = findResearchJobRowById_(sheet, col, jobId);
   if (!found) return { ok: false, error: 'job_not_found', job_id: jobId };
+  var jobRow = sheet.getRange(found.sheetRow, 1, 1, lastCol).getValues()[0];
 
   var completedAt = new Date();
   var statusLabel = opportunityLabel_(RESEARCH_JOB_STATUS_LABELS, statusEnum);
@@ -1278,7 +1283,6 @@ function writeResearchJobResult_(body) {
     }
 
     if (body && Object.prototype.toString.call(body.evidence) === '[object Array]') {
-      var jobRow = sheet.getRange(found.sheetRow, 1, 1, lastCol).getValues()[0];
       var reviewResult = writeResearchReviewEvidence_(ss, {
         jobId: jobId,
         site: String(cell_(jobRow, col, '站点') || '').trim(),
@@ -1313,7 +1317,28 @@ function writeResearchJobResult_(body) {
     }
     setCellIf_(sheet, found.sheetRow, col, '审核链接', '');
   }
+  var contentDecision = null;
+  if (statusEnum !== RESEARCH_JOB_STATUS.FAILED) {
+    contentDecision = buildContentDecisionFromResearchPayload_(
+      jobRow,
+      col,
+      body || {},
+      statusEnum,
+      recEnum,
+      evidenceCount,
+      reviewSummary,
+      completedAt
+    );
+    if (contentDecision) {
+      writeContentDecisionToResearchJobRow_(sheet, found.sheetRow, col, contentDecision);
+    }
+  }
   SpreadsheetApp.flush();
+
+  var developmentTask = null;
+  if (contentDecision && typeof createDevelopmentTaskFromContentDecision_ === 'function') {
+    developmentTask = createDevelopmentTaskFromContentDecision_(jobRow, col, contentDecision, completedAt);
+  }
 
   return {
     ok: true,
@@ -1325,6 +1350,8 @@ function writeResearchJobResult_(body) {
     review_summary: reviewSummary || null,
     evidence_rows: wroteEvidence ? evidenceRowsWritten : null,
     review_link: wroteEvidence ? reviewLink || null : null,
+    content_decision: contentDecision,
+    development_task: developmentTask,
     completed_at: toIso8601_(completedAt),
     display: {
       任务状态: statusLabel,
@@ -1334,9 +1361,128 @@ function writeResearchJobResult_(body) {
       完成时间: toIso8601_(completedAt),
       错误信息: errorMsg,
       审核摘要: reviewSummary,
-      审核链接: reviewLink
+      审核链接: reviewLink,
+      DecisionID: contentDecision ? contentDecision.decisionId : '',
+      PrimaryDecision: contentDecision ? contentDecision.primaryDecision : '',
+      Confidence: contentDecision ? contentDecision.confidence : ''
     }
   };
+}
+
+function buildContentDecisionFromResearchPayload_(jobRow, col, body, statusEnum, recEnum, evidenceCount, reviewSummary, createdAt) {
+  var researchType = String(cell_(jobRow, col, '研究类型') || '').trim();
+  if (!ACTION_RESEARCH_TYPES[researchType]) return null;
+  var context = safeJsonParse_(cell_(jobRow, col, 'ActionContext'), {});
+  var raw = body.content_decision || body.contentDecision || {};
+  var primary = String(raw.primary_decision || raw.primaryDecision || '').trim().toUpperCase();
+  if (!contentDecisionPrimaryAllowed_(researchType, primary)) {
+    primary = fallbackContentDecisionPrimary_(researchType, recEnum, statusEnum);
+  }
+  var secondary = normalizeContentDecisionList_(raw.secondary_actions || raw.secondaryActions);
+  var targetQueries = normalizeContentDecisionList_(raw.target_queries || raw.targetQueries);
+  if (!targetQueries.length) targetQueries = context.clusterQueries || [];
+  var sections = normalizeContentDecisionList_(raw.recommended_sections || raw.recommendedSections);
+  var confidence = String(raw.confidence || '').trim().toUpperCase();
+  if (confidence !== 'HIGH' && confidence !== 'MEDIUM' && confidence !== 'LOW') {
+    confidence = Number(evidenceCount || 0) >= 5 ? 'HIGH' : Number(evidenceCount || 0) >= 2 ? 'MEDIUM' : 'LOW';
+  }
+  var decisionId = String(raw.decision_id || raw.decisionId || '').trim();
+  if (!decisionId) decisionId = contentDecisionIdFromJob_(String(cell_(jobRow, col, '任务ID') || '').trim());
+  return {
+    decisionId: decisionId,
+    site: String(cell_(jobRow, col, '站点') || '').trim(),
+    sourceAction: String(cell_(jobRow, col, 'SourceAction') || '').trim(),
+    researchType: researchType,
+    clusterKey: String(context.clusterKey || '').trim(),
+    pagePath: String(context.pagePath || cell_(jobRow, col, '页面路径') || '').trim(),
+    primaryDecision: primary,
+    secondaryActions: secondary,
+    decisionReason: String(raw.decision_reason || raw.decisionReason || reviewSummary || '').trim(),
+    evidenceSummary: String(raw.evidence_summary || raw.evidenceSummary || reviewSummary || '').trim(),
+    evidenceCount: Number(evidenceCount || raw.evidence_count || 0),
+    targetQueries: targetQueries,
+    recommendedSections: sections,
+    recommendedTitleChange: String(raw.recommended_title_change || raw.recommendedTitleChange || '').trim(),
+    recommendedInternalLinks: normalizeContentDecisionList_(raw.recommended_internal_links || raw.recommendedInternalLinks),
+    confidence: confidence,
+    createdAt: createdAt || new Date()
+  };
+}
+
+function contentDecisionPrimaryAllowed_(researchType, primary) {
+  if (!primary) return false;
+  if (researchType === RESEARCH_TYPE.NEW_INTENT_RESEARCH) {
+    return primary === CONTENT_DECISION_PRIMARY_ACTIONS.CREATE_NEW_PAGE ||
+      primary === CONTENT_DECISION_PRIMARY_ACTIONS.EXPAND_EXISTING ||
+      primary === CONTENT_DECISION_PRIMARY_ACTIONS.MERGE_WITH_EXISTING ||
+      primary === CONTENT_DECISION_PRIMARY_ACTIONS.WATCH ||
+      primary === CONTENT_DECISION_PRIMARY_ACTIONS.REJECT_NOISE;
+  }
+  if (researchType === RESEARCH_TYPE.PAGE_OPTIMIZATION_RESEARCH) {
+    return primary === CONTENT_DECISION_PRIMARY_ACTIONS.EXPAND_EXISTING ||
+      primary === CONTENT_DECISION_PRIMARY_ACTIONS.REWRITE_SECTION ||
+      primary === CONTENT_DECISION_PRIMARY_ACTIONS.IMPROVE_TITLE_SNIPPET ||
+      primary === CONTENT_DECISION_PRIMARY_ACTIONS.ADD_FAQ ||
+      primary === CONTENT_DECISION_PRIMARY_ACTIONS.ADD_ENTITY_SECTION ||
+      primary === CONTENT_DECISION_PRIMARY_ACTIONS.ADD_COMPARISON ||
+      primary === CONTENT_DECISION_PRIMARY_ACTIONS.ADD_STEPS ||
+      primary === CONTENT_DECISION_PRIMARY_ACTIONS.NO_CHANGE ||
+      primary === CONTENT_DECISION_PRIMARY_ACTIONS.WATCH;
+  }
+  return primary === CONTENT_DECISION_PRIMARY_ACTIONS.KEEP_BOTH ||
+    primary === CONTENT_DECISION_PRIMARY_ACTIONS.CONSOLIDATE ||
+    primary === CONTENT_DECISION_PRIMARY_ACTIONS.REDIRECT_SECONDARY ||
+    primary === CONTENT_DECISION_PRIMARY_ACTIONS.REFOCUS_SECONDARY ||
+    primary === CONTENT_DECISION_PRIMARY_ACTIONS.FIX_INTERNAL_LINKING ||
+    primary === CONTENT_DECISION_PRIMARY_ACTIONS.WATCH;
+}
+
+function fallbackContentDecisionPrimary_(researchType, recommendation, statusEnum) {
+  if (statusEnum === RESEARCH_JOB_STATUS.WATCH || recommendation === RESEARCH_RESULT_RECOMMENDATIONS.WATCH) {
+    return CONTENT_DECISION_PRIMARY_ACTIONS.WATCH;
+  }
+  if (researchType === RESEARCH_TYPE.NEW_INTENT_RESEARCH) {
+    return recommendation === RESEARCH_RESULT_RECOMMENDATIONS.NEW_CONTENT
+      ? CONTENT_DECISION_PRIMARY_ACTIONS.CREATE_NEW_PAGE
+      : CONTENT_DECISION_PRIMARY_ACTIONS.EXPAND_EXISTING;
+  }
+  if (researchType === RESEARCH_TYPE.PAGE_OPTIMIZATION_RESEARCH) {
+    return CONTENT_DECISION_PRIMARY_ACTIONS.EXPAND_EXISTING;
+  }
+  return CONTENT_DECISION_PRIMARY_ACTIONS.KEEP_BOTH;
+}
+
+function normalizeContentDecisionList_(value) {
+  var list = value;
+  if (list === null || list === undefined || list === '') return [];
+  if (Object.prototype.toString.call(list) !== '[object Array]') list = [list];
+  var out = [];
+  for (var i = 0; i < list.length; i++) {
+    var item = list[i];
+    if (item && typeof item === 'object') item = item.query || item.question || item.title || item.text || '';
+    item = String(item || '').trim();
+    if (item && out.indexOf(item) < 0) out.push(item);
+  }
+  return out;
+}
+
+function contentDecisionIdFromJob_(jobId) {
+  var slug = String(jobId || '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+  return 'content-decision-' + (slug || 'unknown-job');
+}
+
+function writeContentDecisionToResearchJobRow_(sheet, sheetRow, col, decision) {
+  setCellIf_(sheet, sheetRow, col, 'DecisionID', decision.decisionId);
+  setCellIf_(sheet, sheetRow, col, 'PrimaryDecision', decision.primaryDecision);
+  setCellIf_(sheet, sheetRow, col, 'SecondaryActions', JSON.stringify(decision.secondaryActions || []));
+  setCellIf_(sheet, sheetRow, col, 'DecisionReason', decision.decisionReason);
+  setCellIf_(sheet, sheetRow, col, 'EvidenceSummary', decision.evidenceSummary);
+  setCellIf_(sheet, sheetRow, col, 'TargetQueries', JSON.stringify(decision.targetQueries || []));
+  setCellIf_(sheet, sheetRow, col, 'RecommendedSections', JSON.stringify(decision.recommendedSections || []));
+  setCellIf_(sheet, sheetRow, col, 'RecommendedTitleChange', decision.recommendedTitleChange);
+  setCellIf_(sheet, sheetRow, col, 'RecommendedInternalLinks', JSON.stringify(decision.recommendedInternalLinks || []));
+  setCellIf_(sheet, sheetRow, col, 'Confidence', decision.confidence);
+  setCellIf_(sheet, sheetRow, col, 'DecisionCreatedAt', decision.createdAt);
 }
 
 /**
@@ -1571,6 +1717,27 @@ function loadPendingResearchJobs_() {
   return jobs;
 }
 
+/** M1 Action research queue; kept separate from the legacy content queue. */
+function loadPendingActionResearchJobs_() {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  if (!ss) return [];
+  var sheet = ss.getSheetByName(SHEET_NAMES.RESEARCH_JOBS);
+  if (!sheet || sheet.getLastRow() < 2) return [];
+  var lastCol = Math.max(sheet.getLastColumn(), RESEARCH_JOB_HEADERS.length);
+  var header = sheet.getRange(1, 1, 1, lastCol).getValues()[0];
+  var col = headerIndexMap_(header);
+  var rows = sheet.getRange(2, 1, sheet.getLastRow() - 1, lastCol).getValues();
+  var jobs = [];
+  for (var i = 0; i < rows.length; i++) {
+    var researchType = String(cell_(rows[i], col, '研究类型') || '').trim();
+    if (!ACTION_RESEARCH_TYPES[researchType]) continue;
+    if (!isResearchJobPending_(String(cell_(rows[i], col, '任务状态') || '').trim())) continue;
+    var job = researchJobActionRowToApi_(rows[i], col);
+    if (job && job.job_id) jobs.push(job);
+  }
+  return jobs;
+}
+
 function isResearchJobPending_(status) {
   var s = String(status || '').trim();
   if (!s) return false;
@@ -1606,9 +1773,15 @@ function researchJobRowToApi_(row, col) {
     source_query: String(cell_(row, col, 'source_query') || '').trim(),
     related_queries: related,
     created_at: createdAt
-    // 有意不输出 research_type：当前 fetch_pending_jobs / runner 不消费该字段。
-    // Sheet 仍保存「研究类型」；B2-B2 若需区分 ASSET_RESEARCH 再做 passthrough。
   };
+}
+
+function researchJobActionRowToApi_(row, col) {
+  var job = researchJobRowToApi_(row, col);
+  job.research_type = String(cell_(row, col, '研究类型') || RESEARCH_TYPE.CONTENT_RESEARCH).trim();
+  job.source_action = String(cell_(row, col, 'SourceAction') || '').trim();
+  job.action_context = safeJsonParse_(cell_(row, col, 'ActionContext'), {});
+  return job;
 }
 
 function safeJsonParse_(text, fallback) {
@@ -2111,7 +2284,8 @@ function demandDiscoveryResearchJobSheetRow_(contract, site, createdAt) {
     String(contract.source_signal_summary || '').trim(),
     String(contract.discovery_cycle_date || '').trim(),
     String(contract.opportunity_id || '').trim(),
-    '', '', '', '' // Recommendation linkage
+    '', '', '', '', // Recommendation linkage
+    '', '', '', '', '', '', '', '', '', '', '', '', '' // M1 action context + ContentDecision
   ];
 }
 
@@ -2304,7 +2478,8 @@ function searchDemandResearchJobSheetRow_(contract, site, createdAt) {
     String(contract.source_signal_summary || '').trim(),
     String(contract.search_cycle_date || '').trim(),
     String(contract.opportunity_id || '').trim(),
-    '', '', '', '' // Recommendation linkage
+    '', '', '', '', // Recommendation linkage
+    '', '', '', '', '', '', '', '', '', '', '', '', '' // M1 action context + ContentDecision
   ];
 }
 
@@ -3717,7 +3892,10 @@ function researchJobSheetRow_(job, site, createdAt) {
     '',
     '',
     '', // OpportunityID（CONTENT_RESEARCH 不绑定 GSC Opportunity）
-    '', '', '', '' // Recommendation linkage
+    '', '', '', '', // Recommendation linkage
+    job.source_action || '',
+    job.action_context ? JSON.stringify(job.action_context) : '',
+    '', '', '', '', '', '', '', '', '', ''
   ];
 }
 
