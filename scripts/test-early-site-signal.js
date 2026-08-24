@@ -124,6 +124,23 @@ var merged = context.mergeEarlySignalSnapshots_(
 );
 assert(merged.length === 2, 'live snapshot fallback merges with fresh snapshots');
 
+var weightedPositionAggregate = context.buildEarlySiteSignalAggregate_({
+  clusters: [{
+    queryCount: 1,
+    impressions: 12,
+    clicks: 2,
+    position: 5,
+    queries: [{
+      query: 'weighted query',
+      impressions: 12,
+      clicks: 2,
+      positionWeight: 60
+    }]
+  }]
+}, { name: 'Weighted Position Site' });
+assert(weightedPositionAggregate.top10QueryCount === 1, 'query position falls back to positionWeight');
+assert(weightedPositionAggregate.top20QueryCount === 1, 'weighted query counts in Top20');
+
 console.log(JSON.stringify({
   aggregate: {
     impressions24h: aggregate.impressions24h,

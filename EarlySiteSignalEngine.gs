@@ -295,9 +295,13 @@ function buildEarlySiteSignalAggregate_(snapshot, site) {
       var target = queriesByKey[key];
       var itemImpressions = earlyMetricNumber_(item.impressions);
       var itemClicks = earlyMetricNumber_(item.clicks);
+      var itemPosition = earlyMetricNumber_(item.position);
+      if (itemPosition <= 0 && itemImpressions > 0) {
+        itemPosition = earlyMetricNumber_(item.positionWeight) / itemImpressions;
+      }
       target.clicks += itemClicks;
       target.impressions += itemImpressions;
-      target.positionWeight += earlyMetricNumber_(item.position) * itemImpressions;
+      target.positionWeight += itemPosition * itemImpressions;
     }
   }
 
