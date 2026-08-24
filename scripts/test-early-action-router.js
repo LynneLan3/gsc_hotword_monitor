@@ -12,6 +12,8 @@ function assert(condition, message) {
 var root = path.join(__dirname, '..');
 var configSrc = fs.readFileSync(path.join(root, 'Config.gs'), 'utf8');
 var routerSrc = fs.readFileSync(path.join(root, 'EarlyActionRouter.gs'), 'utf8');
+var followupSrc = fs.readFileSync(path.join(root, 'EarlyFollowupEngine.gs'), 'utf8');
+var intentSrc = fs.readFileSync(path.join(root, 'IntentOpportunityEngine.gs'), 'utf8');
 
 function extractAssign(src, name) {
   var match = src.match(new RegExp('var ' + name + '\\s*=\\s*([\\s\\S]*?);\\s*\\n(?:var |/\\*|function )'));
@@ -28,8 +30,12 @@ var context = {};
 context.EARLY_ACTION_ROUTER_SIGNALS = extractAssign(configSrc, 'EARLY_ACTION_ROUTER_SIGNALS');
 context.EXTERNAL_OPPORTUNITY_TYPES = extractAssign(configSrc, 'EXTERNAL_OPPORTUNITY_TYPES');
 context.RESEARCH_TYPE = extractAssign(configSrc, 'RESEARCH_TYPE');
+context.INTENT_FAMILY_ALIASES = extractAssign(configSrc, 'INTENT_FAMILY_ALIASES');
+context.INTENT_CLUSTER_ENTITY_ALIASES = extractAssign(configSrc, 'INTENT_CLUSTER_ENTITY_ALIASES');
 vm.createContext(context);
 vm.runInContext(routerSrc, context);
+vm.runInContext(intentSrc, context);
+vm.runInContext(followupSrc, context);
 
 var early = {
   site: 'Project P.I.T.T.',
@@ -56,6 +62,8 @@ function followup(key, signals, values) {
     expectedPage: values.expectedPage === undefined ? '' : values.expectedPage,
     currentTopPageShare: values.share === undefined ? 0.8 : values.share,
     observationCount: values.observationCount === undefined ? 2 : values.observationCount,
+    opportunityStage: values.opportunityStage || '',
+    intentType: values.intentType || '',
     reason: values.reason || signals.join('|') + ' reason'
   };
 }
@@ -147,15 +155,55 @@ assert(takeover[0].createTodayAction === false && takeover[0].createResearchJob 
 // J: active Research Job dedupe key blocks a second job.
 var dedupeKey = context.earlyActionResearchDedupeKey_(mismatch[0]);
 assert(!context.shouldCreateEarlyResearchJob_(mismatch[0], [{ dedupeKey: dedupeKey, status: 'PENDING' }], {}), 'J: active job deduped');
+assert(!context.shouldCreateEarlyResearchJob_(mismatch[0], [{
+  dedupeKey: 'legacy-intent-key',
+  site: mismatch[0].site,
+  clusterKey: mismatch[0].clusterKey,
+  status: 'PENDING'
+}], {}), 'J2: legacy active intent job deduped by site and cluster');
 
-// K: Day >= 7 hands authority back to the formal Decision Engine.
+// K: Day >= 7 remains routable when the Intent Signal Gate is satisfied.
 var d7 = plansFor(
-  [followup('D7', ['GROWING_INTENT'], { day: 7 })],
+  [followup('D7', ['CAPTURE'], {
+    day: 7,
+    opportunityStage: 'CAPTURE',
+    intentType: 'SPECIFIC_INTENT',
+    impressions: 12
+  })],
   { 'Project P.I.T.T.||D7': { hasExistingPage: true, topPage: '/guide/' } },
-  {},
+  { 'EARLY_SITE_WIN:Project P.I.T.T.': { routed: true } },
   Object.assign({}, early, { day: 7 })
 );
-assert(d7.length === 0, 'K: no early action at Day 7');
+assert(d7.length === 1 && d7[0].opportunityStage === 'CAPTURE', 'K: Day 7 capture remains allowed');
+
+// M: Absolute/Growth split, generic caution, and canonical query normalization.
+var strongSpecific = context.evaluateEarlyFollowupObservation_(
+  { name: 'Project P.I.T.T.', day: 1 },
+  { key: 'PITT_200KG', label: '200kg', intentType: 'SPECIFIC_INTENT', impressions: 12, clicks: 0, position: 12 },
+  null, false, rules, new Date('2026-08-24T00:00:00Z'), {}
+);
+assert(strongSpecific.observationCount === 1, 'M1: strong signal is first observation');
+assert(strongSpecific.opportunityStage === 'CAPTURE', 'M1: first strong specific signal captures');
+assert(strongSpecific.signals.indexOf('GROWING_INTENT') < 0, 'M2: first observation cannot be growth');
+var genericWeak = context.evaluateEarlyFollowupObservation_(
+  { name: 'Project P.I.T.T.', day: 1 },
+  { key: 'GUIDE', label: 'guide', intentType: 'GENERIC_INTENT', impressions: 6, clicks: 1, position: 8 },
+  null, false, rules, new Date('2026-08-24T00:00:00Z'), {}
+);
+assert(genericWeak.opportunityStage === 'PROBE', 'M3: weak generic signal is probe only');
+assert(genericWeak.absoluteSignal !== 'ABSOLUTE_CAPTURE', 'M3: weak generic signal is not capture');
+var pittSite = { name: 'Project P.I.T.T.' };
+assert(
+  context.intentClusterKeyForQuery_('project pitt 200kg', pittSite) ===
+    context.intentClusterKeyForQuery_('project pitt 200 kg', pittSite),
+  'M4: 200kg and 200 kg share a canonical cluster'
+);
+assert(
+  context.intentClusterKeyForQuery_('fuse', pittSite) ===
+    context.intentClusterKeyForQuery_('fuses', pittSite),
+  'M5: fuse and fuses share a canonical cluster'
+);
+assert(context.intentClusterFamilyForQuery_('fuse box') === 'FUSE', 'M6: fuse box has FUSE family');
 
 // L: baseline clusters do not create seven tasks; only the site winner is routable.
 var baseline = plansFor([], {
@@ -176,7 +224,7 @@ console.log(JSON.stringify({
   weakNew: weakNew[0].signalState,
   mismatch: mismatch[0].recommendedAction,
   takeover: takeover[0].signalState,
-  d7: d7.length,
+  d7: d7[0].opportunityStage,
   baselinePlans: baseline.length
 }, null, 2));
 console.log('PASS scripts/test-early-action-router.js');

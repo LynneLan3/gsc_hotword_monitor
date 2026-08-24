@@ -7,6 +7,9 @@
  */
 
 var EARLY_FOLLOWUP_SIGNALS = {
+  BASELINE: 'BASELINE',
+  ABSOLUTE_PROBE: 'ABSOLUTE_PROBE',
+  ABSOLUTE_CAPTURE: 'ABSOLUTE_CAPTURE',
   GROWING_INTENT: 'GROWING_INTENT',
   NEW_INTENT: 'NEW_INTENT',
   TARGET_PAGE_TAKES_OVER: 'TARGET_PAGE_TAKES_OVER',
@@ -38,9 +41,6 @@ function runEarlyFollowupEngine(opts) {
 
     var early = eligibleBySite[siteName];
     var day = earlyFollowupDay_(site, early, now);
-    if (day === '' || day === null || day === undefined || Number(day) > Number(rules.EARLY_FOLLOWUP_MAX_DAY)) {
-      continue;
-    }
 
     var clusters = (snapshot.clusters || []).slice();
     for (var c = 0; c < clusters.length; c++) {
@@ -89,12 +89,17 @@ function evaluateEarlyFollowupObservation_(site, current, previous, baselineEsta
   var previousPosition = hasPrevious ? earlyFollowupNumber_(previous.currentPosition) : '';
   var previousTopPage = hasPrevious ? String(previous.currentTopPage || '') : '';
   var previousTopPageShare = hasPrevious ? earlyFollowupNumber_(previous.currentTopPageShare) : '';
+  var previousStage = hasPrevious ? String(previous.opportunityStage || '') : '';
+  var intentType = current.intentType || '';
+  var intentFamily = current.intentFamily || '';
+  var externalDemandConfirmed = earlyFollowupExternalDemandConfirmed_(site, current, opts);
   var expectedPage = String(
     (hasPrevious && previous.expectedPage) ||
     resolveEarlyFollowupExpectedPage_(site, current, opts) || ''
   ).trim();
   var evidence = expectedPage ? resolveEarlyFollowupPageEvidence_(site, expectedPage, opts) : null;
   var observationCount = (hasPrevious ? Number(previous.observationCount || 0) : 0) + 1;
+  var growthEligible = hasPrevious && observationCount >= 2;
   var mismatchCondition = !!(
     expectedPage && evidence && evidence.valid && hasPrevious &&
     current.impressions >= Number(rules.EARLY_PAGE_MISMATCH_MIN_IMPRESSIONS) &&
@@ -106,8 +111,12 @@ function evaluateEarlyFollowupObservation_(site, current, previous, baselineEsta
     : 0;
   var signals = [];
 
+  var absolute = evaluateEarlyAbsoluteSignal_(current, intentType, externalDemandConfirmed, rules);
+  if (!hasPrevious && intentType) signals.push(EARLY_FOLLOWUP_SIGNALS.BASELINE);
+  if (absolute.signal) signals.push(absolute.signal);
+
   if (
-    hasPrevious &&
+    growthEligible &&
     Number(previousImpressions) >= Number(rules.EARLY_QUERY_GROWTH_MIN_PREVIOUS_IMPRESSIONS) &&
     current.impressions >= Number(previousImpressions) * (1 + Number(rules.EARLY_QUERY_GROWTH_RATE)) &&
     current.impressions - Number(previousImpressions) >= Number(rules.EARLY_QUERY_GROWTH_MIN_ABSOLUTE_DELTA)
@@ -139,10 +148,22 @@ function evaluateEarlyFollowupObservation_(site, current, previous, baselineEsta
     signals.push(EARLY_FOLLOWUP_SIGNALS.PAGE_INTENT_MISMATCH);
   }
 
+  var growing = signals.indexOf(EARLY_FOLLOWUP_SIGNALS.GROWING_INTENT) >= 0;
+  var opportunityStage = determineEarlyOpportunityStage_(
+    absolute.stage, previousStage, growing, current.impressions, rules
+  );
+
   var confidence = classifyEarlyFollowupConfidence_(current, signals, observationCount, expectedPage, evidence);
-  var reason = buildEarlyFollowupReason_(current, previous, signals, expectedPage, observationCount, mismatchConfirmRuns);
+  var reason = buildEarlyFollowupReason_(
+    current, previous, signals, expectedPage, observationCount, mismatchConfirmRuns, absolute
+  );
   var signalText = signals.join('|');
-  var event = earlyFollowupShouldEmitEvent_(previous, signalText, signals, now, rules);
+  var eventSignals = signals.filter(function (signal) {
+    return signal !== EARLY_FOLLOWUP_SIGNALS.BASELINE;
+  });
+  var event = earlyFollowupShouldEmitEvent_(
+    previous, eventSignals.join('|'), eventSignals, now, rules
+  );
   var firstSeenAt = previous && previous.firstSeenAt ? previous.firstSeenAt : now;
   var state = {
     site: String((site && site.name) || ''),
@@ -166,7 +187,12 @@ function evaluateEarlyFollowupObservation_(site, current, previous, baselineEsta
     followupReason: reason,
     observationCount: observationCount,
     mismatchConfirmRuns: mismatchConfirmRuns,
-    signalEventAt: event ? now : (previous && previous.signalEventAt) || ''
+    signalEventAt: event ? now : (previous && previous.signalEventAt) || '',
+    intentType: intentType,
+    intentFamily: intentFamily,
+    opportunityStage: opportunityStage,
+    absoluteSignal: absolute.signal,
+    absoluteSignalReason: absolute.reason
   };
 
   return {
@@ -188,6 +214,12 @@ function evaluateEarlyFollowupObservation_(site, current, previous, baselineEsta
     previousTopPageShare: previousTopPageShare,
     currentTopPageShare: current.topPageShare,
     signals: signals,
+    intentType: intentType,
+    intentFamily: intentFamily,
+    opportunityStage: opportunityStage,
+    absoluteSignal: absolute.signal,
+    absoluteSignalReason: absolute.reason,
+    routingDecision: earlyFollowupRoutingDecision_(opportunityStage, current.hasExistingPage),
     confidence: confidence,
     reason: reason,
     firstSeenAt: firstSeenAt,
@@ -219,8 +251,124 @@ function normalizeEarlyFollowupCluster_(cluster) {
     topPageShare: earlyFollowupNumber_(topPageShare),
     hasDominantPage: cluster.hasDominantPage === true || String(cluster.hasDominantPage || '').toUpperCase() === 'TRUE',
     hasExistingPage: cluster.hasExistingPage === true || String(cluster.hasExistingPage || '').toUpperCase() === 'TRUE',
+    intentType: String(cluster.intentType || cluster.IntentType || '').trim().toUpperCase(),
+    intentFamily: String(cluster.intentFamily || cluster.IntentFamily || '').trim().toUpperCase(),
+    externalDemandConfirmed: cluster.externalDemandConfirmed === true ||
+      String(cluster.externalDemandConfirmed || cluster.ExternalDemandConfirmed || '').toUpperCase() === 'TRUE',
+    topQuery: String(cluster.topQuery || '').trim(),
     queries: cluster.queries || []
   };
+}
+
+function evaluateEarlyAbsoluteSignal_(current, intentType, externalDemandConfirmed, rules) {
+  var impressions = Number(current.impressions || 0);
+  var clicks = Number(current.clicks || 0);
+  var position = Number(current.position || 0);
+  var hasPosition = position > 0;
+  var type = String(intentType || '').toUpperCase();
+  var specific = type === 'SPECIFIC_INTENT';
+  var generic = type === 'GENERIC_INTENT';
+  var brand = type === 'BRAND_INTENT' || type === 'BRAND_ONLY';
+  var probe = false;
+  var capture = false;
+  var reason = '';
+
+  if (specific) {
+    capture = (
+      impressions >= Number(rules.EARLY_ABSOLUTE_CAPTURE_MIN_IMPRESSIONS) &&
+      hasPosition && position <= Number(rules.EARLY_ABSOLUTE_CAPTURE_MAX_POSITION)
+    ) || clicks >= Number(rules.EARLY_ABSOLUTE_CAPTURE_MIN_CLICKS) || (
+      impressions >= Number(rules.EARLY_ABSOLUTE_CAPTURE_STRONG_MIN_IMPRESSIONS) &&
+      hasPosition && position <= Number(rules.EARLY_ABSOLUTE_CAPTURE_STRONG_POSITION) &&
+      clicks >= Number(rules.EARLY_ABSOLUTE_CAPTURE_STRONG_MIN_CLICKS)
+    ) || (
+      externalDemandConfirmed &&
+      impressions >= Number(rules.EARLY_EXTERNAL_CAPTURE_MIN_IMPRESSIONS) &&
+      hasPosition && position <= Number(rules.EARLY_EXTERNAL_CAPTURE_MAX_POSITION)
+    );
+    probe = (
+      impressions >= Number(rules.EARLY_ABSOLUTE_PROBE_MIN_IMPRESSIONS) &&
+      hasPosition && position <= Number(rules.EARLY_ABSOLUTE_PROBE_MAX_POSITION)
+    ) || (
+      clicks >= Number(rules.EARLY_ABSOLUTE_PROBE_MIN_CLICKS) &&
+      hasPosition && position <= 30
+    );
+    if (capture) reason = 'specific absolute signal';
+    else if (probe) reason = 'specific absolute signal';
+  } else if (generic) {
+    capture = impressions >= Number(rules.EARLY_GENERIC_CAPTURE_MIN_IMPRESSIONS) &&
+      clicks >= Number(rules.EARLY_GENERIC_CAPTURE_MIN_CLICKS);
+    probe = (
+      impressions >= Number(rules.EARLY_ABSOLUTE_PROBE_MIN_IMPRESSIONS) &&
+      hasPosition && position <= Number(rules.EARLY_ABSOLUTE_PROBE_MAX_POSITION)
+    ) || (
+      clicks >= Number(rules.EARLY_ABSOLUTE_PROBE_MIN_CLICKS) &&
+      hasPosition && position <= 30
+    );
+    if (capture) reason = 'generic absolute signal';
+    else if (probe) reason = 'generic absolute signal';
+  } else if (brand) {
+    return { stage: 'WAIT', signal: '', reason: 'brand absolute signal ignored' };
+  }
+
+  if (capture) {
+    return {
+      stage: 'CAPTURE',
+      signal: EARLY_FOLLOWUP_SIGNALS.ABSOLUTE_CAPTURE,
+      reason: 'ABSOLUTE_CAPTURE；impressions=' + impressions + '；clicks=' + clicks +
+        '；position=' + position + '；' + reason
+    };
+  }
+  if (probe) {
+    return {
+      stage: 'PROBE',
+      signal: EARLY_FOLLOWUP_SIGNALS.ABSOLUTE_PROBE,
+      reason: 'ABSOLUTE_PROBE；impressions=' + impressions + '；clicks=' + clicks +
+        '；position=' + position + '；' + reason
+    };
+  }
+  return { stage: 'WAIT', signal: '', reason: '' };
+}
+
+function determineEarlyOpportunityStage_(absoluteStage, previousStage, growing, impressions, rules) {
+  if (previousStage === 'CAPTURE' && growing &&
+      Number(impressions || 0) >= Number(rules.EARLY_SCALE_MIN_IMPRESSIONS)) {
+    return 'SCALE';
+  }
+  if (absoluteStage === 'CAPTURE') return 'CAPTURE';
+  if (growing) return 'CAPTURE';
+  if (absoluteStage === 'PROBE') return 'PROBE';
+  return 'WAIT';
+}
+
+function earlyFollowupExternalDemandConfirmed_(site, current, opts) {
+  if (current.externalDemandConfirmed) return true;
+  opts = opts || {};
+  var key = earlyFollowupStateKey_(site && site.name, current.key);
+  if (opts.externalDemandByKey && opts.externalDemandByKey[key] === true) return true;
+  if (typeof getSpreadsheet_ !== 'function' || typeof SHEET_NAMES === 'undefined') return false;
+  var sheet = getSpreadsheet_().getSheetByName(SHEET_NAMES.OPPORTUNITIES);
+  if (!sheet || sheet.getLastRow() < 2) return false;
+  var lastCol = Math.max(sheet.getLastColumn(), 1);
+  var header = sheet.getRange(1, 1, 1, lastCol).getValues()[0];
+  var col = {};
+  for (var h = 0; h < header.length; h++) col[String(header[h] || '').trim()] = h;
+  if (col.ExternalEvidence === undefined) return false;
+  var rows = sheet.getRange(2, 1, sheet.getLastRow() - 1, lastCol).getValues();
+  for (var i = 0; i < rows.length; i++) {
+    if (String(rows[i][col.Game] || rows[i][col.Site] || '').trim() !== String(site.name || '').trim()) continue;
+    var evidence = safeJsonParse_(rows[i][col.ExternalEvidence], {});
+    if (String(evidence.clusterKey || '').trim() !== String(current.key || '').trim()) continue;
+    if (evidence.ExternalDemandConfirmed === true || evidence.externalDemandConfirmed === true) return true;
+  }
+  return false;
+}
+
+function earlyFollowupRoutingDecision_(stage, hasExistingPage) {
+  if (stage === 'PROBE') return 'RESEARCH_PROBE';
+  if (stage === 'SCALE') return 'RESEARCH_EXPANSION';
+  if (stage === 'CAPTURE') return hasExistingPage ? 'RESEARCH_EXISTING_PAGE' : 'RESEARCH_NEW_PAGE';
+  return 'WAIT';
 }
 
 function classifyEarlyFollowupConfidence_(current, signals, observations, expectedPage, evidence) {
@@ -233,16 +381,17 @@ function classifyEarlyFollowupConfidence_(current, signals, observations, expect
   return 'LOW';
 }
 
-function buildEarlyFollowupReason_(current, previous, signals, expectedPage, observations, mismatchRuns) {
+function buildEarlyFollowupReason_(current, previous, signals, expectedPage, observations, mismatchRuns, absolute) {
   var reason = signals.length ? signals.join('|') : 'BASELINE';
   reason += '；observations=' + observations;
+  if (absolute && absolute.reason) reason += '；' + absolute.reason;
   if (previous) {
     reason += '；impressions=' + previous.currentImpressions + '→' + current.impressions;
     reason += '；clicks=' + previous.currentClicks + '→' + current.clicks;
     reason += '；position=' + previous.currentPosition + '→' + current.position;
     reason += '；page=' + (previous.currentTopPage || '/') + '→' + (current.topPage || '/');
   } else {
-    reason += '；baseline established';
+    reason += '；growth baseline established';
   }
   if (expectedPage) reason += '；ExpectedPage=' + expectedPage;
   if (mismatchRuns) reason += '；mismatchConfirmRuns=' + mismatchRuns;
@@ -439,7 +588,12 @@ function loadEarlyFollowupStates_() {
       followupReason: String(rows[i][col.FollowupReason] || ''),
       observationCount: Number(rows[i][col.ObservationCount] || 0),
       mismatchConfirmRuns: Number(rows[i][col.MismatchConfirmRuns] || 0),
-      signalEventAt: rows[i][col.SignalEventAt]
+      signalEventAt: rows[i][col.SignalEventAt],
+      intentType: String(rows[i][col.IntentType] || ''),
+      intentFamily: String(rows[i][col.IntentFamily] || ''),
+      opportunityStage: String(rows[i][col.OpportunityStage] || ''),
+      absoluteSignal: String(rows[i][col.AbsoluteSignal] || ''),
+      absoluteSignalReason: String(rows[i][col.AbsoluteSignalReason] || '')
     };
     out[earlyFollowupStateKey_(site, key)] = state;
   }
@@ -463,7 +617,9 @@ function persistEarlyFollowupStates_(states) {
       s.previousTopPageShare, s.currentTopPageShare,
       s.firstSeenAt, s.lastObservedAt, s.expectedPage,
       s.followupSignals, s.followupConfidence, s.followupReason,
-      s.observationCount, s.mismatchConfirmRuns, s.signalEventAt
+      s.observationCount, s.mismatchConfirmRuns, s.signalEventAt,
+      s.intentType, s.intentFamily, s.opportunityStage, s.absoluteSignal,
+      s.absoluteSignalReason
     ]);
   }
   var lastRow = sheet.getLastRow();
@@ -507,6 +663,12 @@ function writeEarlyFollowupIntentRows_(records) {
     row[col.FollowupReason] = record.reason;
     row[col.FollowupFirstSeenAt] = record.firstSeenAt;
     row[col.FollowupLastObservedAt] = record.lastObservedAt;
+    row[col.IntentType] = record.intentType;
+    row[col.IntentFamily] = record.intentFamily;
+    row[col.OpportunityStage] = record.opportunityStage;
+    row[col.AbsoluteSignal] = record.absoluteSignal;
+    row[col.AbsoluteSignalReason] = record.absoluteSignalReason;
+    row[col.RoutingDecision] = record.routingDecision;
   }
   ensureSheetGrid_(sheet, rows.length + 1, lastCol);
   sheet.getRange(2, 1, rows.length, lastCol).setValues(rows);
@@ -541,6 +703,11 @@ function earlyFollowupHeaderMap_(header) {
     ObservationCount: map.ObservationCount,
     MismatchConfirmRuns: map.MismatchConfirmRuns,
     SignalEventAt: map.SignalEventAt,
+    IntentType: map.IntentType,
+    IntentFamily: map.IntentFamily,
+    OpportunityStage: map.OpportunityStage,
+    AbsoluteSignal: map.AbsoluteSignal,
+    AbsoluteSignalReason: map.AbsoluteSignalReason,
     PreviousClusterImpressions: map.PreviousClusterImpressions,
     CurrentClusterImpressions: map.CurrentClusterImpressions,
     FollowupGrowthRate: map.FollowupGrowthRate,
@@ -549,7 +716,8 @@ function earlyFollowupHeaderMap_(header) {
     PreviousClusterPosition: map.PreviousClusterPosition,
     CurrentClusterPosition: map.CurrentClusterPosition,
     FollowupFirstSeenAt: map.FollowupFirstSeenAt,
-    FollowupLastObservedAt: map.FollowupLastObservedAt
+    FollowupLastObservedAt: map.FollowupLastObservedAt,
+    RoutingDecision: map.RoutingDecision
   };
 }
 

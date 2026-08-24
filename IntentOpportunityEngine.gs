@@ -143,6 +143,8 @@ function addIntentAggregateRow_(row, site, clustersByKey, pagesByPath, includePa
     cluster = clustersByKey[key] = {
       key: key,
       label: classification.label,
+      intentType: classification.intentType || '',
+      intentFamily: classification.intentFamily || '',
       queriesByKey: {},
       pagesByPath: {},
       clicks: 0,
@@ -415,7 +417,8 @@ function buildIntentOpportunitySheetRows_(snapshot) {
       pageActionOwner ? page.pageAction : '',
       pageActionOwner ? page.pageActionReason : '',
       pageActionOwner ? 'TRUE' : 'FALSE',
-      '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', ''
+      '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '',
+      c.intentType || '', c.intentFamily || '', '', '', '', ''
     ]);
   }
   return rows;
@@ -716,6 +719,8 @@ function classifyIntentCluster_(query, site) {
       return {
         key: entity.key,
         label: entity.label,
+        intentType: classifyIntentOpportunityType_(query, site),
+        intentFamily: intentClusterFamilyForQuery_(query),
         entityKey: entity.key,
         entityLabel: entity.label,
         isAlias: isAlias,
@@ -727,6 +732,8 @@ function classifyIntentCluster_(query, site) {
   return {
     key: 'QUERY_' + normalized.toUpperCase(),
     label: residual.length ? residual.join(' ') : 'Brand',
+    intentType: classifyIntentOpportunityType_(query, site),
+    intentFamily: intentClusterFamilyForQuery_(query),
     entityKey: '',
     entityLabel: '',
     isAlias: false,
@@ -789,7 +796,9 @@ function intentClusterTokenize_(text) {
     value = value.replace(/[üÜ]/g, 'u').replace(/[äÄ]/g, 'a').replace(/[öÖ]/g, 'o');
   }
   value = value.replace(/[\u2018\u2019']s\b/g, '');
-  value = value.replace(/ii/g, '2').replace(/[^a-z0-9]+/g, ' ').trim();
+  value = value.replace(/ii/g, '2');
+  value = value.replace(/(\d+)\s+(kg|g|lb|lbs|oz|mm|cm|m|km)\b/g, '$1$2');
+  value = value.replace(/[^a-z0-9]+/g, ' ').trim();
   if (!value) return [];
   return value.split(/\s+/).filter(function (token) { return !!token; }).map(function (token) {
     var canonical = {
@@ -798,7 +807,8 @@ function intentClusterTokenize_(text) {
       crashing: 'crash',
       loading: 'load',
       keeps: 'keep',
-      martyrs: 'martyr'
+      martyrs: 'martyr',
+      fuses: 'fuse'
     };
     return canonical[token] || token;
   });
@@ -806,6 +816,48 @@ function intentClusterTokenize_(text) {
 
 function intentClusterNormalizeText_(text) {
   return intentClusterTokenize_(text).join(' ');
+}
+
+/** Reuse the existing OpportunityEngine classification when it is loaded. */
+function classifyIntentOpportunityType_(query, site) {
+  if (typeof classifyOpportunityIntent_ === 'function' &&
+      typeof classifyOpportunitySpecificity_ === 'function') {
+    var intent = classifyOpportunityIntent_(query, site);
+    if (typeof OPPORTUNITY_INTENT !== 'undefined' && intent === OPPORTUNITY_INTENT.BRAND) {
+      return 'BRAND_INTENT';
+    }
+    if (typeof OPPORTUNITY_INTENT !== 'undefined' && intent === OPPORTUNITY_INTENT.GUIDE) {
+      return 'GENERIC_INTENT';
+    }
+    if (classifyOpportunitySpecificity_(intent) === OPPORTUNITY_SPECIFICITY.BRAND_ONLY) {
+      return 'BRAND_INTENT';
+    }
+    return 'SPECIFIC_INTENT';
+  }
+  var tokens = intentClusterTokensWithoutBrand_(query);
+  var residual = intentClusterResidualTokens_(query, site);
+  if (!residual.length) return 'BRAND_INTENT';
+  var generic = { guide: true, walkthrough: true, wiki: true, tips: true, tutorial: true };
+  for (var i = 0; i < tokens.length; i++) {
+    if (generic[tokens[i]]) return 'GENERIC_INTENT';
+  }
+  return 'SPECIFIC_INTENT';
+}
+
+function intentClusterFamilyForQuery_(query) {
+  var aliases = typeof INTENT_FAMILY_ALIASES !== 'undefined' ? INTENT_FAMILY_ALIASES : [];
+  var normalized = intentClusterNormalizeText_(query);
+  for (var i = 0; i < aliases.length; i++) {
+    var family = aliases[i] || {};
+    for (var a = 0; a < (family.aliases || []).length; a++) {
+      var alias = intentClusterNormalizeText_(family.aliases[a]);
+      if (normalized === alias || normalized.indexOf(alias + ' ') === 0 ||
+          normalized.indexOf(' ' + alias) >= 0 || normalized.indexOf(' ' + alias + ' ') >= 0) {
+        return family.family;
+      }
+    }
+  }
+  return '';
 }
 
 function sameIntentTokenSet_(left, right) {

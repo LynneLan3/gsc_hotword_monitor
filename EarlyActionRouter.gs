@@ -39,6 +39,7 @@ function runEarlyActionRouter(opts) {
   for (var i = 0; i < plans.length; i++) {
     var plan = plans[i];
     upsertEarlyOpportunity_(plan);
+    updateEarlyIntentOpportunityRouting_(plan);
     result.opportunities++;
 
     if (plan.createTodayAction) {
@@ -110,7 +111,6 @@ function buildEarlyActionPlans_(opts) {
   for (var f = 0; f < followupRecords.length; f++) {
     var record = followupRecords[f] || {};
     if (!record.site || !record.clusterKey || !record.signals || !record.signals.length) continue;
-    if (earlyActionDay_(record, rules) > earlyActionMaxDay_(rules)) continue;
     var contextKey = String(record.site) + '||' + String(record.clusterKey);
     var planContext = contexts[contextKey] || {};
     var recordWithSite = earlyActionWithSiteObject_(record, planContext.siteObject);
@@ -179,6 +179,8 @@ function buildEarlyFollowupPlan_(record, context, rules, now) {
       createResearchJob: true,
       researchType: RESEARCH_TYPE.PAGE_OPTIMIZATION_RESEARCH,
       pagePath: expectedPage || currentTopPage,
+      opportunityStage: String(record.opportunityStage || 'CAPTURE'),
+      routingDecision: 'OPTIMIZE_EXISTING_PAGE',
       reason: earlyMismatchReason_(record, site, clusterKey, currentTopPage, expectedPage)
     }, signals, now);
   }
@@ -193,6 +195,58 @@ function buildEarlyFollowupPlan_(record, context, rules, now) {
       createTodayAction: false,
       createResearchJob: false,
       pagePath: expectedPage || currentTopPage
+    }, signals, now);
+  }
+
+  var opportunityStage = String(record.opportunityStage || '').trim().toUpperCase();
+  if (!opportunityStage) {
+    if (signals.indexOf(EARLY_ACTION_ROUTER_SIGNALS.SCALE) >= 0) opportunityStage = 'SCALE';
+    else if (signals.indexOf(EARLY_ACTION_ROUTER_SIGNALS.CAPTURE) >= 0 ||
+      signals.indexOf('ABSOLUTE_CAPTURE') >= 0) opportunityStage = 'CAPTURE';
+    else if (signals.indexOf(EARLY_ACTION_ROUTER_SIGNALS.PROBE) >= 0 ||
+      signals.indexOf('ABSOLUTE_PROBE') >= 0) opportunityStage = 'PROBE';
+  }
+
+  if (opportunityStage === 'PROBE') {
+    return earlyFollowupPlanBase_(record, {
+      targetAction: 'RESEARCH_PROBE',
+      opportunityType: EXTERNAL_OPPORTUNITY_TYPES.RESEARCH_PROBE,
+      recommendedAction: 'RESEARCH_PROBE',
+      priority: 'P3',
+      signalState: 'OPEN',
+      createTodayAction: true,
+      createResearchJob: true,
+      researchType: RESEARCH_TYPE.NEW_INTENT_RESEARCH,
+      pagePath: existingPage ? (currentTopPage || expectedPage) : '',
+      opportunityStage: opportunityStage,
+      routingDecision: 'RESEARCH_PROBE'
+    }, signals, now);
+  }
+
+  if (opportunityStage === 'CAPTURE' || opportunityStage === 'SCALE') {
+    var captureExisting = existingPage;
+    var captureAction = captureExisting ? 'EXPAND_EXISTING_PAGE' : 'NEW_PAGE_CANDIDATE';
+    var captureType = opportunityStage === 'SCALE'
+      ? 'SCALE_WINNER_INTENT'
+      : (captureExisting
+        ? EXTERNAL_OPPORTUNITY_TYPES.EXPAND_EXISTING_PAGE
+        : EXTERNAL_OPPORTUNITY_TYPES.NEW_PAGE_CANDIDATE);
+    return earlyFollowupPlanBase_(record, {
+      targetAction: opportunityStage === 'SCALE' ? 'SCALE_WINNER_INTENT' : captureAction,
+      opportunityType: captureType,
+      recommendedAction: opportunityStage === 'SCALE'
+        ? 'RESEARCH_EXPANSION'
+        : (captureExisting ? 'RESEARCH_EXISTING_PAGE' : 'RESEARCH_NEW_PAGE'),
+      priority: opportunityStage === 'SCALE' || captureExisting ? 'P1' : 'P2',
+      signalState: 'OPEN',
+      createTodayAction: true,
+      createResearchJob: true,
+      researchType: RESEARCH_TYPE.NEW_INTENT_RESEARCH,
+      pagePath: captureExisting ? (currentTopPage || expectedPage) : '',
+      opportunityStage: opportunityStage,
+      routingDecision: opportunityStage === 'SCALE'
+        ? 'RESEARCH_EXPANSION'
+        : (captureExisting ? 'RESEARCH_EXISTING_PAGE' : 'RESEARCH_NEW_PAGE')
     }, signals, now);
   }
 
@@ -217,7 +271,9 @@ function buildEarlyFollowupPlan_(record, context, rules, now) {
     createTodayAction: gate,
     createResearchJob: gate,
     researchType: RESEARCH_TYPE.NEW_INTENT_RESEARCH,
-    pagePath: existingPage ? (currentTopPage && currentTopPage !== '/' ? currentTopPage : expectedPage) : ''
+    pagePath: existingPage ? (currentTopPage && currentTopPage !== '/' ? currentTopPage : expectedPage) : '',
+    opportunityStage: isGrowing ? 'CAPTURE' : 'PROBE',
+    routingDecision: existingPage ? 'RESEARCH_EXISTING_PAGE' : 'RESEARCH_NEW_PAGE'
   }, signals, now);
 }
 
@@ -261,6 +317,8 @@ function earlyFollowupPlanBase_(record, route, signals, now) {
     createResearchJob: route.createResearchJob,
     researchType: route.researchType || '',
     pagePath: route.pagePath || '',
+    opportunityStage: route.opportunityStage || String(record.opportunityStage || '').trim(),
+    routingDecision: route.routingDecision || route.recommendedAction || '',
     now: now || new Date()
   };
 }
@@ -274,6 +332,10 @@ function mergeEarlyActionPlans_(left, right) {
   left.currentTopPageShare = Math.max(Number(left.currentTopPageShare || 0), Number(right.currentTopPageShare || 0));
   left.createTodayAction = left.createTodayAction || right.createTodayAction;
   left.createResearchJob = left.createResearchJob || right.createResearchJob;
+  if (right.opportunityStage === 'SCALE' || !left.opportunityStage) {
+    left.opportunityStage = right.opportunityStage || left.opportunityStage;
+  }
+  if (right.routingDecision) left.routingDecision = right.routingDecision;
   if (right.signalState === 'OPEN') left.signalState = 'OPEN';
   return left;
 }
@@ -331,8 +393,11 @@ function shouldCreateEarlyResearchJob_(plan, existingJobs, routerState) {
   if (prior && prior.signalSignature === plan.signals.join('|') && prior.researchJobId) return false;
   for (var i = 0; i < (existingJobs || []).length; i++) {
     var job = existingJobs[i] || {};
-    if (job.dedupeKey !== dedupeKey) continue;
-    if (isEarlyResearchJobActive_(job.status)) return false;
+    if (!isEarlyResearchJobActive_(job.status)) continue;
+    if (job.dedupeKey === dedupeKey || (
+      String(job.site || '').trim() === String(plan.site || '').trim() &&
+      String(job.clusterKey || '').trim() === String(plan.clusterKey || '').trim()
+    )) return false;
   }
   return true;
 }
@@ -401,6 +466,8 @@ function upsertEarlyOpportunity_(plan) {
     expectedPage: plan.expectedPage,
     topPageShare: plan.currentTopPageShare,
     observationCount: plan.observationCount,
+    opportunityStage: plan.opportunityStage,
+    routingDecision: plan.routingDecision,
     reason: plan.reason,
     state: plan.signalState
   };
@@ -418,6 +485,25 @@ function upsertEarlyOpportunity_(plan) {
     ActionKey: plan.actionKey,
     LastObservedAt: plan.now
   }]);
+}
+
+function updateEarlyIntentOpportunityRouting_(plan) {
+  if (!plan || !plan.site || !plan.clusterKey || typeof getSpreadsheet_ !== 'function') return;
+  var sheet = getSpreadsheet_().getSheetByName(SHEET_NAMES.INTENT_OPPORTUNITIES);
+  if (!sheet || sheet.getLastRow() < 2) return;
+  var lastCol = Math.max(sheet.getLastColumn(), INTENT_OPPORTUNITY_HEADERS.length);
+  var header = sheet.getRange(1, 1, 1, lastCol).getValues()[0];
+  var col = headerIndexMap_(header);
+  if (col.RoutingDecision === undefined) return;
+  var rows = sheet.getRange(2, 1, sheet.getLastRow() - 1, lastCol).getValues();
+  for (var i = 0; i < rows.length; i++) {
+    if (String(rows[i][col.Site] || '').trim() !== plan.site) continue;
+    if (String(rows[i][col.ClusterKey] || '').trim() !== plan.clusterKey) continue;
+    rows[i][col.RoutingDecision] = plan.routingDecision || plan.recommendedAction || '';
+    if (col.OpportunityStage !== undefined) rows[i][col.OpportunityStage] = plan.opportunityStage || '';
+    sheet.getRange(i + 2, 1, 1, lastCol).setValues([rows[i]]);
+    return;
+  }
 }
 
 function upsertEarlyTodayAction_(plan) {
@@ -470,12 +556,16 @@ function loadEarlyResearchJobs_() {
   var rows = sheet.getRange(2, 1, sheet.getLastRow() - 1, lastCol).getValues();
   for (var i = 0; i < rows.length; i++) {
     var context = safeJsonParse_(cell_(rows[i], col, 'ActionContext'), {});
-    if (context.sourceSystem !== EARLY_ACTION_ROUTER_SOURCE && !context.earlyActionKey) continue;
+    var site = String(context.site || cell_(rows[i], col, '站点') || '').trim();
+    var clusterKey = String(context.clusterKey || '').trim();
+    if (context.sourceSystem !== EARLY_ACTION_ROUTER_SOURCE && !context.earlyActionKey && !clusterKey) continue;
     out.push({
       jobId: String(cell_(rows[i], col, '任务ID') || '').trim(),
       status: String(cell_(rows[i], col, '任务状态') || '').trim(),
+      site: site,
+      clusterKey: clusterKey,
       dedupeKey: String(context.dedupeKey || '').trim() ||
-        (String(cell_(rows[i], col, '站点') || '').trim() + '||' + String(context.clusterKey || '').trim() + '||' + String(context.targetAction || '').trim())
+        (site + '||' + clusterKey + '||' + String(context.targetAction || '').trim())
     });
   }
   return out;
@@ -486,7 +576,12 @@ function createEarlyResearchJob_(plan, existingJobs, now) {
   ensureResearchJobSheets_();
   var dedupeKey = earlyActionResearchDedupeKey_(plan);
   for (var i = 0; i < (existingJobs || []).length; i++) {
-    if (existingJobs[i].dedupeKey === dedupeKey && isEarlyResearchJobActive_(existingJobs[i].status)) {
+    if (isEarlyResearchJobActive_(existingJobs[i].status) && (
+      existingJobs[i].dedupeKey === dedupeKey || (
+        String(existingJobs[i].site || '').trim() === String(plan.site || '').trim() &&
+        String(existingJobs[i].clusterKey || '').trim() === String(plan.clusterKey || '').trim()
+      )
+    )) {
       return null;
     }
   }

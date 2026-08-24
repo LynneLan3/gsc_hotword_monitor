@@ -179,7 +179,9 @@ var INTENT_OPPORTUNITY_HEADERS = [
   'PreviousTopPage', 'ExpectedPage', 'CurrentTopPage',
   'PreviousTopPageShare', 'CurrentTopPageShare',
   'FollowupSignals', 'FollowupConfidence', 'FollowupReason',
-  'FollowupFirstSeenAt', 'FollowupLastObservedAt'
+  'FollowupFirstSeenAt', 'FollowupLastObservedAt',
+  'IntentType', 'IntentFamily', 'OpportunityStage', 'AbsoluteSignal',
+  'AbsoluteSignalReason', 'RoutingDecision'
 ];
 
 /** Hidden additive state for Goal 2 previous/current observations. */
@@ -192,7 +194,14 @@ var EARLY_FOLLOWUP_STATE_HEADERS = [
   'PreviousTopPageShare', 'CurrentTopPageShare',
   'FirstSeenAt', 'LastObservedAt', 'ExpectedPage',
   'FollowupSignals', 'FollowupConfidence', 'FollowupReason',
-  'ObservationCount', 'MismatchConfirmRuns', 'SignalEventAt'
+  'ObservationCount', 'MismatchConfirmRuns', 'SignalEventAt',
+  'IntentType', 'IntentFamily', 'OpportunityStage', 'AbsoluteSignal',
+  'AbsoluteSignalReason'
+];
+
+/** Small, deterministic intent families used as research context only. */
+var INTENT_FAMILY_ALIASES = [
+  { family: 'FUSE', aliases: ['fuse', 'fuses', 'fuse box'] }
 ];
 
 /** 已知实体/多语言 alias：只做 deterministic 归一，不调用 LLM。 */
@@ -822,6 +831,7 @@ var EXTERNAL_OPPORTUNITY_HEADERS = [
 
 var EXTERNAL_OPPORTUNITY_TYPES = {
   NEW_PAGE_CANDIDATE: 'NEW_PAGE_CANDIDATE',
+  RESEARCH_PROBE: 'RESEARCH_PROBE',
   EXPAND_EXISTING: 'EXPAND_EXISTING',
   WATCH: 'WATCH',
   EARLY_SITE_WIN: 'EARLY_SITE_WIN',
@@ -840,6 +850,9 @@ var EARLY_ACTION_ROUTER_SIGNALS = {
   EARLY_SITE_WIN: 'EARLY_SITE_WIN',
   GROWING_INTENT: 'GROWING_INTENT',
   NEW_INTENT: 'NEW_INTENT',
+  PROBE: 'PROBE',
+  CAPTURE: 'CAPTURE',
+  SCALE: 'SCALE',
   TARGET_PAGE_TAKES_OVER: 'TARGET_PAGE_TAKES_OVER',
   PAGE_INTENT_MISMATCH: 'PAGE_INTENT_MISMATCH'
 };
@@ -874,7 +887,7 @@ var OPPORTUNITY_INTENT_RULES = [
   { intent: 'SAVE_PROGRESS', terms: ['carry over', 'carryover', 'save file', 'save', 'progress'] },
   { intent: 'REWARD', terms: ['rewards', 'reward', 'bonus'] },
   { intent: 'MISSION', terms: ['first mission', 'missions', 'mission', 'quests', 'quest'] },
-  { intent: 'GUIDE', terms: ['walkthrough', 'tutorial', 'guide', 'wiki', 'how to'] },
+  { intent: 'GUIDE', terms: ['walkthrough', 'tutorial', 'guide', 'wiki', 'tips', 'how to'] },
   { intent: 'GAMEPLAY', terms: ['gameplay'] },
   { intent: 'RELEASE', terms: ['release date', 'release', 'launch date', 'launch', 'coming out'] },
   { intent: 'DOWNLOAD', terms: ['download', 'downloads'] },
@@ -1244,7 +1257,21 @@ var DEFAULT_DECISION_RULES = [
   ['EARLY_PAGE_MISMATCH_DOMINANT_SHARE', 0.7, 'PAGE_INTENT_MISMATCH 主页面最低占比'],
   ['EARLY_PAGE_MISMATCH_CONFIRM_RUNS', 2, 'PAGE_INTENT_MISMATCH 连续确认次数'],
   ['EARLY_FOLLOWUP_SIGNAL_COOLDOWN_HOURS', 12, 'Follow-up 状态事件重复记录冷却时间'],
-  ['EARLY_RESEARCH_MIN_IMPRESSIONS', 10, 'Early NEW_INTENT 自动创建 Research Job 的最低展现']
+  ['EARLY_RESEARCH_MIN_IMPRESSIONS', 10, 'Early NEW_INTENT 自动创建 Research Job 的最低展现'],
+  ['EARLY_ABSOLUTE_PROBE_MIN_IMPRESSIONS', 5, 'Specific Intent Absolute PROBE 最低展现'],
+  ['EARLY_ABSOLUTE_PROBE_MAX_POSITION', 20, 'Specific Intent Absolute PROBE 排名上限'],
+  ['EARLY_ABSOLUTE_PROBE_MIN_CLICKS', 1, 'Specific Intent Absolute PROBE 最低点击'],
+  ['EARLY_ABSOLUTE_CAPTURE_MIN_IMPRESSIONS', 10, 'Specific Intent Absolute CAPTURE 最低展现'],
+  ['EARLY_ABSOLUTE_CAPTURE_MAX_POSITION', 15, 'Specific Intent Absolute CAPTURE 排名上限'],
+  ['EARLY_ABSOLUTE_CAPTURE_MIN_CLICKS', 2, 'Specific Intent Absolute CAPTURE 最低点击'],
+  ['EARLY_ABSOLUTE_CAPTURE_STRONG_POSITION', 10, 'Specific Intent 强 Absolute CAPTURE 排名上限'],
+  ['EARLY_ABSOLUTE_CAPTURE_STRONG_MIN_IMPRESSIONS', 5, 'Specific Intent 强 Absolute CAPTURE 最低展现'],
+  ['EARLY_ABSOLUTE_CAPTURE_STRONG_MIN_CLICKS', 1, 'Specific Intent 强 Absolute CAPTURE 最低点击'],
+  ['EARLY_EXTERNAL_CAPTURE_MIN_IMPRESSIONS', 3, '已有外部需求确认时 Specific CAPTURE 最低展现'],
+  ['EARLY_EXTERNAL_CAPTURE_MAX_POSITION', 20, '已有外部需求确认时 Specific CAPTURE 排名上限'],
+  ['EARLY_GENERIC_CAPTURE_MIN_IMPRESSIONS', 20, 'Generic Intent CAPTURE 最低展现'],
+  ['EARLY_GENERIC_CAPTURE_MIN_CLICKS', 2, 'Generic Intent CAPTURE 最低点击'],
+  ['EARLY_SCALE_MIN_IMPRESSIONS', 15, 'CAPTURE 后 SCALE 最低当前展现']
 ];
 
 /** V1：这些人工动作在 DONE/SKIP 后进入短冷却；强动作不冷却 */
