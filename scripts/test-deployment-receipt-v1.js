@@ -82,7 +82,15 @@ function makeContext(today = '2026-08-24', existing = false) {
     INTERVENTION_TIMELINE_HEADERS: headers('INTERVENTION_TIMELINE_HEADERS'),
     SHEET_NAMES: { SITES: '站点配置', DAILY: 'GSC日数据', PAGES: 'Page明细', QUERY_PAGES: 'Query页面明细', CONTENT_UPDATES: '内容更新记录', INTERVENTION_OBSERVATIONS: '干预观察', INTERVENTION_TIMELINE: '干预时间线', DECISION_HISTORY: '决策历史' },
     todayStr_: () => today,
-    normalizeKeyDate_: (v) => String(v || '').slice(0, 10),
+    formatDate_: (v) => new Date(v).toISOString().slice(0, 10),
+    normalizeKeyDate_: (v) => {
+      if (v instanceof Date) return v.toISOString().slice(0, 10);
+      const raw = String(v || '').trim();
+      if (!raw) return '';
+      if (/^\d{4}-\d{2}-\d{2}/.test(raw)) return raw.slice(0, 10);
+      const parsed = new Date(raw);
+      return Number.isNaN(parsed.getTime()) ? raw.slice(0, 10) : parsed.toISOString().slice(0, 10);
+    },
     addDaysStr_: dateAdd,
     daysBetweenStr_: (a, b) => Math.round((new Date(`${b}T00:00:00Z`) - new Date(`${a}T00:00:00Z`)) / 86400000),
     nowRecordedAt_: () => '2026-08-24T12:00:00+08:00',
@@ -233,8 +241,8 @@ const protectedObservation = observationsSheet.rows[1];
 protectedObservation[recoveredObsHeaders.ObservedClicks7D] = 123;
 protectedObservation[recoveredObsHeaders.Outcome] = 'PRESERVE_SENTINEL';
 existing.context.reconcileInterventionPipeline();
-assert.equal(protectedObservation[recoveredObsHeaders.ObservedClicks7D], 123);
-assert.equal(protectedObservation[recoveredObsHeaders.Outcome], 'PRESERVE_SENTINEL');
+assert.equal(protectedObservation[recoveredObsHeaders.ObservedClicks7D], '', 'runtime writer clears stale observed values');
+assert.equal(protectedObservation[recoveredObsHeaders.Outcome], '', 'runtime writer clears stale outcomes before horizon');
 
 // Repair must reconstruct a missing schedule without changing identity fields.
 const durableBefore = observationsSheet.rows.slice(1).map((row) => ({
@@ -304,6 +312,10 @@ const persistedFuse = persistedRows.find((r) => r[persistedHeader.PrimaryURL].in
 const persistedNew = persistedRows.find((r) => r[persistedHeader.PrimaryURL].includes('/percentage-pipe/'));
 assert.equal(persistedFuse[persistedHeader.BaselineMode], 'EXISTING_URL_NO_GSC_TRAFFIC');
 assert.equal(persistedNew[persistedHeader.BaselineMode], 'NEW_URL_BASELINE');
+assert.equal(persistedFuse[persistedHeader.ObservedSiteClicks7D], '');
+assert.equal(persistedFuse[persistedHeader.ObservedSiteImpressions7D], '');
+assert.equal(persistedFuse[persistedHeader.AttributionMode], 'INTERVENTION_NATIVE');
+assert.equal(persistedFuse[persistedHeader.Confounders], '');
 assert.equal(persistence.context.reconcileInterventionPipeline().observations, 20);
 const persistedRowsAfterRetry = persistence.ss.getSheetByName('干预观察').getRange(
   2, 1, persistence.ss.getSheetByName('干预观察').getLastRow() - 1, shuffledObservationHeaders.length
@@ -313,5 +325,110 @@ for (const row of persistedRowsAfterRetry) {
   assert.notEqual(row[persistedHeader.TargetDate], '');
   assert.notEqual(row[persistedHeader.BaselineMode], '');
 }
+
+// Date objects from Google Sheets must survive the content-row -> plan ->
+// observation path without becoming locale-dependent "Mon Aug..." strings.
+const dateContext = makeContext();
+const dateContentHeaders = Object.fromEntries(dateContext.context.CONTENT_UPDATE_HEADERS.map((x, i) => [x, i]));
+const dateContentRow = Array(dateContext.context.CONTENT_UPDATE_HEADERS.length).fill('');
+dateContentRow[dateContentHeaders['更新时间']] = new Date('2026-08-24T00:00:00Z');
+dateContentRow[dateContentHeaders['站点']] = 'Project P.I.T.T.';
+dateContentRow[dateContentHeaders['页面路径']] = '/';
+dateContentRow[dateContentHeaders.InterventionID] = 'DATE-FIXTURE';
+dateContentRow[dateContentHeaders.SiteID] = 'project-p-i-t-t';
+dateContentRow[dateContentHeaders.Action] = 'CREATE_PAGE';
+dateContentRow[dateContentHeaders.PrimaryURL] = 'https://pitt.example/';
+dateContentRow[dateContentHeaders.ProductionURL] = 'https://pitt.example/';
+dateContentRow[dateContentHeaders.ProductionDeployedAt] = new Date('2026-08-24T00:00:00Z');
+dateContentRow[dateContentHeaders.RecordedMode] = 'RECEIPT_AUTO';
+const datePlan = dateContext.context.planFromDeploymentContentGroup_([dateContentRow], dateContentHeaders);
+assert.equal(datePlan.deployedDate, '2026-08-24');
+const dateObservation = dateContext.context.buildDeploymentObservation_(
+  datePlan, datePlan.pages[0], { name: 'D1', days: 1 }, dateContext.context.deploymentObservationDataContext_()
+);
+assert.equal(dateObservation.TargetDate, '2026-08-25');
+
+// The one-time repair is bounded to the known P.I.T.T. 5x4 set, maps by the
+// actual Sheet headers, clears the confirmed contamination, and is idempotent.
+const dirty = makeContext();
+const dirtyCanonical = dirty.context.INTERVENTION_OBSERVATION_HEADERS;
+const dirtyHeaders = dirtyCanonical.slice().reverse().concat('LegacyNote');
+const dirtyMap = Object.fromEntries(dirtyHeaders.map((x, i) => [x, i]));
+const dirtyPages = ['/', '/up-achievement-fuses/', '/200kg-plate/', '/percentage-pipe/', '/secret-ending/'];
+const dirtyHorizons = ['D1', 'D3', 'D7', 'D14'];
+const dirtyRows = [];
+for (const page of dirtyPages) {
+  for (const horizon of dirtyHorizons) {
+    const canonicalRow = Array(dirtyCanonical.length).fill('');
+    const canonicalMap = Object.fromEntries(dirtyCanonical.map((x, i) => [x, i]));
+    canonicalRow[canonicalMap.ObservationID] = `PITT-LONGTAIL-CAPTURE-20260824|${page}|${horizon}`;
+    canonicalRow[canonicalMap.InterventionID] = 'PITT-LONGTAIL-CAPTURE-20260824';
+    canonicalRow[canonicalMap.SiteID] = 'project-p-i-t-t';
+    canonicalRow[canonicalMap.Site] = 'Project P.I.T.T.';
+    canonicalRow[canonicalMap.PrimaryURL] = `https://pitt.example${page}`;
+    canonicalRow[canonicalMap.Horizon] = horizon;
+    canonicalRow[canonicalMap.TargetDate] = '';
+    canonicalRow[canonicalMap.Status] = 'PENDING';
+    canonicalRow[canonicalMap.ObservedSiteClicks7D] = 'INTERVENTION_NATIVE';
+    canonicalRow[canonicalMap.ObservedSiteImpressions7D] = 139;
+    canonicalRow[canonicalMap.BaselineMode] = '';
+    canonicalRow[canonicalMap.AttributionMode] = 'INTERVENTION_NATIVE';
+    canonicalRow[canonicalMap.Confounders] = 'timestamp';
+    dirtyRows.push(dirtyHeaders.map((header) => header === 'LegacyNote' ? 'keep' : canonicalRow[canonicalMap[header]]));
+  }
+}
+dirty.ss.sheets['干预观察'] = new FakeSheet(dirtyHeaders, dirtyRows);
+const dirtyRepair = dirty.context.repairPittInterventionObservations();
+assert.equal(dirtyRepair.observations, 20);
+assert.equal(dirty.ss.getSheetByName('干预观察').getLastRow() - 1, 20);
+const repairedMap = Object.fromEntries(dirtyHeaders.map((x, i) => [x, i]));
+const repairedRows = dirty.ss.getSheetByName('干预观察').rows.slice(1);
+const repairSchedule = { D1: '2026-08-25', D3: '2026-08-27', D7: '2026-08-31', D14: '2026-09-07' };
+for (const row of repairedRows) {
+  const page = new URL(row[repairedMap.PrimaryURL]).pathname;
+  assert.equal(row[repairedMap.TargetDate], repairSchedule[row[repairedMap.Horizon]]);
+  assert.equal(row[repairedMap.Status], 'WAITING_HORIZON');
+  assert.equal(row[repairedMap.AttributionMode], 'INTERVENTION_NATIVE');
+  assert.equal(row[repairedMap.ObservedSiteClicks7D], '');
+  assert.equal(row[repairedMap.ObservedSiteImpressions7D], '');
+  assert.equal(row[repairedMap.Confounders], '');
+  assert.equal(row[repairedMap.BaselineSiteClicks7D], 7);
+  assert.equal(row[repairedMap.BaselineSiteImpressions7D], 139);
+  if (page === '/') {
+    assert.equal(row[repairedMap.BaselineClicks7D], 7);
+    assert.equal(row[repairedMap.BaselineImpressions7D], 139);
+    assert.equal(row[repairedMap.BaselineCTR], 0.05035971223);
+    assert.equal(row[repairedMap.BaselinePosition], 7.057553957);
+    assert.equal(row[repairedMap.BaselineMode], 'FROZEN_BASELINE');
+  } else if (page === '/up-achievement-fuses/' || page === '/200kg-plate/') {
+    assert.equal(row[repairedMap.BaselineClicks7D], 0);
+    assert.equal(row[repairedMap.BaselineImpressions7D], 0);
+    assert.equal(row[repairedMap.BaselineMode], 'EXISTING_URL_NO_GSC_TRAFFIC');
+  } else {
+    assert.equal(row[repairedMap.BaselineClicks7D], 0);
+    assert.equal(row[repairedMap.BaselineImpressions7D], 0);
+    assert.equal(row[repairedMap.BaselineMode], 'NEW_URL_BASELINE');
+  }
+}
+assert.equal(dirty.context.repairPittInterventionObservations().repaired, 0);
+assert.equal(dirty.ss.getSheetByName('干预观察').getLastRow() - 1, 20);
+
+// Legacy observation functions are retained as compatibility symbols but no
+// longer write current canonical rows; the daily finalizer has one receipt
+// reconciliation call after legacy maintenance.
+const ledgerSource = ledger;
+const legacyWriter = ledgerSource.slice(ledgerSource.indexOf('function writeLedgerObservationRows_'), ledgerSource.indexOf('function ledgerObservationDataContext_'));
+const legacyRefresh = ledgerSource.slice(ledgerSource.indexOf('function refreshInterventionObservations_'), ledgerSource.indexOf('function ledgerConfounders_'));
+assert(!/upsertLedgerObservation_\(/.test(legacyWriter));
+assert(!/upsertLedgerObservation_\(/.test(legacyRefresh));
+const planPublished = ledgerSource.slice(ledgerSource.indexOf('function planPublishedBatch_'), ledgerSource.indexOf('function resolvePublishedIntervention_'));
+assert(!/writeLedgerObservationRows_\(/.test(planPublished));
+const maintain = ledgerSource.slice(ledgerSource.indexOf('function maintainExperimentLedger_'), ledgerSource.indexOf('function runExperimentLedgerMaintenance'));
+assert(!/reconcileInterventionPipeline\(/.test(maintain));
+const codeSource = fs.readFileSync(path.join(root, 'Code.gs'), 'utf8');
+const finalizerStart = codeSource.indexOf('function runDailyFinalizerUnlocked_');
+const finalizerEnd = codeSource.indexOf('\nfunction ', finalizerStart + 1);
+const finalizer = codeSource.slice(finalizerStart, finalizerEnd < 0 ? codeSource.length : finalizerEnd);
+assert.equal((finalizer.match(/runInterventionObservationsUnlocked_\(/g) || []).length, 1);
 
 console.log('PASS scripts/test-deployment-receipt-v1.js');

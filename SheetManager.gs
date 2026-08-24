@@ -894,7 +894,14 @@ function getLatestKnownIndexStats_(siteName) {
 
 function normalizeKeyDate_(v) {
   if (v instanceof Date) return formatDate_(v);
-  return String(v || '').trim().substring(0, 10);
+  var raw = String(v || '').trim();
+  if (!raw) return '';
+  // Keep date-only and ISO values stable without first stringifying a Sheet
+  // Date object (which produces locale-dependent text such as "Mon Aug...").
+  if (/^\d{4}-\d{2}-\d{2}/.test(raw)) return raw.substring(0, 10);
+  var parsed = new Date(raw);
+  if (!isNaN(parsed.getTime())) return formatDate_(parsed);
+  return raw.substring(0, 10);
 }
 
 /**

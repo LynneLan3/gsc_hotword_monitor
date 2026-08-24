@@ -148,7 +148,6 @@ function planPublishedBatch_(receipt, dryRun) {
   ensureLedgerHeader_(SHEET_NAMES.INTERVENTION_TIMELINE, INTERVENTION_TIMELINE_HEADERS);
 
   for (var w = 0; w < plans.length; w++) writeLedgerContentReceipt_(plans[w]);
-  for (var o = 0; o < plans.length; o++) writeLedgerObservationRows_(plans[o]);
   for (var t = 0; t < plans.length; t++) {
     writeLedgerTimelineRow_(plans[t]);
     results.push(compactLedgerResult_(plans[t], 'RECORDED'));
@@ -259,6 +258,15 @@ function ledgerCell_(row, map, name) {
   return idx === undefined ? '' : String(row[idx] || '').trim();
 }
 
+function ledgerRawCell_(row, map, name) {
+  var idx = map[name];
+  return idx === undefined ? '' : row[idx];
+}
+
+function ledgerDateCell_(row, map, name) {
+  return normalizeKeyDate_(ledgerRawCell_(row, map, name));
+}
+
 function ledgerStringArray_(value) {
   if (Array.isArray(value)) return value.map(function (v) { return String(v || '').trim(); }).filter(Boolean);
   var raw = String(value || '').trim();
@@ -271,9 +279,10 @@ function ledgerStringArray_(value) {
 }
 
 function ledgerProductionLocalDate_(value) {
+  if (value instanceof Date) return formatDate_(value);
   var raw = String(value || '').trim();
   if (!raw) return '';
-  if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) return raw;
+  if (/^\d{4}-\d{2}-\d{2}/.test(raw)) return raw.substring(0, 10);
   var date = new Date(raw);
   if (isNaN(date.getTime())) return '';
   return Utilities.formatDate(date, Session.getScriptTimeZone(), 'yyyy-MM-dd');
@@ -534,11 +543,10 @@ function ledgerBlank_(value) {
 }
 
 function writeLedgerObservationRows_(plan) {
-  var data = ledgerObservationDataContext_();
-  for (var i = 0; i < LEDGER_OBSERVATION_HORIZONS.length; i++) {
-    var observation = buildLedgerObservation_(plan, LEDGER_OBSERVATION_HORIZONS[i], data);
-    upsertLedgerObservation_(observation);
-  }
+  // Legacy receipts remain accepted and continue to populate their legacy
+  // content/timeline facts, but the current canonical observation table has
+  // exactly one writer: the deployment receipt pipeline.
+  return { interventions: 0, observations: 0, skipped: 'DEPLOYMENT_RECEIPT_WRITER_ONLY' };
 }
 
 function ledgerObservationDataContext_() {
@@ -621,18 +629,27 @@ function ledgerDelta_(baseline, observed) {
 function upsertLedgerObservation_(observation) {
   var packed = loadLedgerSheetRows_(SHEET_NAMES.INTERVENTION_OBSERVATIONS);
   var idCol = packed.map.ObservationID;
-  var row = INTERVENTION_OBSERVATION_HEADERS.map(function (header) {
-    return observation[header] === undefined ? '' : observation[header];
+  var values = {};
+  INTERVENTION_OBSERVATION_HEADERS.forEach(function (header) {
+    values[header] = observation[header] === undefined ? '' : observation[header];
   });
   if (idCol !== undefined) {
     for (var i = 0; i < packed.rows.length; i++) {
       if (String(packed.rows[i][idCol] || '').trim() === observation.ObservationID) {
-        packed.sheet.getRange(i + 2, 1, 1, INTERVENTION_OBSERVATION_HEADERS.length).setValues([row]);
+        if (ledgerCell_(packed.rows[i], packed.map, 'AttributionMode') === 'INTERVENTION_NATIVE') {
+          return { action: 'skip', rowIndex: i + 2, reason: 'DEPLOYMENT_RECEIPT_OWNED' };
+        }
+        var existingRow = packed.header.map(function (header, index) {
+          return Object.prototype.hasOwnProperty.call(values, header) ? values[header] : packed.rows[i][index];
+        });
+        packed.sheet.getRange(i + 2, 1, 1, packed.header.length).setValues([existingRow]);
         return { action: 'update', rowIndex: i + 2 };
       }
     }
   }
-  packed.sheet.appendRow(row);
+  packed.sheet.appendRow(packed.header.map(function (header) {
+    return Object.prototype.hasOwnProperty.call(values, header) ? values[header] : '';
+  }));
   return { action: 'insert', rowIndex: packed.sheet.getLastRow() };
 }
 
@@ -654,7 +671,7 @@ function loadRealtimeLedgerInterventions_() {
 
 function ledgerPlanFromContentRow_(row, map) {
   var baseline = {
-    dataDate: ledgerCell_(row, map, 'BaselineDataDate'),
+    dataDate: ledgerDateCell_(row, map, 'BaselineDataDate'),
     clicks: ledgerValue_(row, map, 'BaselinePageClicks7D'),
     impressions: ledgerValue_(row, map, 'BaselinePageImpressions7D'),
     ctr: ledgerValue_(row, map, 'BaselinePageCTR'),
@@ -684,9 +701,9 @@ function ledgerPlanFromContentRow_(row, map) {
     commitSha: ledgerCell_(row, map, 'CommitSHA'),
     deploymentUrl: ledgerCell_(row, map, 'DeploymentURL'),
     productionUrl: ledgerCell_(row, map, 'ProductionURL'),
-    deployedAt: ledgerCell_(row, map, 'ProductionDeployedAt'),
-    deployedDate: ledgerProductionLocalDate_(ledgerCell_(row, map, 'ProductionDeployedAt')),
-    releaseDate: ledgerCell_(row, map, 'ReleaseDate'),
+    deployedAt: ledgerRawCell_(row, map, 'ProductionDeployedAt'),
+    deployedDate: ledgerProductionLocalDate_(ledgerRawCell_(row, map, 'ProductionDeployedAt')),
+    releaseDate: ledgerDateCell_(row, map, 'ReleaseDate'),
     releaseOffsetDay: ledgerValue_(row, map, 'ReleaseOffsetDay'),
     baseline: baseline
   };
@@ -698,18 +715,9 @@ function ledgerValue_(row, map, name) {
 }
 
 function refreshInterventionObservations_() {
-  ensureSheet_(SHEET_NAMES.INTERVENTION_OBSERVATIONS, INTERVENTION_OBSERVATION_HEADERS);
-  var plans = loadRealtimeLedgerInterventions_();
-  var data = ledgerObservationDataContext_();
-  var updated = 0;
-  for (var i = 0; i < plans.length; i++) {
-    if (!plans[i].deployedDate) continue;
-    for (var h = 0; h < LEDGER_OBSERVATION_HORIZONS.length; h++) {
-      upsertLedgerObservation_(buildLedgerObservation_(plans[i], LEDGER_OBSERVATION_HORIZONS[h], data));
-      updated++;
-    }
-  }
-  return { interventions: plans.length, observations: updated };
+  // Compatibility symbol only. Historical rows remain untouched and current
+  // observations are owned exclusively by the Deployment Receipt writer.
+  return { interventions: 0, observations: 0, skipped: 'DEPLOYMENT_RECEIPT_WRITER_ONLY' };
 }
 
 function ledgerConfounders_(plan, allPlans) {
@@ -831,12 +839,8 @@ function refreshExperimentTimeline_() {
 }
 
 function maintainExperimentLedger_() {
-  var observationResult = refreshInterventionObservations_();
   var timelineResult = refreshExperimentTimeline_();
-  var receiptResult = reconcileInterventionPipeline();
-  var receiptTimeline = refreshDeploymentTimelines_();
-  return { observations: observationResult, timeline: timelineResult,
-    receipt: receiptResult, receiptTimeline: receiptTimeline };
+  return { timeline: timelineResult };
 }
 
 /** Independent manual/debug entry point. */
@@ -1590,16 +1594,6 @@ function preserveDeploymentObservationBaselineFields_(current, values, map) {
   }
 }
 
-function preserveDeploymentObservationNonBlankFields_(current, values, map) {
-  for (var i = 0; i < INTERVENTION_OBSERVATION_HEADERS.length; i++) {
-    var header = INTERVENTION_OBSERVATION_HEADERS[i];
-    var col = map[header];
-    if (col !== undefined && ledgerBlank_(values[header]) && !ledgerBlank_(current[col])) {
-      values[header] = current[col];
-    }
-  }
-}
-
 function deploymentObservationRowArray_(values, packed, current) {
   return packed.header.map(function (header, index) {
     if (Object.prototype.hasOwnProperty.call(values, header)) return values[header];
@@ -1618,7 +1612,6 @@ function upsertDeploymentObservation_(observation, packed, existing) {
       'ObservationID', 'InterventionID', 'Horizon', 'TargetDate', 'PrimaryURL'
     ], packed.map);
     preserveDeploymentObservationBaselineFields_(existing.row, values, packed.map);
-    preserveDeploymentObservationNonBlankFields_(existing.row, values, packed.map);
     var existingRow = deploymentObservationRowArray_(values, packed, existing.row);
     packed.sheet.getRange(existing.rowIndex, 1, 1, packed.header.length).setValues([existingRow]);
     return { inserted: false };
@@ -1637,7 +1630,7 @@ function upsertDeploymentObservations_(plan) {
       var horizon = DEPLOYMENT_OBSERVATION_HORIZONS[h];
       var identity = buildDeploymentObservation_(plan, plan.pages[p], horizon, data);
       var existing = findDeploymentObservationRow_(packed, identity);
-      var targetDate = existing ? ledgerCell_(existing.row, packed.map, 'TargetDate') : '';
+      var targetDate = existing ? ledgerDateCell_(existing.row, packed.map, 'TargetDate') : '';
       var observation = buildDeploymentObservation_(plan, plan.pages[p], horizon, data, targetDate);
       if (upsertDeploymentObservation_(observation, packed, existing).inserted) inserted++;
       if (existing) existing.row = packed.rows[existing.rowIndex - 2];
@@ -1649,8 +1642,8 @@ function upsertDeploymentObservations_(plan) {
 function planFromDeploymentContentGroup_(rows, map) {
   var first = rows[0];
   var base = ledgerPlanFromContentRow_(first, map);
-  base.deployedDate = base.deployedDate || normalizeKeyDate_(ledgerCell_(first, map, '更新时间'));
-  base.deployedAt = base.deployedAt || base.deployedDate;
+  base.deployedDate = base.deployedDate || ledgerDateCell_(first, map, '更新时间');
+  base.deployedAt = base.deployedAt || ledgerRawCell_(first, map, '更新时间') || base.deployedDate;
   base.productionUrl = base.productionUrl || ledgerCell_(first, map, 'PrimaryURL');
   base.recordedMode = ledgerCell_(first, map, 'RecordedMode');
   base.goalId = ledgerCell_(first, map, 'GoalID') || ledgerCell_(first, map, 'OpportunityID');
@@ -1667,7 +1660,7 @@ function planFromDeploymentContentGroup_(rows, map) {
       sourceRefs: ledgerStringArray_(ledgerCell_(row, map, 'SourceRefs')),
       reason: ledgerCell_(row, map, 'Reason'),
       baseline: {
-        dataDate: ledgerCell_(row, map, 'BaselineDataDate'),
+        dataDate: ledgerDateCell_(row, map, 'BaselineDataDate'),
         clicks: ledgerValue_(row, map, 'BaselinePageClicks7D'),
         impressions: ledgerValue_(row, map, 'BaselinePageImpressions7D'),
         ctr: ledgerValue_(row, map, 'BaselinePageCTR'),
@@ -1740,6 +1733,90 @@ function reconcileInterventionPipeline() {
     interventionCount++;
   }
   return { interventions: interventionCount, observations: observationCount };
+}
+
+/**
+ * One-time, idempotent repair for the already-created P.I.T.T. receipt rows.
+ * This is intentionally not a general migration: it neither deletes rows nor
+ * creates rows, and it refuses to run unless the known 5x4 set is present.
+ */
+function repairPittInterventionObservations() {
+  var interventionId = 'PITT-LONGTAIL-CAPTURE-20260824';
+  var pages = ['/', '/up-achievement-fuses/', '/200kg-plate/', '/percentage-pipe/', '/secret-ending/'];
+  var schedule = { D1: '2026-08-25', D3: '2026-08-27', D7: '2026-08-31', D14: '2026-09-07' };
+  var horizons = ['D1', 'D3', 'D7', 'D14'];
+  var clearFields = [
+    'ObservedDataDate', 'ObservedClicks7D', 'ObservedImpressions7D', 'ObservedCTR',
+    'ObservedPosition', 'ObservedQueryCount7D', 'ObservedSiteClicks7D',
+    'ObservedSiteImpressions7D', 'ClicksDelta', 'ImpressionsDelta', 'CTRDelta',
+    'PositionImprovement', 'QueryCountDelta', 'Outcome', 'OutcomeConfidence'
+  ];
+  var sheet = getSpreadsheet_().getSheetByName(SHEET_NAMES.INTERVENTION_OBSERVATIONS);
+  if (!sheet) throw new Error('repairPittInterventionObservations: missing 干预观察 sheet');
+  var packed = loadLedgerSheetRows_(SHEET_NAMES.INTERVENTION_OBSERVATIONS);
+  var matched = {};
+  var duplicate = {};
+  for (var i = 0; i < packed.rows.length; i++) {
+    var row = packed.rows[i];
+    if (String(ledgerRawCell_(row, packed.map, 'InterventionID') || '').trim() !== interventionId) continue;
+    var observationId = String(ledgerRawCell_(row, packed.map, 'ObservationID') || '').trim();
+    var rawPrimaryUrl = ledgerRawCell_(row, packed.map, 'PrimaryURL');
+    var path = rawPrimaryUrl ? ledgerNormalizePath_(rawPrimaryUrl) : '';
+    var horizon = String(ledgerRawCell_(row, packed.map, 'Horizon') || '').trim();
+    if ((!path || !schedule[horizon]) && observationId) {
+      var parts = observationId.split('|');
+      if (parts.length >= 3) {
+        path = ledgerNormalizePath_(parts[parts.length - 2]);
+        horizon = parts[parts.length - 1];
+      }
+    }
+    var key = path + '|' + horizon;
+    if (pages.indexOf(path) < 0 || !schedule[horizon]) continue;
+    if (matched[key]) duplicate[key] = true;
+    else matched[key] = { row: row, rowIndex: i + 2, path: path, horizon: horizon };
+  }
+  var expected = pages.length * horizons.length;
+  if (Object.keys(duplicate).length || Object.keys(matched).length !== expected) {
+    throw new Error(
+      'repairPittInterventionObservations: expected exactly ' + expected +
+      ' unique rows, found ' + Object.keys(matched).length
+    );
+  }
+  var repaired = 0;
+  Object.keys(matched).forEach(function (key) {
+    var item = matched[key];
+    var isHome = item.path === '/';
+    var values = {
+      TargetDate: schedule[item.horizon],
+      Status: 'WAITING_HORIZON',
+      BaselineClicks7D: isHome ? 7 : 0,
+      BaselineImpressions7D: isHome ? 139 : 0,
+      BaselineCTR: isHome ? 0.05035971223 : '',
+      BaselinePosition: isHome ? 7.057553957 : '',
+      BaselineQueryCount7D: isHome ? ledgerRawCell_(item.row, packed.map, 'BaselineQueryCount7D') || 0 : 0,
+      BaselineSiteClicks7D: 7,
+      BaselineSiteImpressions7D: 139,
+      BaselineMode: isHome ? 'FROZEN_BASELINE' :
+        (item.path === '/up-achievement-fuses/' || item.path === '/200kg-plate/'
+          ? 'EXISTING_URL_NO_GSC_TRAFFIC' : 'NEW_URL_BASELINE'),
+      AttributionMode: 'INTERVENTION_NATIVE',
+      Confounders: '',
+      UpdatedAt: nowRecordedAt_()
+    };
+    for (var c = 0; c < clearFields.length; c++) values[clearFields[c]] = '';
+    var next = packed.header.map(function (header, index) {
+      return Object.prototype.hasOwnProperty.call(values, header) ? values[header] : item.row[index];
+    });
+    var changed = false;
+    for (var n = 0; n < next.length; n++) {
+      if (next[n] !== item.row[n]) { changed = true; break; }
+    }
+    if (changed) {
+      packed.sheet.getRange(item.rowIndex, 1, 1, packed.header.length).setValues([next]);
+      repaired++;
+    }
+  });
+  return { ok: true, interventionId: interventionId, observations: expected, repaired: repaired };
 }
 
 /** Daily runner entry point; no new trigger is created. */
