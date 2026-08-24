@@ -28,7 +28,11 @@ var EARLY_SIGNAL_CONFIDENCES = {
 /** Run after FreshQueryMonitor has written Intent机会. */
 function runEarlySiteSignalEngine(opts) {
   opts = opts || {};
-  var snapshots = opts.snapshots || [];
+  ensureEarlySiteSignalProductionSchema_();
+  var snapshots = (opts.snapshots || []).slice();
+  if (opts.fromLiveSheet !== false) {
+    snapshots = mergeEarlySignalSnapshots_(snapshots, loadEarlySignalSnapshotsFromSheets_());
+  }
   if (!snapshots.length) {
     return { records: [], skipped: 'no realtime Intent snapshots' };
   }
@@ -88,6 +92,167 @@ function runEarlySiteSignalEngine(opts) {
 
   updateEarlySiteSignalStatusRows_(records);
   return { records: records };
+}
+
+/**
+ * The production trigger may have old live rows while the current GSC pull is
+ * incomplete. Read the existing realtime snapshot so Goal 1 can still run.
+ * Intent机会 is the authoritative aggregate fallback; realtime rows override
+ * the per-query values when that row is available.
+ */
+function loadEarlySignalSnapshotsFromSheets_() {
+  if (
+    typeof getSpreadsheet_ !== 'function' ||
+    typeof getEnabledSites !== 'function' ||
+    typeof getSheetDataRange_ !== 'function'
+  ) {
+    return [];
+  }
+  var sites = getEnabledSites();
+  var siteByName = {};
+  for (var s = 0; s < sites.length; s++) siteByName[sites[s].name] = sites[s];
+
+  var freshRows = loadEarlySignalSheetRows_(
+    SHEET_NAMES.FRESH_QUERY_MONITOR,
+    FRESH_QUERY_MONITOR_HEADERS.length
+  );
+  var rawBySiteQuery = {};
+  for (var f = 0; f < freshRows.length; f++) {
+    var fresh = freshRows[f];
+    var freshSite = String(fresh[1] || '').trim();
+    var freshQuery = String(fresh[2] || '').trim();
+    if (!freshSite || !freshQuery) continue;
+    if (!rawBySiteQuery[freshSite]) rawBySiteQuery[freshSite] = {};
+    rawBySiteQuery[freshSite][freshQuery.toLowerCase()] = {
+      query: freshQuery,
+      page: String(fresh[3] || '').trim(),
+      clicks: earlyMetricNumber_(fresh[4]),
+      impressions: earlyMetricNumber_(fresh[5]),
+      position: earlyMetricNumber_(fresh[7]),
+      incomplete: earlySignalBoolean_(fresh[15]),
+      cutoff: String(fresh[16] || '')
+    };
+  }
+
+  var intentRows = loadEarlySignalSheetRows_(
+    SHEET_NAMES.INTENT_OPPORTUNITIES,
+    INTENT_OPPORTUNITY_HEADERS.length
+  );
+  var grouped = {};
+  for (var i = 0; i < intentRows.length; i++) {
+    var row = intentRows[i];
+    var siteName = String(row[0] || '').trim();
+    if (!siteName || !siteByName[siteName]) continue;
+    if (!grouped[siteName]) grouped[siteName] = [];
+    grouped[siteName].push(row);
+  }
+
+  var snapshots = [];
+  var groupedSites = Object.keys(grouped);
+  for (var g = 0; g < groupedSites.length; g++) {
+    var groupedSiteName = groupedSites[g];
+    var intentSiteRows = grouped[groupedSiteName];
+    var clusters = [];
+    var dataCutoff = '';
+    var dataIncomplete = false;
+    var rawQueries = rawBySiteQuery[groupedSiteName] || {};
+
+    for (var r = 0; r < intentSiteRows.length; r++) {
+      var intentRow = intentSiteRows[r];
+      var clusterImpressions = earlyMetricNumber_(intentRow[6]);
+      var clusterClicks = earlyMetricNumber_(intentRow[5]);
+      var clusterPosition = earlyMetricNumber_(intentRow[8]);
+      var queryTexts = String(intentRow[3] || '').split(/\s*\|\s*/).filter(function (q) {
+        return !!String(q || '').trim();
+      });
+      var queryItems = [];
+      for (var q = 0; q < queryTexts.length; q++) {
+        var queryText = String(queryTexts[q] || '').trim();
+        var raw = rawQueries[queryText.toLowerCase()];
+        if (raw) {
+          queryItems.push({
+            query: raw.query,
+            clicks: raw.clicks,
+            impressions: raw.impressions,
+            position: raw.position
+          });
+          if (raw.cutoff) dataCutoff = raw.cutoff;
+          dataIncomplete = dataIncomplete || raw.incomplete;
+        } else if (queryTexts.length === 1) {
+          // A one-query Intent row already contains the exact aggregate facts.
+          queryItems.push({
+            query: queryText,
+            clicks: clusterClicks,
+            impressions: clusterImpressions,
+            position: clusterPosition
+          });
+        } else {
+          // Keep the query identity for counting, but do not invent per-query
+          // clicks or impressions when only a multi-query aggregate exists.
+          queryItems.push({ query: queryText, clicks: 0, impressions: 0, position: 0 });
+        }
+      }
+      clusters.push({
+        key: String(intentRow[1] || ''),
+        label: String(intentRow[2] || ''),
+        queryCount: Number(intentRow[4] || queryItems.length),
+        queries: queryItems,
+        clicks: clusterClicks,
+        impressions: clusterImpressions,
+        position: clusterPosition
+      });
+      if (intentRow[31]) dataCutoff = String(intentRow[31]);
+      dataIncomplete = dataIncomplete || earlySignalBoolean_(intentRow[32]);
+    }
+    snapshots.push({
+      site: siteByName[groupedSiteName],
+      clusters: clusters,
+      cutoffHour: dataCutoff,
+      incomplete: dataIncomplete
+    });
+  }
+  return snapshots;
+}
+
+function loadEarlySignalSheetRows_(sheetName, columnCount) {
+  var sheet = getSpreadsheet_().getSheetByName(sheetName);
+  if (!sheet || sheet.getLastRow() < 2) return [];
+  var range = getSheetDataRange_(sheet, columnCount);
+  return range ? range.getValues() : [];
+}
+
+function mergeEarlySignalSnapshots_(freshSnapshots, sheetSnapshots) {
+  var bySite = {};
+  var i;
+  for (i = 0; i < (sheetSnapshots || []).length; i++) {
+    var sheetSnapshot = sheetSnapshots[i];
+    var sheetName = sheetSnapshot.site && sheetSnapshot.site.name;
+    if (sheetName) bySite[sheetName] = sheetSnapshot;
+  }
+  for (i = 0; i < (freshSnapshots || []).length; i++) {
+    var freshSnapshot = freshSnapshots[i];
+    var freshName = freshSnapshot.site && freshSnapshot.site.name;
+    if (freshName) bySite[freshName] = freshSnapshot;
+  }
+  var out = [];
+  var names = Object.keys(bySite);
+  for (var n = 0; n < names.length; n++) out.push(bySite[names[n]]);
+  return out;
+}
+
+function ensureEarlySiteSignalProductionSchema_() {
+  if (typeof ensureSheet_ !== 'function') return;
+  ensureSheet_(SHEET_NAMES.RULES, RULE_HEADERS);
+  if (typeof seedMissingDecisionRules_ === 'function') seedMissingDecisionRules_();
+  if (typeof ensureSiteStatusHeader_ === 'function') {
+    ensureSheet_(SHEET_NAMES.SITE_STATUS, SITE_STATUS_HEADERS);
+    ensureSiteStatusHeader_();
+  }
+}
+
+function earlySignalBoolean_(value) {
+  var text = String(value || '').trim().toLowerCase();
+  return value === true || text === 'true' || text === '是' || text === 'yes';
 }
 
 /** Aggregate the already-classified Intent snapshot; no query.includes classifier. */

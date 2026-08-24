@@ -118,6 +118,11 @@ assert(secondDowngrade.status === 'WATCH', 'second downgrade applies');
 assert(secondDowngrade.downgradeRuns === 0, 'downgrade counter resets');
 var upgrade = context.resolveEarlySignalState_('WATCH', 'EARLY_WINNER', 1, 2);
 assert(upgrade.status === 'EARLY_WINNER', 'upgrade is immediate');
+var merged = context.mergeEarlySignalSnapshots_(
+  [{ site: { name: 'Fresh Site' } }],
+  [{ site: { name: 'Project P.I.T.T.' } }]
+);
+assert(merged.length === 2, 'live snapshot fallback merges with fresh snapshots');
 
 console.log(JSON.stringify({
   aggregate: {
