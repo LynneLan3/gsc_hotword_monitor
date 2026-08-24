@@ -1331,10 +1331,13 @@ function mergeTodayActionRows_(runDate, existing, actionRows) {
     var site = String(row[2] || '').trim();
     var action = String(row[4] || '').trim();
     var status = normalizeTodayStatus_(row[7]);
+    var sourceSystem = String(row[10] || '').trim().toUpperCase();
     var note = row[8] === null || row[8] === undefined ? '' : String(row[8]);
     var key = todayActionKey_(date, site, action);
 
-    if (date !== runDate) {
+    // Early/Steam rows are owned by their source router. Preserve them while
+    // the formal Decision Engine refreshes only its GSC-derived actions.
+    if (date !== runDate || (sourceSystem && sourceSystem !== 'GSC')) {
       preserved.push(row);
       continue;
     }

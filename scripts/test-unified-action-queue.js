@@ -89,6 +89,13 @@ var positiveGsc = action('2026-08-22', 'Other Game', 'CONTENT_OPTIMIZE', {
   decisionId: 'decision-other',
   sourceReference: 'gsc-manual-row'
 });
+var earlyAction = action('2026-08-22', 'Project P.I.T.T.', 'AUTO_FOLLOWUP', {
+  sourceSystem: 'EARLY',
+  opportunityId: 'EARLY_SITE_WIN:project-pitt',
+  opportunityType: 'EARLY_SITE_WIN',
+  currentState: 'AUTO_HANDLED / AUTO_MONITORING',
+  sourceReference: 'early-router-row'
+});
 var watchGsc = action('2026-08-22', 'Mortal Shell II', 'WATCH', {
   decisionId: 'decision-ms2',
   opportunityId: 'opp-ms2-mortal-shell-ii-skip-prologue-query-blind-spot-001'
@@ -104,7 +111,7 @@ var positiveContext = record(
 
 var queue = context.buildUnifiedActionQueue_(
   '2026-08-22',
-  [positiveGsc, watchGsc, action('2026-08-22', 'Other Game', 'CONTENT_OPTIMIZE', {decisionId: 'decision-other'})],
+  [positiveGsc, earlyAction, watchGsc, action('2026-08-22', 'Other Game', 'CONTENT_OPTIMIZE', {decisionId: 'decision-other'})],
   [steamTitanic, steamTitanic, steamNone, steamReject],
   {
     radar: [watchContext],
@@ -114,10 +121,14 @@ var queue = context.buildUnifiedActionQueue_(
   }
 );
 
-assert(queue.length === 2, 'manual GSC + Titanic only; no duplicate or WATCH row');
+assert(queue.length === 3, 'manual GSC + EARLY + Titanic only; no duplicate or WATCH row');
 var gscRow = queue.filter(function (row) { return row[10] === 'GSC'; })[0];
+var earlyRow = queue.filter(function (row) { return row[10] === 'EARLY'; })[0];
 var steamRow = queue.filter(function (row) { return row[10] === 'STEAM'; })[0];
 assert(!!gscRow, 'manual GSC action appears');
+assert(!!earlyRow, 'EARLY action appears in unified queue');
+assert(earlyRow[11] === 'EARLY_SITE_WIN:project-pitt', 'EARLY ActionKey/OpportunityID preserved');
+assert(earlyRow[13] === 'EARLY_SITE_WIN', 'EARLY opportunity type preserved');
 assert(gscRow[11] === 'opp-other-001', 'GSC OpportunityID comes from Decision History');
 assert(gscRow[12] === 'Other Game' && gscRow[13] === 'GSC_DECISION', 'GSC game and opportunity type preserved');
 assert(!!steamRow, 'Steam actionable candidate appears');

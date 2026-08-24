@@ -56,6 +56,8 @@ assert(!/SHEET_NAMES\.DAILY|upsertDailyRow_/.test(freshSrc), 'must not write GSC
 assert(!/upsertQueryRow_|SHEET_NAMES\.QUERIES/.test(freshSrc), 'must not write Query明细');
 assert(!/SHEET_NAMES\.QUERY_PAGES|upsertQueryPage/.test(freshSrc), 'must not write Query页面明细');
 assert(!/runDecisionEngine|rebuildEffectEvaluation|createResearchJobs/.test(freshSrc), 'must not hook decision/eval/research');
+assert(/runEarlyActionRouter/.test(freshSrc), 'Goal 3 router is on the realtime pipeline');
+assert(/followupRecords:\s*earlyFollowupResult\.records/.test(freshSrc), 'router receives follow-up records');
 assert(!/alertUi_\(summary\)/.test(extractFn(freshSrc, 'runFreshQueryMonitorUnlocked_')), 'formal runtime has no blocking alert');
 assert(/pageHourlyRows/.test(freshSrc), 'fresh monitor passes independent page rows');
 assert(!/runFreshQueryMonitor/.test(decisionSrc), 'decision engine unchanged');

@@ -2,8 +2,9 @@
  * 实时 24h Query 爆量监控（hourly_all 旁路）。
  *
  * 只用于热词发现 / 爆量提醒 / 页面承接观察；Intent 后接入 D0-D3 Early Site Signal。
- * 不写 GSC日数据 / Query明细 / Query页面明细 / 每日快照 / 正式 Decision / 今日行动。
- * 不跑 Decision / Research / Intervention / Effect Evaluation / D7。
+ * 不写 GSC日数据 / Query明细 / Query页面明细 / 每日快照 / 正式 Decision。
+ * EarlyActionRouter 只把已确认的 Early Signal 汇入现有行动/机会/研究表，
+ * 不跑正式 Decision / Intervention / Effect Evaluation / D7。
  */
 
 var FRESH_QUERY_HOUR_MS = 60 * 60 * 1000;
@@ -80,6 +81,12 @@ function runFreshQueryMonitorUnlocked_() {
     earlyRecords: earlySignalResult.records,
     now: generatedAt
   });
+  var earlyActionResult = runEarlyActionRouter({
+    snapshots: intentSnapshots,
+    earlyRecords: earlySignalResult.records,
+    followupRecords: earlyFollowupResult.records,
+    now: generatedAt
+  });
 
   var summary =
     'runFreshQueryMonitor 完成 | triggered=' +
@@ -90,6 +97,12 @@ function runFreshQueryMonitorUnlocked_() {
     earlyFollowupResult.records.length +
     ' | followupSignals=' +
     earlyFollowupResult.events.length +
+    ' | earlyRouterPlans=' +
+    earlyActionResult.plans.length +
+    ' | earlyRouterActions=' +
+    earlyActionResult.todayActions +
+    ' | earlyRouterJobs=' +
+    earlyActionResult.researchJobs +
     ' | errors=' +
     errors;
   writeLog_('INFO', '', summary);

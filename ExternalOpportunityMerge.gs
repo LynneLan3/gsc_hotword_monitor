@@ -398,6 +398,9 @@ function externalOpportunityCandidateRow_(candidate) {
   row[headers.indexOf('Confidence')] = candidate.Confidence;
   row[headers.indexOf('RecommendedAction')] = candidate.RecommendedAction;
   row[headers.indexOf('SourceReference')] = candidate.SourceReference;
+  if (headers.indexOf('SignalState') >= 0) row[headers.indexOf('SignalState')] = candidate.SignalState || '';
+  if (headers.indexOf('ActionKey') >= 0) row[headers.indexOf('ActionKey')] = candidate.ActionKey || '';
+  if (headers.indexOf('LastObservedAt') >= 0) row[headers.indexOf('LastObservedAt')] = candidate.LastObservedAt || '';
   return row;
 }
 

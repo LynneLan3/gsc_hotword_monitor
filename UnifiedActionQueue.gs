@@ -11,7 +11,7 @@ var UNIFIED_ACTION_QUEUE = {
   STEAM_SOURCE_SPREADSHEET_ID: '1WVg2p_Vero3MB2JN4yxmtHkLQRgkWO2mz95X4ms9nLE',
   STEAM_SOURCE_SHEET_NAME: '候选决策',
   STEAM_SOURCE_URL: 'https://docs.google.com/spreadsheets/d/1WVg2p_Vero3MB2JN4yxmtHkLQRgkWO2mz95X4ms9nLE',
-  SOURCE_SYSTEMS: { STEAM: 'STEAM', GSC: 'GSC' },
+  SOURCE_SYSTEMS: { STEAM: 'STEAM', GSC: 'GSC', EARLY: 'EARLY' },
   OPPORTUNITY_TYPES: {
     STEAM_CANDIDATE: 'STEAM_CANDIDATE',
     GSC_DECISION: 'GSC_DECISION',
@@ -98,7 +98,8 @@ function loadCurrentGscActionRows_() {
   for (var i = 0; i < values.length; i++) {
     var row = values[i];
     var source = String(cell_(row, col, 'SourceSystem') || '').trim().toUpperCase();
-    if (source && source !== UNIFIED_ACTION_QUEUE.SOURCE_SYSTEMS.GSC) continue;
+    if (source && source !== UNIFIED_ACTION_QUEUE.SOURCE_SYSTEMS.GSC &&
+        source !== UNIFIED_ACTION_QUEUE.SOURCE_SYSTEMS.EARLY) continue;
     out.push({
       date: cell_(row, col, 'Date'),
       priority: String(cell_(row, col, 'Priority') || '').trim(),
@@ -114,7 +115,8 @@ function loadCurrentGscActionRows_() {
       game: String(cell_(row, col, 'Game') || '').trim(),
       opportunityType: String(cell_(row, col, 'OpportunityType') || '').trim(),
       currentState: String(cell_(row, col, 'CurrentState') || '').trim(),
-      sourceReference: String(cell_(row, col, 'SourceReference') || '').trim()
+      sourceReference: String(cell_(row, col, 'SourceReference') || '').trim(),
+      sourceSystem: source || UNIFIED_ACTION_QUEUE.SOURCE_SYSTEMS.GSC
     });
   }
   return out;
@@ -278,7 +280,7 @@ function buildGscQueueRows_(runDate, gscRows, context) {
       item.reason,
       item.status,
       item.note,
-      UNIFIED_ACTION_QUEUE.SOURCE_SYSTEMS.GSC,
+      item.sourceSystem || UNIFIED_ACTION_QUEUE.SOURCE_SYSTEMS.GSC,
       oppId,
       game,
       type,
