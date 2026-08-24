@@ -418,7 +418,9 @@ function buildIntentOpportunitySheetRows_(snapshot) {
       pageActionOwner ? page.pageActionReason : '',
       pageActionOwner ? 'TRUE' : 'FALSE',
       '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '',
-      c.intentType || '', c.intentFamily || '', '', '', '', ''
+      c.intentType || '', c.intentFamily || '', '', '', '', '',
+      JSON.stringify(c.adjacentCaptureCandidates || c.externalAdjacentIntents || []),
+      c.adjacentCaptureReason || ''
     ]);
   }
   return rows;
@@ -808,7 +810,15 @@ function intentClusterTokenize_(text) {
       loading: 'load',
       keeps: 'keep',
       martyrs: 'martyr',
-      fuses: 'fuse'
+      fuses: 'fuse',
+      boxes: 'box',
+      endings: 'ending',
+      secrets: 'secret',
+      plates: 'plate',
+      achievements: 'achievement',
+      walkthroughs: 'walkthrough',
+      guides: 'guide',
+      locations: 'location'
     };
     return canonical[token] || token;
   });

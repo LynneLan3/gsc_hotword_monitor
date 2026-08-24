@@ -237,6 +237,9 @@ function runDailyFinalizerUnlocked_(sites, runDate) {
     refreshImplementationHandoffs_();
     try {
       maintainExperimentLedger_();
+      // Receipt observations run after all GSC collection and reuse this
+      // daily lock; no second daily trigger is created.
+      runInterventionObservationsUnlocked_();
     } catch (ledgerError) {
       var ledgerDetail = formatErrorWithStack_(ledgerError);
       writeLog_('WARN', '', 'EXPERIMENT_LEDGER_MAINTENANCE_FAILED | ' + ledgerDetail);

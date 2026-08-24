@@ -110,10 +110,21 @@ function buildEarlyActionPlans_(opts) {
 
   for (var f = 0; f < followupRecords.length; f++) {
     var record = followupRecords[f] || {};
-    if (!record.site || !record.clusterKey || !record.signals || !record.signals.length) continue;
+    if (!record.site || !record.clusterKey) continue;
     var contextKey = String(record.site) + '||' + String(record.clusterKey);
     var planContext = contexts[contextKey] || {};
     var recordWithSite = earlyActionWithSiteObject_(record, planContext.siteObject);
+    var adjacent = record.adjacentCaptureCandidates || [];
+    if (adjacent.length) {
+      for (var a = 0; a < adjacent.length; a++) {
+        var candidate = adjacent[a] || {};
+        var adjacentPlan = buildAdjacentCapturePlan_(recordWithSite, candidate, opts.now);
+        if (adjacentPlan && !plansByKey[adjacentPlan.actionKey]) {
+          plansByKey[adjacentPlan.actionKey] = adjacentPlan;
+        }
+      }
+    }
+    if (!record.signals || !record.signals.length) continue;
     var plan = buildEarlyFollowupPlan_(recordWithSite, planContext, rules, opts.now);
     if (!plan) continue;
     var key = plan.actionKey;
@@ -125,6 +136,45 @@ function buildEarlyActionPlans_(opts) {
   }
 
   return Object.keys(plansByKey).map(function (key) { return plansByKey[key]; });
+}
+
+function buildAdjacentCapturePlan_(record, candidate, now) {
+  candidate = candidate || {};
+  var intent = String(candidate.intent || candidate.normalizedIntent || '').trim();
+  if (!intent) return null;
+  var actionKey = earlyActionKey_(record.siteObject || record.site, intent, 'ADJACENT_CAPTURE');
+  return {
+    actionKey: actionKey,
+    opportunityId: actionKey,
+    site: String(record.site || '').trim(),
+    siteIdentity: earlySiteIdentity_(record.siteObject || { name: record.site }),
+    clusterKey: String(record.clusterKey || '').trim(),
+    clusterLabel: intent,
+    signals: ['ADJACENT_CAPTURE_CANDIDATE'],
+    confidence: 'MEDIUM',
+    reason: String(candidate.reason || record.adjacentCaptureReason || '').trim(),
+    currentImpressions: 0,
+    currentClicks: 0,
+    currentPosition: 0,
+    currentTopPage: '',
+    expectedPage: '',
+    currentTopPageShare: 0,
+    observationCount: 0,
+    targetAction: 'ADJACENT_CAPTURE_CANDIDATE',
+    opportunityType: 'ADJACENT_CAPTURE_CANDIDATE',
+    recommendedAction: 'RESEARCH_PROBE',
+    priority: 'P2',
+    signalState: 'OPEN',
+    autoHandled: false,
+    createTodayAction: true,
+    createResearchJob: true,
+    researchType: RESEARCH_TYPE.NEW_INTENT_RESEARCH,
+    pagePath: '',
+    opportunityStage: 'CAPTURE',
+    routingDecision: 'ADJACENT_CAPTURE_CANDIDATE',
+    sourceRefs: candidate.sourceRefs || [],
+    now: now || new Date()
+  };
 }
 
 function buildEarlySiteWinPlan_(early, actionKey, now) {

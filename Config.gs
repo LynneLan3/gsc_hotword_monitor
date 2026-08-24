@@ -181,7 +181,8 @@ var INTENT_OPPORTUNITY_HEADERS = [
   'FollowupSignals', 'FollowupConfidence', 'FollowupReason',
   'FollowupFirstSeenAt', 'FollowupLastObservedAt',
   'IntentType', 'IntentFamily', 'OpportunityStage', 'AbsoluteSignal',
-  'AbsoluteSignalReason', 'RoutingDecision'
+  'AbsoluteSignalReason', 'RoutingDecision',
+  'AdjacentCaptureCandidates', 'AdjacentCaptureReason'
 ];
 
 /** Hidden additive state for Goal 2 previous/current observations. */
@@ -772,7 +773,7 @@ var CONTENT_UPDATE_HEADERS = [
   'OpportunityID', 'RecordedMode', 'BaselineDataDate', 'BaselinePageClicks7D',
   'BaselinePageImpressions7D', 'BaselinePageCTR', 'BaselinePagePosition',
   'BaselinePageQueryCount7D', 'BaselineSiteClicks7D', 'BaselineSiteImpressions7D',
-  'ReceiptKey', 'RecordedAt'
+  'ReceiptKey', 'PageReceiptKey', 'GoalID', 'RecordedAt'
 ];
 
 /** Automatic Experiment Ledger V1：GSC-owned intervention observations. */
@@ -783,8 +784,9 @@ var INTERVENTION_OBSERVATION_HEADERS = [
   'BaselineQueryCount7D', 'ObservedClicks7D', 'ObservedImpressions7D',
   'ObservedCTR', 'ObservedPosition', 'ObservedQueryCount7D', 'ClicksDelta',
   'ImpressionsDelta', 'CTRDelta', 'PositionImprovement', 'QueryCountDelta',
-  'BaselineSiteImpressions7D', 'ObservedSiteImpressions7D', 'AttributionMode',
-  'UpdatedAt'
+  'BaselineSiteClicks7D', 'BaselineSiteImpressions7D',
+  'ObservedSiteClicks7D', 'ObservedSiteImpressions7D', 'BaselineMode',
+  'AttributionMode', 'Outcome', 'OutcomeConfidence', 'Confounders', 'UpdatedAt'
 ];
 
 /** Materialized human-readable ledger; old retrospective rows remain untouched. */

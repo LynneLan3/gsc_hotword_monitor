@@ -642,6 +642,10 @@ function setupSheets() {
   ensureContentUpdateHeader_();
   ensureSheet_(SHEET_NAMES.INTERVENTION_OBSERVATIONS, INTERVENTION_OBSERVATION_HEADERS);
   ensureSheet_(SHEET_NAMES.INTERVENTION_TIMELINE, INTERVENTION_TIMELINE_HEADERS);
+  if (typeof ensureLedgerHeader_ === 'function') {
+    ensureLedgerHeader_(SHEET_NAMES.INTERVENTION_OBSERVATIONS, INTERVENTION_OBSERVATION_HEADERS);
+    ensureLedgerHeader_(SHEET_NAMES.INTERVENTION_TIMELINE, INTERVENTION_TIMELINE_HEADERS);
+  }
 
   // 不 ensure PAGE_OPPORTUNITIES：旧实验页只识别/排序/隐藏，不新建
   ensureUsageGuideSheet_();

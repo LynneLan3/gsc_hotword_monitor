@@ -93,6 +93,12 @@ function evaluateEarlyFollowupObservation_(site, current, previous, baselineEsta
   var intentType = current.intentType || '';
   var intentFamily = current.intentFamily || '';
   var externalDemandConfirmed = earlyFollowupExternalDemandConfirmed_(site, current, opts);
+  var adjacentCaptureCandidates = buildAdjacentCaptureCandidates_(
+    current,
+    opts.externalAdjacentIntentsByKey && opts.externalAdjacentIntentsByKey[
+      earlyFollowupStateKey_(site && site.name, current.key)
+    ] || current.externalAdjacentIntents
+  );
   var expectedPage = String(
     (hasPrevious && previous.expectedPage) ||
     resolveEarlyFollowupExpectedPage_(site, current, opts) || ''
@@ -152,6 +158,9 @@ function evaluateEarlyFollowupObservation_(site, current, previous, baselineEsta
   var opportunityStage = determineEarlyOpportunityStage_(
     absolute.stage, previousStage, growing, current.impressions, rules
   );
+  if (adjacentCaptureCandidates.length && opportunityStage !== 'SCALE') {
+    opportunityStage = 'CAPTURE';
+  }
 
   var confidence = classifyEarlyFollowupConfidence_(current, signals, observationCount, expectedPage, evidence);
   var reason = buildEarlyFollowupReason_(
@@ -192,7 +201,11 @@ function evaluateEarlyFollowupObservation_(site, current, previous, baselineEsta
     intentFamily: intentFamily,
     opportunityStage: opportunityStage,
     absoluteSignal: absolute.signal,
-    absoluteSignalReason: absolute.reason
+    absoluteSignalReason: absolute.reason,
+    adjacentCaptureCandidates: adjacentCaptureCandidates,
+    adjacentCaptureReason: adjacentCaptureCandidates.length
+      ? 'fresh external evidence identified the next natural intent(s)'
+      : ''
   };
 
   return {
@@ -220,6 +233,10 @@ function evaluateEarlyFollowupObservation_(site, current, previous, baselineEsta
     absoluteSignal: absolute.signal,
     absoluteSignalReason: absolute.reason,
     routingDecision: earlyFollowupRoutingDecision_(opportunityStage, current.hasExistingPage),
+    adjacentCaptureCandidates: adjacentCaptureCandidates,
+    adjacentCaptureReason: adjacentCaptureCandidates.length
+      ? 'ADJACENT_CAPTURE_CANDIDATE'
+      : '',
     confidence: confidence,
     reason: reason,
     firstSeenAt: firstSeenAt,
@@ -256,8 +273,45 @@ function normalizeEarlyFollowupCluster_(cluster) {
     externalDemandConfirmed: cluster.externalDemandConfirmed === true ||
       String(cluster.externalDemandConfirmed || cluster.ExternalDemandConfirmed || '').toUpperCase() === 'TRUE',
     topQuery: String(cluster.topQuery || '').trim(),
-    queries: cluster.queries || []
+    queries: cluster.queries || [],
+    externalAdjacentIntents: cluster.externalAdjacentIntents ||
+      cluster.adjacentIntents || cluster.adjacentCaptureCandidates || []
   };
+}
+
+/**
+ * External research is an input to the Goal queue, not an article generator.
+ * Keep this pure and deterministic so a fresh research callback can feed the
+ * same path without making Apps Script responsible for writing prose.
+ */
+function buildAdjacentCaptureCandidates_(seedCluster, externalIntents) {
+  seedCluster = seedCluster || {};
+  var list = externalIntents;
+  if (!Array.isArray(list)) list = list ? [list] : [];
+  var out = [];
+  var seen = {};
+  var seedText = String(seedCluster.label || seedCluster.topQuery || '').trim();
+  var seedNormalized = typeof intentClusterNormalizeText_ === 'function'
+    ? intentClusterNormalizeText_(seedText)
+    : seedText.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+  for (var i = 0; i < list.length; i++) {
+    var item = list[i] || {};
+    var intent = String(item.intent || item.query || item.label || item.name || '').trim();
+    if (!intent) continue;
+    var normalized = typeof intentClusterNormalizeText_ === 'function'
+      ? intentClusterNormalizeText_(intent)
+      : intent.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+    if (!normalized || normalized === seedNormalized || seen[normalized]) continue;
+    seen[normalized] = true;
+    out.push({
+      intent: intent,
+      normalizedIntent: normalized,
+      status: 'ADJACENT_CAPTURE_CANDIDATE',
+      sourceRefs: item.sourceRefs || item.source_refs || item.sources || [],
+      reason: String(item.reason || 'natural next-step intent from fresh external evidence').trim()
+    });
+  }
+  return out;
 }
 
 function evaluateEarlyAbsoluteSignal_(current, intentType, externalDemandConfirmed, rules) {
@@ -669,6 +723,12 @@ function writeEarlyFollowupIntentRows_(records) {
     row[col.AbsoluteSignal] = record.absoluteSignal;
     row[col.AbsoluteSignalReason] = record.absoluteSignalReason;
     row[col.RoutingDecision] = record.routingDecision;
+    if (col.AdjacentCaptureCandidates !== undefined) {
+      row[col.AdjacentCaptureCandidates] = JSON.stringify(record.adjacentCaptureCandidates || []);
+    }
+    if (col.AdjacentCaptureReason !== undefined) {
+      row[col.AdjacentCaptureReason] = record.adjacentCaptureReason || '';
+    }
   }
   ensureSheetGrid_(sheet, rows.length + 1, lastCol);
   sheet.getRange(2, 1, rows.length, lastCol).setValues(rows);
@@ -717,7 +777,9 @@ function earlyFollowupHeaderMap_(header) {
     CurrentClusterPosition: map.CurrentClusterPosition,
     FollowupFirstSeenAt: map.FollowupFirstSeenAt,
     FollowupLastObservedAt: map.FollowupLastObservedAt,
-    RoutingDecision: map.RoutingDecision
+    RoutingDecision: map.RoutingDecision,
+    AdjacentCaptureCandidates: map.AdjacentCaptureCandidates,
+    AdjacentCaptureReason: map.AdjacentCaptureReason
   };
 }
 

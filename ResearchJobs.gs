@@ -57,6 +57,16 @@ function doPost(e) {
     if (!body) {
       return jsonOutput_({ ok: false, error: 'invalid_json' });
     }
+    // The existing Web App remains the transport for research callbacks.
+    // Deployment Receipt V1 is dispatched first, so the receipt business
+    // logic is reusable by Codex/agents/manual recovery without transport
+    // coupling. Invalid receipt auth returns before any Sheet write.
+    if (typeof isDeploymentReceipt_ === 'function' && isDeploymentReceipt_(body)) {
+      if (!checkDeploymentReceiptToken_(e, body)) {
+        return jsonOutput_({ ok: false, result: 'INVALID', error: 'unauthorized' });
+      }
+      return jsonOutput_(ingestDeploymentReceipt(body));
+    }
     if (!checkResearchWriteToken_(e, body)) {
       return jsonOutput_({ ok: false, error: 'unauthorized' });
     }
