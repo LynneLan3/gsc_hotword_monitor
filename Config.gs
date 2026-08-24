@@ -258,7 +258,12 @@ var SITE_STATUS_HEADERS = [
   'Clicks7D',
   'TractionScore', 'QueryScore', 'MomentumScore', 'ExpansionScore', 'RiskScore',
   'DomainScore',
-  'LifecycleStage', 'RecommendedAction', 'Priority', 'Reason'
+  'LifecycleStage', 'RecommendedAction', 'Priority', 'Reason',
+  'EarlySignalStatus', 'EarlySignalConfidence',
+  'RealtimeImpressions24H', 'RealtimeClicks24H',
+  'RealtimeGuideQueries', 'RealtimeTop10Queries', 'RealtimeTop20Queries',
+  'RealtimeIntentClusters', 'EarlySignalUpdatedAt', 'EarlySignalReason',
+  'EarlySignalDowngradeRuns', 'EarlySignalEventAt'
 ];
 
 /**
@@ -1183,7 +1188,17 @@ var DEFAULT_DECISION_RULES = [
   ['CONTENT_OPTIMIZE_MIN_GUIDE_QUERIES', 2, '进入 CONTENT_OPTIMIZE 所需攻略型 Query 数'],
   ['CONTENT_OPTIMIZE_MIN_CLICKS', 1, '进入 CONTENT_OPTIMIZE 所需最近7日最少 Click'],
   ['ACTION_COOLDOWN_DAYS', 3, '同站点同动作完成后多少天内不重复提醒'],
-  ['CONTENT_UPDATE_COOLDOWN_DAYS', 3, '内容更新后多少天内不再建议 CONTENT_OPTIMIZE / 不重复创建 Research Job']
+  ['CONTENT_UPDATE_COOLDOWN_DAYS', 3, '内容更新后多少天内不再建议 CONTENT_OPTIMIZE / 不重复创建 Research Job'],
+  ['EARLY_SIGNAL_MAX_DAY', 3, 'Early Site Signal 仅适用于 Day≤此值'],
+  ['EARLY_WINNER_MIN_24H_IMPRESSIONS', 100, 'Early Winner Rule A：近24小时最少展现'],
+  ['EARLY_WINNER_MIN_CLICKS', 1, 'Early Winner Rule A：近24小时最少点击'],
+  ['EARLY_WINNER_MIN_GUIDE_QUERIES', 2, 'Early Winner Rule A/B：近24小时最少攻略 Query'],
+  ['EARLY_WATCH_MIN_IMPRESSIONS', 20, 'Early Watch：近24小时最少展现'],
+  ['EARLY_TOP10_MIN_QUERIES', 2, 'Early Winner Rule C：近24小时 Top10 Query 数'],
+  ['EARLY_TOP20_MIN_QUERIES', 2, 'Early Winner Rule B：近24小时 Top20 Query 数'],
+  ['EARLY_MIN_INTENT_CLUSTERS', 2, 'Early Winner Rule C：近24小时 Intent Cluster 数'],
+  ['EARLY_SIGNAL_COOLDOWN_HOURS', 12, 'Early Signal 状态事件重复记录冷却时间'],
+  ['EARLY_DOWNGRADE_CONFIRM_RUNS', 2, 'Early Signal 降级需要连续确认运行次数']
 ];
 
 /** V1：这些人工动作在 DONE/SKIP 后进入短冷却；强动作不冷却 */

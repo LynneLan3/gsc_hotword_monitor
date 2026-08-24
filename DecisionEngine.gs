@@ -28,6 +28,7 @@ function runDecisionEngine(opts) {
   var queryBySite = loadQueryRowsBySite_();
   var queryPageBySite = loadQueryPageRowsBySite_();
   var snapshotBySite = loadLatestSnapshotBySite_();
+  var earlySignalBySite = loadExistingEarlySignalStates_();
   var actionHistory = loadTodayActionHistory_();
   var contentUpdateRows = loadContentUpdateRows_();
 
@@ -85,7 +86,17 @@ function runDecisionEngine(opts) {
       }
     }
 
-    statusRows.push(siteStatusRow_(runDate, site.name, metrics, scores, decision, reason));
+    statusRows.push(
+      siteStatusRow_(
+        runDate,
+        site.name,
+        metrics,
+        scores,
+        decision,
+        reason,
+        earlySignalBySite[site.name] || null
+      )
+    );
 
     if (shouldWriteTodayAction_(decision.action, cooldown)) {
       var decisionId = buildDecisionId_(
@@ -210,6 +221,50 @@ function ensureSiteStatusHeader_() {
   if (actual.join('|') === SITE_STATUS_HEADERS.join('|')) return;
   sheet.getRange(1, 1, 1, SITE_STATUS_HEADERS.length).setValues([SITE_STATUS_HEADERS]);
   sheet.getRange(1, 1, 1, SITE_STATUS_HEADERS.length).setFontWeight('bold');
+}
+
+/** 读取站点状态中 Early Signal 的 additive 字段，供 Decision Engine 重建时保留。 */
+function loadExistingEarlySignalStates_() {
+  var map = {};
+  var sheet = getSpreadsheet_().getSheetByName(SHEET_NAMES.SITE_STATUS);
+  if (!sheet || sheet.getLastRow() < 2) return map;
+  var range = getSheetDataRange_(sheet, SITE_STATUS_HEADERS.length);
+  if (!range) return map;
+  var values = range.getValues();
+  var columns = {
+    status: SITE_STATUS_HEADERS.indexOf('EarlySignalStatus'),
+    confidence: SITE_STATUS_HEADERS.indexOf('EarlySignalConfidence'),
+    impressions: SITE_STATUS_HEADERS.indexOf('RealtimeImpressions24H'),
+    clicks: SITE_STATUS_HEADERS.indexOf('RealtimeClicks24H'),
+    guideQueries: SITE_STATUS_HEADERS.indexOf('RealtimeGuideQueries'),
+    top10: SITE_STATUS_HEADERS.indexOf('RealtimeTop10Queries'),
+    top20: SITE_STATUS_HEADERS.indexOf('RealtimeTop20Queries'),
+    intentClusters: SITE_STATUS_HEADERS.indexOf('RealtimeIntentClusters'),
+    updatedAt: SITE_STATUS_HEADERS.indexOf('EarlySignalUpdatedAt'),
+    reason: SITE_STATUS_HEADERS.indexOf('EarlySignalReason'),
+    downgradeRuns: SITE_STATUS_HEADERS.indexOf('EarlySignalDowngradeRuns'),
+    eventAt: SITE_STATUS_HEADERS.indexOf('EarlySignalEventAt')
+  };
+  for (var i = 0; i < values.length; i++) {
+    var site = String(values[i][1] || '').trim();
+    if (!site) continue;
+    map[site] = {
+      status: String(values[i][columns.status] || '').trim(),
+      confidence: String(values[i][columns.confidence] || '').trim(),
+      day: values[i][3],
+      impressions: values[i][columns.impressions],
+      clicks: values[i][columns.clicks],
+      guideQueries: values[i][columns.guideQueries],
+      top10: values[i][columns.top10],
+      top20: values[i][columns.top20],
+      intentClusters: values[i][columns.intentClusters],
+      updatedAt: values[i][columns.updatedAt],
+      reason: values[i][columns.reason],
+      downgradeRuns: Number(values[i][columns.downgradeRuns] || 0),
+      eventAt: values[i][columns.eventAt]
+    };
+  }
+  return map;
 }
 
 function seedMissingDecisionRules_() {
@@ -819,7 +874,8 @@ function appendDataThrough_(reason, decisionDataDate) {
   return reason + '；' + tag;
 }
 
-function siteStatusRow_(runDate, siteName, metrics, scores, decision, reason) {
+function siteStatusRow_(runDate, siteName, metrics, scores, decision, reason, earlySignal) {
+  earlySignal = earlySignal || {};
   return [
     runDate,
     siteName,
@@ -847,7 +903,19 @@ function siteStatusRow_(runDate, siteName, metrics, scores, decision, reason) {
     decision.stage,
     decision.action,
     decision.priority,
-    reason
+    reason,
+    earlySignal.status || '',
+    earlySignal.confidence || '',
+    earlySignal.impressions === undefined ? '' : earlySignal.impressions,
+    earlySignal.clicks === undefined ? '' : earlySignal.clicks,
+    earlySignal.guideQueries === undefined ? '' : earlySignal.guideQueries,
+    earlySignal.top10 === undefined ? '' : earlySignal.top10,
+    earlySignal.top20 === undefined ? '' : earlySignal.top20,
+    earlySignal.intentClusters === undefined ? '' : earlySignal.intentClusters,
+    earlySignal.updatedAt || '',
+    earlySignal.reason || '',
+    earlySignal.downgradeRuns === undefined ? '' : earlySignal.downgradeRuns,
+    earlySignal.eventAt || ''
   ];
 }
 

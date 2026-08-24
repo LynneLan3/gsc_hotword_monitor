@@ -1,8 +1,8 @@
 /**
  * 实时 24h Query 爆量监控（hourly_all 旁路）。
  *
- * 只用于热词发现 / 爆量提醒 / 页面承接观察。
- * 不写 GSC日数据 / Query明细 / Query页面明细 / 每日快照 / 站点状态 / 今日行动。
+ * 只用于热词发现 / 爆量提醒 / 页面承接观察；Intent 后接入 D0-D3 Early Site Signal。
+ * 不写 GSC日数据 / Query明细 / Query页面明细 / 每日快照 / 正式 Decision / 今日行动。
  * 不跑 Decision / Research / Intervention / Effect Evaluation / D7。
  */
 
@@ -71,10 +71,16 @@ function runFreshQueryMonitorUnlocked_() {
   }
   enqueueIntentResearchJobs_(intentRecords);
   writeIntentOpportunityRows_(buildIntentOpportunityRowsFromSnapshots_(intentSnapshots));
+  var earlySignalResult = runEarlySiteSignalEngine({
+    snapshots: intentSnapshots,
+    now: generatedAt
+  });
 
   var summary =
     'runFreshQueryMonitor 完成 | triggered=' +
     allRows.length +
+    ' | earlySites=' +
+    earlySignalResult.records.length +
     ' | errors=' +
     errors;
   writeLog_('INFO', '', summary);
@@ -109,7 +115,8 @@ function collectFreshQueryMonitorSite_(site, generatedAt, range) {
     site: site,
     generatedAt: generatedAt,
     metadata: packed.metadata,
-    pageHourlyRows: pagePacked.rows
+    pageHourlyRows: pagePacked.rows,
+    pageMetadata: pagePacked.metadata
   });
 
   if (site.name === 'Mortal Shell II') {
@@ -150,7 +157,8 @@ function buildFreshQueryMonitorRows_(hourlyRows, opts) {
   var site = opts.site || {};
   var generatedAt = opts.generatedAt || new Date();
   var metadata = opts.metadata || null;
-  var incomplete = isFreshHourlyIncomplete_(metadata);
+  var incomplete = isFreshHourlyIncomplete_(metadata) ||
+    isFreshHourlyIncomplete_(opts.pageMetadata);
   var windows = splitFreshQueryWindows_(hourlyRows);
   var pageHourlyRows = opts.pageHourlyRows !== undefined ? opts.pageHourlyRows : null;
   var pageWindows = pageHourlyRows === null

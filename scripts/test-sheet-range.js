@@ -34,7 +34,7 @@ function headerCount(src, varName) {
 
 var siteStatusCols = headerCount(configSrc, 'SITE_STATUS_HEADERS');
 var historyCols = headerCount(configSrc, 'DECISION_HISTORY_HEADERS');
-assert(siteStatusCols === 27, '站点状态 27 列, got ' + siteStatusCols);
+assert(siteStatusCols >= 39, '站点状态包含 Early Signal additive 列, got ' + siteStatusCols);
 assert(historyCols > 26, '决策历史超过默认 26 列网格, got ' + historyCols);
 
 var gridFn = extractFn(sheetSrc, 'ensureSheetGrid_');

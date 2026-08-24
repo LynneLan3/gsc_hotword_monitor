@@ -121,7 +121,9 @@ function applyColumnWidths_(sheet, name) {
       6: 90, 7: 110, 8: 110, 9: 140, 10: 130,
       11: 90, 12: 110, 13: 140, 14: 120, 15: 120,
       16: 120, 17: 80, 18: 100, 19: 90, 20: 110,
-      21: 110, 22: 80, 23: 100, 24: 120, 25: 150, 26: 70, 27: 360
+      21: 110, 22: 80, 23: 100, 24: 120, 25: 150, 26: 70, 27: 360,
+      28: 150, 29: 130, 30: 150, 31: 130, 32: 130, 33: 130,
+      34: 140, 35: 130, 36: 170, 37: 420, 38: 150, 39: 170
     };
   } else if (name === SHEET_NAMES.TODAY_ACTIONS) {
     widths = {
@@ -271,6 +273,8 @@ function applyNumberFormats_(sheet, name) {
     sheet.getRange('C:C').setNumberFormat('yyyy-mm-dd');
     sheet.getRange('F:F').setNumberFormat('0.00%');
     sheet.getRange('K:K').setNumberFormat('0.00');
+    sheet.getRange('AJ:AJ').setNumberFormat('yyyy-mm-dd hh:mm:ss');
+    sheet.getRange('AM:AM').setNumberFormat('yyyy-mm-dd hh:mm:ss');
   } else if (name === SHEET_NAMES.TODAY_ACTIONS) {
     sheet.getRange('A:A').setNumberFormat('yyyy-mm-dd');
   } else if (name === SHEET_NAMES.OPPORTUNITIES) {
