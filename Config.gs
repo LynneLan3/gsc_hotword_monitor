@@ -36,6 +36,7 @@ var SHEET_NAMES = {
   CONTENT_UPDATES: '内容更新记录',
   INTERVENTION_OBSERVATIONS: '干预观察',
   INTERVENTION_TIMELINE: '干预时间线',
+  EARLY_FOLLOWUP_STATE: 'EARLY_FOLLOWUP_STATE',
   /** 旧/实验层：仅用于识别与隐藏，setup 不会创建 */
   PAGE_OPPORTUNITIES: 'PAGE_OPPORTUNITIES'
 };
@@ -106,7 +107,7 @@ var SHEET_UI_TRAILING_ORDER = [
 ];
 
 /** 旧/实验 Tab：只隐藏，不删除数据、不删除代码依赖 */
-var SHEET_UI_HIDDEN = [SHEET_NAMES.PAGE_OPPORTUNITIES];
+var SHEET_UI_HIDDEN = [SHEET_NAMES.PAGE_OPPORTUNITIES, SHEET_NAMES.EARLY_FOLLOWUP_STATE];
 
 // site_id is an additive cross-system reference. Keep legacy columns first so
 // existing 5-column 站点配置 rows remain readable without migration.
@@ -171,7 +172,27 @@ var INTENT_OPPORTUNITY_HEADERS = [
   'PossibleCannibalization', 'HasExistingPage', 'Action', 'ActionReason',
   'ResearchJobID', 'ResearchJobStatus', 'DataCutoff', 'DataIncomplete',
   'ClusterAction', 'ClusterActionReason', 'PageAction', 'PageActionReason',
-  'PageActionOwner'
+  'PageActionOwner',
+  'PreviousClusterImpressions', 'CurrentClusterImpressions', 'FollowupGrowthRate',
+  'PreviousClusterClicks', 'CurrentClusterClicks',
+  'PreviousClusterPosition', 'CurrentClusterPosition',
+  'PreviousTopPage', 'ExpectedPage', 'CurrentTopPage',
+  'PreviousTopPageShare', 'CurrentTopPageShare',
+  'FollowupSignals', 'FollowupConfidence', 'FollowupReason',
+  'FollowupFirstSeenAt', 'FollowupLastObservedAt'
+];
+
+/** Hidden additive state for Goal 2 previous/current observations. */
+var EARLY_FOLLOWUP_STATE_HEADERS = [
+  'Site', 'ClusterKey', 'ClusterLabel',
+  'PreviousImpressions', 'CurrentImpressions',
+  'PreviousClicks', 'CurrentClicks',
+  'PreviousPosition', 'CurrentPosition',
+  'PreviousTopPage', 'CurrentTopPage',
+  'PreviousTopPageShare', 'CurrentTopPageShare',
+  'FirstSeenAt', 'LastObservedAt', 'ExpectedPage',
+  'FollowupSignals', 'FollowupConfidence', 'FollowupReason',
+  'ObservationCount', 'MismatchConfirmRuns', 'SignalEventAt'
 ];
 
 /** 已知实体/多语言 alias：只做 deterministic 归一，不调用 LLM。 */
@@ -1198,7 +1219,19 @@ var DEFAULT_DECISION_RULES = [
   ['EARLY_TOP20_MIN_QUERIES', 2, 'Early Winner Rule B：近24小时 Top20 Query 数'],
   ['EARLY_MIN_INTENT_CLUSTERS', 2, 'Early Winner Rule C：近24小时 Intent Cluster 数'],
   ['EARLY_SIGNAL_COOLDOWN_HOURS', 12, 'Early Signal 状态事件重复记录冷却时间'],
-  ['EARLY_DOWNGRADE_CONFIRM_RUNS', 2, 'Early Signal 降级需要连续确认运行次数']
+  ['EARLY_DOWNGRADE_CONFIRM_RUNS', 2, 'Early Signal 降级需要连续确认运行次数'],
+  ['EARLY_FOLLOWUP_MAX_DAY', 6, 'Early Follow-up 主动观察最大 Day'],
+  ['EARLY_QUERY_GROWTH_RATE', 0.5, 'GROWING_INTENT 最低相对增长率'],
+  ['EARLY_QUERY_GROWTH_MIN_PREVIOUS_IMPRESSIONS', 10, 'GROWING_INTENT 前次最低展现'],
+  ['EARLY_QUERY_GROWTH_MIN_ABSOLUTE_DELTA', 5, 'GROWING_INTENT 最低绝对展现增量'],
+  ['EARLY_NEW_INTENT_MIN_IMPRESSIONS', 5, 'NEW_INTENT 最低展现'],
+  ['EARLY_NEW_INTENT_MAX_POSITION', 20, 'NEW_INTENT 最低排名上限'],
+  ['EARLY_PAGE_TAKEOVER_MIN_SHARE', 0.5, 'TARGET_PAGE_TAKES_OVER 最低页面占比'],
+  ['EARLY_PAGE_SIGNAL_MIN_IMPRESSIONS', 5, '页面正向信号最低展现'],
+  ['EARLY_PAGE_MISMATCH_MIN_IMPRESSIONS', 10, 'PAGE_INTENT_MISMATCH 最低展现'],
+  ['EARLY_PAGE_MISMATCH_DOMINANT_SHARE', 0.7, 'PAGE_INTENT_MISMATCH 主页面最低占比'],
+  ['EARLY_PAGE_MISMATCH_CONFIRM_RUNS', 2, 'PAGE_INTENT_MISMATCH 连续确认次数'],
+  ['EARLY_FOLLOWUP_SIGNAL_COOLDOWN_HOURS', 12, 'Follow-up 状态事件重复记录冷却时间']
 ];
 
 /** V1：这些人工动作在 DONE/SKIP 后进入短冷却；强动作不冷却 */

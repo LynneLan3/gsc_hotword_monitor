@@ -1,0 +1,594 @@
+/**
+ * Goal 2: Early Winner follow-up signals.
+ *
+ * This module observes the existing IntentOpportunityEngine clusters after
+ * Goal 1 has classified a site as EARLY_WINNER. It only records signals and
+ * never writes 今日行动, Research Jobs, content tasks, or website changes.
+ */
+
+var EARLY_FOLLOWUP_SIGNALS = {
+  GROWING_INTENT: 'GROWING_INTENT',
+  NEW_INTENT: 'NEW_INTENT',
+  TARGET_PAGE_TAKES_OVER: 'TARGET_PAGE_TAKES_OVER',
+  PAGE_INTENT_MISMATCH: 'PAGE_INTENT_MISMATCH'
+};
+
+function runEarlyFollowupEngine(opts) {
+  opts = opts || {};
+  ensureEarlyFollowupProductionSchema_();
+
+  var snapshots = (opts.snapshots || []).slice();
+  if (!snapshots.length && typeof loadEarlySignalSnapshotsFromSheets_ === 'function') {
+    snapshots = loadEarlySignalSnapshotsFromSheets_();
+  }
+  var rules = opts.rules || getDecisionRules_();
+  var now = opts.now || new Date();
+  var previousStates = opts.previousStates || loadEarlyFollowupStates_();
+  var eligibleBySite = earlyFollowupEligibleSites_(opts.earlyRecords, previousStates);
+  var siteHasBaseline = earlyFollowupBaselineSites_(previousStates);
+  var nextStates = cloneEarlyFollowupStates_(previousStates);
+  var records = [];
+  var events = [];
+
+  for (var i = 0; i < snapshots.length; i++) {
+    var snapshot = snapshots[i] || {};
+    var site = snapshot.site || {};
+    var siteName = String(site.name || '').trim();
+    if (!siteName || !eligibleBySite[siteName]) continue;
+
+    var early = eligibleBySite[siteName];
+    var day = earlyFollowupDay_(site, early, now);
+    if (day === '' || day === null || day === undefined || Number(day) > Number(rules.EARLY_FOLLOWUP_MAX_DAY)) {
+      continue;
+    }
+
+    var clusters = (snapshot.clusters || []).slice();
+    for (var c = 0; c < clusters.length; c++) {
+      var current = normalizeEarlyFollowupCluster_(clusters[c]);
+      if (!current.key) continue;
+      var stateKey = earlyFollowupStateKey_(siteName, current.key);
+      var previous = previousStates[stateKey] || null;
+      var record = evaluateEarlyFollowupObservation_(
+        site,
+        current,
+        previous,
+        !!siteHasBaseline[siteName],
+        rules,
+        now,
+        opts
+      );
+      record.day = Number(day);
+      record.site = siteName;
+      record.stateKey = stateKey;
+      nextStates[stateKey] = record.state;
+      records.push(record);
+      if (record.event) events.push(record);
+    }
+    siteHasBaseline[siteName] = true;
+  }
+
+  persistEarlyFollowupStates_(nextStates);
+  writeEarlyFollowupIntentRows_(records);
+  for (var e = 0; e < events.length; e++) {
+    writeLog_('INFO', events[e].site, 'Early Follow-up 信号：' + events[e].signals.join('|'));
+  }
+  writeLog_('INFO', '', 'runEarlyFollowupEngine 完成 | sites=' +
+    Object.keys(eligibleBySite).length + ' | observations=' + records.length +
+    ' | signals=' + events.length);
+  return { records: records, events: events };
+}
+
+/** Pure observation evaluator used by production and focused fixtures. */
+function evaluateEarlyFollowupObservation_(site, current, previous, baselineEstablished, rules, now, opts) {
+  opts = opts || {};
+  rules = rules || {};
+  current = normalizeEarlyFollowupCluster_(current);
+  var hasPrevious = !!previous;
+  var previousImpressions = hasPrevious ? earlyFollowupNumber_(previous.currentImpressions) : '';
+  var previousClicks = hasPrevious ? earlyFollowupNumber_(previous.currentClicks) : '';
+  var previousPosition = hasPrevious ? earlyFollowupNumber_(previous.currentPosition) : '';
+  var previousTopPage = hasPrevious ? String(previous.currentTopPage || '') : '';
+  var previousTopPageShare = hasPrevious ? earlyFollowupNumber_(previous.currentTopPageShare) : '';
+  var expectedPage = String(
+    (hasPrevious && previous.expectedPage) ||
+    resolveEarlyFollowupExpectedPage_(site, current, opts) || ''
+  ).trim();
+  var evidence = expectedPage ? resolveEarlyFollowupPageEvidence_(site, expectedPage, opts) : null;
+  var observationCount = (hasPrevious ? Number(previous.observationCount || 0) : 0) + 1;
+  var mismatchCondition = !!(
+    expectedPage && evidence && evidence.valid && hasPrevious &&
+    current.impressions >= Number(rules.EARLY_PAGE_MISMATCH_MIN_IMPRESSIONS) &&
+    current.topPage !== expectedPage &&
+    current.topPageShare >= Number(rules.EARLY_PAGE_MISMATCH_DOMINANT_SHARE)
+  );
+  var mismatchConfirmRuns = mismatchCondition
+    ? (Number(previous && previous.mismatchConfirmRuns || 0) + 1)
+    : 0;
+  var signals = [];
+
+  if (
+    hasPrevious &&
+    Number(previousImpressions) >= Number(rules.EARLY_QUERY_GROWTH_MIN_PREVIOUS_IMPRESSIONS) &&
+    current.impressions >= Number(previousImpressions) * (1 + Number(rules.EARLY_QUERY_GROWTH_RATE)) &&
+    current.impressions - Number(previousImpressions) >= Number(rules.EARLY_QUERY_GROWTH_MIN_ABSOLUTE_DELTA)
+  ) {
+    signals.push(EARLY_FOLLOWUP_SIGNALS.GROWING_INTENT);
+  }
+
+  if (
+    !hasPrevious && baselineEstablished &&
+    (
+      current.impressions >= Number(rules.EARLY_NEW_INTENT_MIN_IMPRESSIONS) ||
+      current.clicks >= 1 ||
+      (current.position > 0 && current.position <= Number(rules.EARLY_NEW_INTENT_MAX_POSITION))
+    )
+  ) {
+    signals.push(EARLY_FOLLOWUP_SIGNALS.NEW_INTENT);
+  }
+
+  if (
+    hasPrevious && expectedPage && current.topPage === expectedPage &&
+    previousTopPage !== expectedPage &&
+    current.topPageShare >= Number(rules.EARLY_PAGE_TAKEOVER_MIN_SHARE) &&
+    current.impressions >= Number(rules.EARLY_PAGE_SIGNAL_MIN_IMPRESSIONS)
+  ) {
+    signals.push(EARLY_FOLLOWUP_SIGNALS.TARGET_PAGE_TAKES_OVER);
+  }
+
+  if (mismatchCondition && mismatchConfirmRuns >= Number(rules.EARLY_PAGE_MISMATCH_CONFIRM_RUNS)) {
+    signals.push(EARLY_FOLLOWUP_SIGNALS.PAGE_INTENT_MISMATCH);
+  }
+
+  var confidence = classifyEarlyFollowupConfidence_(current, signals, observationCount, expectedPage, evidence);
+  var reason = buildEarlyFollowupReason_(current, previous, signals, expectedPage, observationCount, mismatchConfirmRuns);
+  var signalText = signals.join('|');
+  var event = earlyFollowupShouldEmitEvent_(previous, signalText, signals, now, rules);
+  var firstSeenAt = previous && previous.firstSeenAt ? previous.firstSeenAt : now;
+  var state = {
+    site: String((site && site.name) || ''),
+    clusterKey: current.key,
+    clusterLabel: current.label,
+    previousImpressions: previousImpressions,
+    currentImpressions: current.impressions,
+    previousClicks: previousClicks,
+    currentClicks: current.clicks,
+    previousPosition: previousPosition,
+    currentPosition: current.position,
+    previousTopPage: previousTopPage,
+    currentTopPage: current.topPage,
+    previousTopPageShare: previousTopPageShare,
+    currentTopPageShare: current.topPageShare,
+    firstSeenAt: firstSeenAt,
+    lastObservedAt: now,
+    expectedPage: expectedPage,
+    followupSignals: signalText,
+    followupConfidence: confidence,
+    followupReason: reason,
+    observationCount: observationCount,
+    mismatchConfirmRuns: mismatchConfirmRuns,
+    signalEventAt: event ? now : (previous && previous.signalEventAt) || ''
+  };
+
+  return {
+    site: String((site && site.name) || ''),
+    clusterKey: current.key,
+    clusterLabel: current.label,
+    previousImpressions: previousImpressions,
+    currentImpressions: current.impressions,
+    growthRate: hasPrevious && Number(previousImpressions) > 0
+      ? (current.impressions - Number(previousImpressions)) / Number(previousImpressions)
+      : '',
+    previousClicks: previousClicks,
+    currentClicks: current.clicks,
+    previousPosition: previousPosition,
+    currentPosition: current.position,
+    previousTopPage: previousTopPage,
+    expectedPage: expectedPage,
+    currentTopPage: current.topPage,
+    previousTopPageShare: previousTopPageShare,
+    currentTopPageShare: current.topPageShare,
+    signals: signals,
+    confidence: confidence,
+    reason: reason,
+    firstSeenAt: firstSeenAt,
+    lastObservedAt: now,
+    observationCount: observationCount,
+    mismatchConfirmRuns: mismatchConfirmRuns,
+    event: event,
+    state: state
+  };
+}
+
+function normalizeEarlyFollowupCluster_(cluster) {
+  cluster = cluster || {};
+  var pages = cluster.pages || [];
+  var page = pages.length ? pages[0] : null;
+  var impressions = earlyFollowupNumber_(cluster.impressions);
+  var topPage = String(cluster.topPage || (page && page.page) || '').trim();
+  var topPageShare = cluster.topPageShare;
+  if (topPageShare === undefined || topPageShare === null || topPageShare === '') {
+    topPageShare = impressions > 0 && page ? earlyFollowupNumber_(page.impressions) / impressions : 0;
+  }
+  return {
+    key: String(cluster.key || '').trim(),
+    label: String(cluster.label || '').trim(),
+    impressions: impressions,
+    clicks: earlyFollowupNumber_(cluster.clicks),
+    position: earlyFollowupNumber_(cluster.position),
+    topPage: earlyFollowupNormalizePath_(topPage),
+    topPageShare: earlyFollowupNumber_(topPageShare),
+    hasDominantPage: cluster.hasDominantPage === true || String(cluster.hasDominantPage || '').toUpperCase() === 'TRUE',
+    hasExistingPage: cluster.hasExistingPage === true || String(cluster.hasExistingPage || '').toUpperCase() === 'TRUE',
+    queries: cluster.queries || []
+  };
+}
+
+function classifyEarlyFollowupConfidence_(current, signals, observations, expectedPage, evidence) {
+  if (!signals.length) return observations > 1 ? 'LOW' : 'LOW';
+  if (
+    observations >= 2 && current.impressions >= 10 &&
+    (current.clicks >= 1 || (expectedPage && evidence && evidence.valid))
+  ) return 'HIGH';
+  if (current.impressions >= 5 || current.clicks >= 1) return 'MEDIUM';
+  return 'LOW';
+}
+
+function buildEarlyFollowupReason_(current, previous, signals, expectedPage, observations, mismatchRuns) {
+  var reason = signals.length ? signals.join('|') : 'BASELINE';
+  reason += '；observations=' + observations;
+  if (previous) {
+    reason += '；impressions=' + previous.currentImpressions + '→' + current.impressions;
+    reason += '；clicks=' + previous.currentClicks + '→' + current.clicks;
+    reason += '；position=' + previous.currentPosition + '→' + current.position;
+    reason += '；page=' + (previous.currentTopPage || '/') + '→' + (current.topPage || '/');
+  } else {
+    reason += '；baseline established';
+  }
+  if (expectedPage) reason += '；ExpectedPage=' + expectedPage;
+  if (mismatchRuns) reason += '；mismatchConfirmRuns=' + mismatchRuns;
+  return reason;
+}
+
+function earlyFollowupShouldEmitEvent_(previous, signalText, signals, now, rules) {
+  if (!signalText) return false;
+  var previousSignalText = String((previous && previous.followupSignals) || '');
+  var previousEventMs = earlyFollowupDateMs_(previous && previous.signalEventAt);
+  var nowMs = earlyFollowupDateMs_(now);
+  var cooldownMs = Number(rules.EARLY_FOLLOWUP_SIGNAL_COOLDOWN_HOURS || 0) * 60 * 60 * 1000;
+  if (!previousSignalText) {
+    return !previousEventMs || !nowMs || nowMs - previousEventMs >= cooldownMs;
+  }
+  if (signalText === previousSignalText) return false;
+  var previousSignals = {};
+  previousSignalText.split('|').forEach(function (signal) { previousSignals[signal] = true; });
+  var addedSignal = false;
+  for (var i = 0; i < signals.length; i++) {
+    if (!previousSignals[signals[i]]) {
+      addedSignal = true;
+      break;
+    }
+  }
+  if (addedSignal) return true;
+  return !previousEventMs || !nowMs || nowMs - previousEventMs >= cooldownMs;
+}
+
+function earlyFollowupDateMs_(value) {
+  if (!value) return 0;
+  var date = value instanceof Date ? value : new Date(value);
+  var ms = date.getTime();
+  return isNaN(ms) ? 0 : ms;
+}
+
+function earlyFollowupEligibleSites_(earlyRecords, states) {
+  var out = {};
+  if (earlyRecords && earlyRecords.length) {
+    for (var i = 0; i < earlyRecords.length; i++) {
+      var record = earlyRecords[i] || {};
+      if (String(record.status || '').trim() === 'EARLY_WINNER' && record.site) out[record.site] = record;
+    }
+    return out;
+  }
+  var keys = Object.keys(states || {});
+  for (var k = 0; k < keys.length; k++) {
+    var state = states[keys[k]];
+    if (state && state.site && state.earlySignalStatus === 'EARLY_WINNER') out[state.site] = state;
+  }
+  if (typeof loadExistingEarlySignalStates_ === 'function') {
+    var earlyStates = loadExistingEarlySignalStates_();
+    var sites = Object.keys(earlyStates || {});
+    for (var s = 0; s < sites.length; s++) {
+      if (earlyStates[sites[s]].status === 'EARLY_WINNER') out[sites[s]] = earlyStates[sites[s]];
+    }
+  }
+  return out;
+}
+
+function earlyFollowupBaselineSites_(states) {
+  var out = {};
+  var keys = Object.keys(states || {});
+  for (var i = 0; i < keys.length; i++) {
+    var site = states[keys[i]].site;
+    if (site) out[site] = true;
+  }
+  return out;
+}
+
+function earlyFollowupDay_(site, early, now) {
+  if (early && early.day !== undefined && early.day !== '') return Number(early.day);
+  if (site && site.day !== undefined && site.day !== '') return Number(site.day);
+  if (typeof calcDayNumber_ === 'function' && site && site.day0) {
+    return Number(calcDayNumber_(site.day0, typeof toDateStr_ === 'function' ? toDateStr_(now) : now));
+  }
+  return '';
+}
+
+function resolveEarlyFollowupExpectedPage_(site, cluster, opts) {
+  opts = opts || {};
+  var siteName = String((site && site.name) || '');
+  var key = earlyFollowupStateKey_(siteName, cluster.key);
+  if (opts.expectedPages && opts.expectedPages[key]) return earlyFollowupNormalizePath_(opts.expectedPages[key]);
+  if (typeof opts.expectedPageResolver === 'function') {
+    var resolved = opts.expectedPageResolver(site, cluster);
+    if (resolved && typeof resolved === 'object') resolved = resolved.path || resolved.page || '';
+    return earlyFollowupNormalizePath_(resolved);
+  }
+  return earlyFollowupExplicitPageIndex_()[key] || '';
+}
+
+/** Only explicit existing mapping rows are accepted; query text never invents a URL. */
+function earlyFollowupExplicitPageIndex_() {
+  var out = {};
+  if (typeof getSpreadsheet_ !== 'function' || typeof SHEET_NAMES === 'undefined') return out;
+  var sheet = getSpreadsheet_().getSheetByName(SHEET_NAMES.PAGE_OPPORTUNITIES);
+  if (!sheet || sheet.getLastRow() < 2) return out;
+  var lastCol = Math.max(sheet.getLastColumn(), 1);
+  var header = sheet.getRange(1, 1, 1, lastCol).getValues()[0];
+  var rows = sheet.getRange(2, 1, sheet.getLastRow() - 1, lastCol).getValues();
+  var siteIdx = earlyFollowupFindHeader_(header, ['Site', '站点', 'Game']);
+  var keyIdx = earlyFollowupFindHeader_(header, ['ClusterKey', 'cluster_key', '意图Key']);
+  var pageIdx = earlyFollowupFindHeader_(header, ['ExpectedPage', 'TargetPage', 'PageURL', '页面URL', 'PagePath', '页面路径']);
+  if (siteIdx < 0 || pageIdx < 0) return out;
+  for (var i = 0; i < rows.length; i++) {
+    var site = String(rows[i][siteIdx] || '').trim();
+    var page = earlyFollowupNormalizePath_(rows[i][pageIdx]);
+    if (!site || !page || page === '/') continue;
+    if (keyIdx >= 0 && String(rows[i][keyIdx] || '').trim()) {
+      out[earlyFollowupStateKey_(site, rows[i][keyIdx])] = page;
+    }
+  }
+  return out;
+}
+
+function resolveEarlyFollowupPageEvidence_(site, expectedPage, opts) {
+  opts = opts || {};
+  if (typeof opts.pageEvidenceResolver === 'function') {
+    return opts.pageEvidenceResolver(site, expectedPage) || { valid: false };
+  }
+  if (opts.pageEvidenceByKey) {
+    return opts.pageEvidenceByKey[earlyFollowupStateKey_(site.name, expectedPage)] || { valid: false };
+  }
+  if (typeof getSpreadsheet_ !== 'function') return { valid: false };
+  var siteName = String((site && site.name) || '');
+  var path = earlyFollowupNormalizePath_(expectedPage);
+  var evidence = { exists: false, valid: false };
+  var indexSheet = getSpreadsheet_().getSheetByName(SHEET_NAMES.URL_INDEX);
+  if (indexSheet && indexSheet.getLastRow() >= 2) {
+    var indexRows = indexSheet.getRange(2, 1, indexSheet.getLastRow() - 1, URL_INDEX_HEADERS.length).getValues();
+    for (var i = 0; i < indexRows.length; i++) {
+      if (String(indexRows[i][1] || '').trim() !== siteName) continue;
+      if (earlyFollowupNormalizePath_(indexRows[i][2]) !== path) continue;
+      evidence.exists = true;
+      if (String(indexRows[i][3] || '').trim() === 'PASS') evidence.valid = true;
+    }
+  }
+  var pageSheet = getSpreadsheet_().getSheetByName(SHEET_NAMES.PAGES);
+  if (pageSheet && pageSheet.getLastRow() >= 2) {
+    var pageRows = pageSheet.getRange(2, 1, pageSheet.getLastRow() - 1, PAGE_HEADERS.length).getValues();
+    for (var p = 0; p < pageRows.length; p++) {
+      if (String(pageRows[p][1] || '').trim() !== siteName) continue;
+      if (earlyFollowupNormalizePath_(pageRows[p][3] || pageRows[p][2]) !== path) continue;
+      evidence.exists = true;
+      if (Number(pageRows[p][4] || 0) > 0 || Number(pageRows[p][5] || 0) > 0) evidence.valid = true;
+    }
+  }
+  return evidence;
+}
+
+function ensureEarlyFollowupProductionSchema_() {
+  if (typeof ensureSheet_ !== 'function') return;
+  ensureSheet_(SHEET_NAMES.INTENT_OPPORTUNITIES, INTENT_OPPORTUNITY_HEADERS);
+  ensureIntentOpportunityHeader_();
+  ensureSheet_(SHEET_NAMES.EARLY_FOLLOWUP_STATE, EARLY_FOLLOWUP_STATE_HEADERS);
+  var stateSheet = getSpreadsheet_().getSheetByName(SHEET_NAMES.EARLY_FOLLOWUP_STATE);
+  if (stateSheet && !stateSheet.isSheetHidden()) stateSheet.hideSheet();
+  if (typeof seedMissingDecisionRules_ === 'function') seedMissingDecisionRules_();
+}
+
+function loadEarlyFollowupStates_() {
+  var out = {};
+  if (typeof getSpreadsheet_ !== 'function') return out;
+  var sheet = getSpreadsheet_().getSheetByName(SHEET_NAMES.EARLY_FOLLOWUP_STATE);
+  if (!sheet || sheet.getLastRow() < 2) return out;
+  var lastCol = Math.max(sheet.getLastColumn(), EARLY_FOLLOWUP_STATE_HEADERS.length);
+  var header = sheet.getRange(1, 1, 1, lastCol).getValues()[0];
+  var col = earlyFollowupHeaderMap_(header);
+  var rows = sheet.getRange(2, 1, sheet.getLastRow() - 1, lastCol).getValues();
+  for (var i = 0; i < rows.length; i++) {
+    var site = String(rows[i][col.Site] || '').trim();
+    var key = String(rows[i][col.ClusterKey] || '').trim();
+    if (!site || !key) continue;
+    var state = {
+      site: site,
+      clusterKey: key,
+      clusterLabel: String(rows[i][col.ClusterLabel] || ''),
+      previousImpressions: rows[i][col.PreviousImpressions],
+      currentImpressions: rows[i][col.CurrentImpressions],
+      previousClicks: rows[i][col.PreviousClicks],
+      currentClicks: rows[i][col.CurrentClicks],
+      previousPosition: rows[i][col.PreviousPosition],
+      currentPosition: rows[i][col.CurrentPosition],
+      previousTopPage: rows[i][col.PreviousTopPage],
+      currentTopPage: rows[i][col.CurrentTopPage],
+      previousTopPageShare: rows[i][col.PreviousTopPageShare],
+      currentTopPageShare: rows[i][col.CurrentTopPageShare],
+      firstSeenAt: rows[i][col.FirstSeenAt],
+      lastObservedAt: rows[i][col.LastObservedAt],
+      expectedPage: rows[i][col.ExpectedPage],
+      followupSignals: String(rows[i][col.FollowupSignals] || ''),
+      followupConfidence: String(rows[i][col.FollowupConfidence] || ''),
+      followupReason: String(rows[i][col.FollowupReason] || ''),
+      observationCount: Number(rows[i][col.ObservationCount] || 0),
+      mismatchConfirmRuns: Number(rows[i][col.MismatchConfirmRuns] || 0),
+      signalEventAt: rows[i][col.SignalEventAt]
+    };
+    out[earlyFollowupStateKey_(site, key)] = state;
+  }
+  return out;
+}
+
+function persistEarlyFollowupStates_(states) {
+  if (typeof getSpreadsheet_ !== 'function') return;
+  var sheet = getSpreadsheet_().getSheetByName(SHEET_NAMES.EARLY_FOLLOWUP_STATE);
+  if (!sheet) return;
+  var keys = Object.keys(states || {});
+  var rows = [];
+  for (var i = 0; i < keys.length; i++) {
+    var s = states[keys[i]];
+    rows.push([
+      s.site, s.clusterKey, s.clusterLabel,
+      s.previousImpressions, s.currentImpressions,
+      s.previousClicks, s.currentClicks,
+      s.previousPosition, s.currentPosition,
+      s.previousTopPage, s.currentTopPage,
+      s.previousTopPageShare, s.currentTopPageShare,
+      s.firstSeenAt, s.lastObservedAt, s.expectedPage,
+      s.followupSignals, s.followupConfidence, s.followupReason,
+      s.observationCount, s.mismatchConfirmRuns, s.signalEventAt
+    ]);
+  }
+  var lastRow = sheet.getLastRow();
+  if (lastRow > 1) sheet.getRange(2, 1, lastRow - 1, EARLY_FOLLOWUP_STATE_HEADERS.length).clearContent();
+  if (!rows.length) return;
+  ensureSheetGrid_(sheet, rows.length + 1, EARLY_FOLLOWUP_STATE_HEADERS.length);
+  sheet.getRange(2, 1, rows.length, EARLY_FOLLOWUP_STATE_HEADERS.length).setValues(rows);
+}
+
+function writeEarlyFollowupIntentRows_(records) {
+  if (typeof getSpreadsheet_ !== 'function' || !records || !records.length) return;
+  var sheet = getSpreadsheet_().getSheetByName(SHEET_NAMES.INTENT_OPPORTUNITIES);
+  if (!sheet || sheet.getLastRow() < 2) return;
+  var lastCol = Math.max(sheet.getLastColumn(), INTENT_OPPORTUNITY_HEADERS.length);
+  var header = sheet.getRange(1, 1, 1, lastCol).getValues()[0];
+  var col = earlyFollowupHeaderMap_(header);
+  var rows = sheet.getRange(2, 1, sheet.getLastRow() - 1, lastCol).getValues();
+  var byKey = {};
+  for (var r = 0; r < rows.length; r++) {
+    byKey[earlyFollowupStateKey_(rows[r][col.Site], rows[r][col.ClusterKey])] = r;
+  }
+  for (var i = 0; i < records.length; i++) {
+    var record = records[i];
+    var rowIndex = byKey[earlyFollowupStateKey_(record.site, record.clusterKey)];
+    if (rowIndex === undefined) continue;
+    var row = rows[rowIndex];
+    row[col.PreviousClusterImpressions] = record.previousImpressions;
+    row[col.CurrentClusterImpressions] = record.currentImpressions;
+    row[col.FollowupGrowthRate] = record.growthRate;
+    row[col.PreviousClusterClicks] = record.previousClicks;
+    row[col.CurrentClusterClicks] = record.currentClicks;
+    row[col.PreviousClusterPosition] = record.previousPosition;
+    row[col.CurrentClusterPosition] = record.currentPosition;
+    row[col.PreviousTopPage] = record.previousTopPage;
+    row[col.ExpectedPage] = record.expectedPage;
+    row[col.CurrentTopPage] = record.currentTopPage;
+    row[col.PreviousTopPageShare] = record.previousTopPageShare;
+    row[col.CurrentTopPageShare] = record.currentTopPageShare;
+    row[col.FollowupSignals] = record.signals.join('|');
+    row[col.FollowupConfidence] = record.confidence;
+    row[col.FollowupReason] = record.reason;
+    row[col.FollowupFirstSeenAt] = record.firstSeenAt;
+    row[col.FollowupLastObservedAt] = record.lastObservedAt;
+  }
+  ensureSheetGrid_(sheet, rows.length + 1, lastCol);
+  sheet.getRange(2, 1, rows.length, lastCol).setValues(rows);
+}
+
+function earlyFollowupHeaderMap_(header) {
+  var map = {};
+  for (var i = 0; i < header.length; i++) {
+    var name = String(header[i] || '').trim();
+    if (name) map[name] = i;
+  }
+  return {
+    Site: map.Site,
+    ClusterKey: map.ClusterKey,
+    ClusterLabel: map.ClusterLabel,
+    PreviousImpressions: map.PreviousImpressions,
+    CurrentImpressions: map.CurrentImpressions,
+    PreviousClicks: map.PreviousClicks,
+    CurrentClicks: map.CurrentClicks,
+    PreviousPosition: map.PreviousPosition,
+    CurrentPosition: map.CurrentPosition,
+    PreviousTopPage: map.PreviousTopPage,
+    CurrentTopPage: map.CurrentTopPage,
+    PreviousTopPageShare: map.PreviousTopPageShare,
+    CurrentTopPageShare: map.CurrentTopPageShare,
+    FirstSeenAt: map.FirstSeenAt,
+    LastObservedAt: map.LastObservedAt,
+    ExpectedPage: map.ExpectedPage,
+    FollowupSignals: map.FollowupSignals,
+    FollowupConfidence: map.FollowupConfidence,
+    FollowupReason: map.FollowupReason,
+    ObservationCount: map.ObservationCount,
+    MismatchConfirmRuns: map.MismatchConfirmRuns,
+    SignalEventAt: map.SignalEventAt,
+    PreviousClusterImpressions: map.PreviousClusterImpressions,
+    CurrentClusterImpressions: map.CurrentClusterImpressions,
+    FollowupGrowthRate: map.FollowupGrowthRate,
+    PreviousClusterClicks: map.PreviousClusterClicks,
+    CurrentClusterClicks: map.CurrentClusterClicks,
+    PreviousClusterPosition: map.PreviousClusterPosition,
+    CurrentClusterPosition: map.CurrentClusterPosition,
+    FollowupFirstSeenAt: map.FollowupFirstSeenAt,
+    FollowupLastObservedAt: map.FollowupLastObservedAt
+  };
+}
+
+function earlyFollowupFindHeader_(header, names) {
+  for (var i = 0; i < names.length; i++) {
+    var idx = header.indexOf(names[i]);
+    if (idx >= 0) return idx;
+  }
+  return -1;
+}
+
+function earlyFollowupStateKey_(site, clusterKey) {
+  return String(site || '').trim() + '||' + String(clusterKey || '').trim();
+}
+
+function cloneEarlyFollowupStates_(states) {
+  var out = {};
+  var keys = Object.keys(states || {});
+  for (var i = 0; i < keys.length; i++) {
+    var source = states[keys[i]] || {};
+    var copy = {};
+    var fields = Object.keys(source);
+    for (var f = 0; f < fields.length; f++) copy[fields[f]] = source[fields[f]];
+    out[keys[i]] = copy;
+  }
+  return out;
+}
+
+function earlyFollowupNumber_(value) {
+  var n = Number(value || 0);
+  return isNaN(n) ? 0 : n;
+}
+
+function earlyFollowupNormalizePath_(value) {
+  var raw = String(value || '').trim();
+  if (!raw) return '';
+  if (/^https?:\/\//i.test(raw)) raw = raw.replace(/^https?:\/\/[^/]+/i, '') || '/';
+  raw = raw.split('?')[0].split('#')[0];
+  if (raw.charAt(0) !== '/') raw = '/' + raw;
+  if (raw.length > 1 && raw.charAt(raw.length - 1) === '/') raw = raw.substring(0, raw.length - 1);
+  return raw || '/';
+}

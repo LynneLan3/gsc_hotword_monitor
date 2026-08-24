@@ -414,7 +414,8 @@ function buildIntentOpportunitySheetRows_(snapshot) {
       c.clusterActionReason || c.actionReason,
       pageActionOwner ? page.pageAction : '',
       pageActionOwner ? page.pageActionReason : '',
-      pageActionOwner ? 'TRUE' : 'FALSE'
+      pageActionOwner ? 'TRUE' : 'FALSE',
+      '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', ''
     ]);
   }
   return rows;

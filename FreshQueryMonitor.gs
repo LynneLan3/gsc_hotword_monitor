@@ -75,12 +75,21 @@ function runFreshQueryMonitorUnlocked_() {
     snapshots: intentSnapshots,
     now: generatedAt
   });
+  var earlyFollowupResult = runEarlyFollowupEngine({
+    snapshots: intentSnapshots,
+    earlyRecords: earlySignalResult.records,
+    now: generatedAt
+  });
 
   var summary =
     'runFreshQueryMonitor 完成 | triggered=' +
     allRows.length +
     ' | earlySites=' +
     earlySignalResult.records.length +
+    ' | followupObservations=' +
+    earlyFollowupResult.records.length +
+    ' | followupSignals=' +
+    earlyFollowupResult.events.length +
     ' | errors=' +
     errors;
   writeLog_('INFO', '', summary);

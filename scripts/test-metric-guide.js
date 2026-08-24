@@ -234,10 +234,10 @@ assert(
   'noop'
 );
 
-// SHEET_UI_HIDDEN must still only hide PAGE_OPPORTUNITIES
+// SHEET_UI_HIDDEN keeps the legacy experiment hidden and may include internal state stores.
 assert(
-  /SHEET_UI_HIDDEN\s*=\s*\[\s*SHEET_NAMES\.PAGE_OPPORTUNITIES\s*\]/.test(configSrc),
-  'only PAGE_OPPORTUNITIES hidden'
+  /SHEET_UI_HIDDEN\s*=\s*\[[^\]]*SHEET_NAMES\.PAGE_OPPORTUNITIES/.test(configSrc),
+  'PAGE_OPPORTUNITIES remains hidden'
 );
 assert(
   !/SHEET_UI_HIDDEN\s*=\s*\[[^\]]*SHEET_NAMES\.METRICS/.test(configSrc),
