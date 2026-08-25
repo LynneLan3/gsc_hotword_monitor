@@ -57,6 +57,16 @@ new dirty paths remain. `--require-main` additionally requires
 `origin/main` to contain the current HEAD. Manual mode additionally requires
 the current branch not to be `main`.
 
+Successful output stays short:
+
+```text
+Git Task Guard: PASS
+Branch: <branch>
+Local HEAD: <commit>
+Remote HEAD: <commit>
+Pre-existing dirty preserved: yes|no
+```
+
 ## Future Goal prompt header
 
 Use one of these fixed short forms in future prompts.
