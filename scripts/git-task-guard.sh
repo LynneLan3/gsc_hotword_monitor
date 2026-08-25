@@ -123,9 +123,11 @@ finish() {
   require_repo
   [[ -f "$state_file" && -f "$baseline_dirty_file" ]] || fail "no start baseline found; run start first"
 
-  local branch baseline_branch baseline_head head remote_head main_head current_dirty new_dirty committed_paths touched_baseline
+  local branch baseline_repo baseline_branch baseline_head head remote_head main_head current_dirty new_dirty committed_paths touched_baseline
   branch=$(current_branch)
   [[ -n "$branch" ]] || fail "HEAD is detached"
+  baseline_repo=$(state_value repo)
+  [[ "$repo_root" == "$baseline_repo" ]] || fail "repository changed since start (was '$baseline_repo', now '$repo_root')"
   baseline_branch=$(state_value branch)
   [[ "$branch" == "$baseline_branch" ]] || fail "branch changed since start (was '$baseline_branch', now '$branch')"
   baseline_head=$(state_value head)
