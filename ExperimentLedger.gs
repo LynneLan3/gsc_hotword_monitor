@@ -1679,7 +1679,7 @@ function planFromDeploymentContentGroup_(rows, map) {
   base.deployedAt = base.deployedAt || ledgerRawCell_(first, map, '更新时间') || base.deployedDate;
   base.productionUrl = base.productionUrl || ledgerCell_(first, map, 'PrimaryURL');
   base.recordedMode = ledgerCell_(first, map, 'RecordedMode');
-  base.goalId = ledgerCell_(first, map, 'GoalID') || ledgerCell_(first, map, 'OpportunityID');
+  base.goalId = ledgerCell_(first, map, 'GoalID');
   base.receiptKey = ledgerCell_(first, map, 'ReceiptKey');
   base.pages = rows.map(function (row) {
     var path = ledgerNormalizePath_(ledgerCell_(row, map, '页面路径') || ledgerCell_(row, map, 'PrimaryURL'));

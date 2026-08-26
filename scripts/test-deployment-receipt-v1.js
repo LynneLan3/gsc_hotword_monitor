@@ -373,8 +373,11 @@ dateContentRow[dateContentHeaders.PrimaryURL] = 'https://pitt.example/';
 dateContentRow[dateContentHeaders.ProductionURL] = 'https://pitt.example/';
 dateContentRow[dateContentHeaders.ProductionDeployedAt] = new Date('2026-08-24T00:00:00Z');
 dateContentRow[dateContentHeaders.RecordedMode] = 'RECEIPT_AUTO';
+dateContentRow[dateContentHeaders.OpportunityID] = 'opp-only';
 const datePlan = dateContext.context.planFromDeploymentContentGroup_([dateContentRow], dateContentHeaders);
 assert.equal(datePlan.deployedDate, '2026-08-24');
+assert.equal(datePlan.opportunityId, 'opp-only');
+assert.equal(datePlan.goalId, '', 'OpportunityID must never backfill GoalID');
 const dateObservation = dateContext.context.buildDeploymentObservation_(
   datePlan, datePlan.pages[0], { name: 'D1', days: 1 }, dateContext.context.deploymentObservationDataContext_()
 );
