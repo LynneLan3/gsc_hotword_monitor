@@ -105,10 +105,7 @@ function runDailyWithLock_(isContinuation) {
 function runDailyUnlocked_(isContinuation) {
   var startedAt = Date.now();
   isContinuation = !!isContinuation;
-
-  if (!isContinuation) {
-    setupSheets(); // 确保表存在，不覆盖已有「站点配置」数据
-  }
+  assertRuntimePrerequisites_();
 
   var sites = getEnabledSites();
   var runDate = todayStr_();
@@ -216,7 +213,7 @@ function runDailyFinalizer() {
     return 'runDailyFinalizer skipped: lock busy';
   }
   try {
-    setupSheets();
+    assertRuntimePrerequisites_();
     var sites = getEnabledSites();
     var runDate = todayStr_();
     return runDailyFinalizerUnlocked_(sites, runDate);
@@ -365,7 +362,7 @@ function deleteDailyContinuationTriggers_() {
  * 同一站同一天最多完整 Inspection 一次；全部完成后再次调用直接 return。
  */
 function runIndexAuditBatch() {
-  setupSheets();
+  assertRuntimePrerequisites_();
   var sites = getEnabledSites();
   var runDate = todayStr_();
   var total = sites.length;

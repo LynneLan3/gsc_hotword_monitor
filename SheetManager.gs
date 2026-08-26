@@ -7,6 +7,37 @@ function getSpreadsheet_() {
 }
 
 /**
+ * Recurring runtime guard. setup() is the only entrypoint that may create,
+ * migrate, format, validate, seed, or reorder the runtime sheets.
+ */
+function assertRuntimePrerequisites_() {
+  var ss = getSpreadsheet_();
+  var required = RUNTIME_REQUIRED_SHEET_NAMES || [];
+  var missing = [];
+
+  if (!ss) {
+    throw new Error('Spreadsheet runtime structure incomplete. Run setup() once.');
+  }
+
+  var present = {};
+  var sheets = ss.getSheets();
+  for (var i = 0; i < sheets.length; i++) {
+    present[sheets[i].getName()] = true;
+  }
+  for (var j = 0; j < required.length; j++) {
+    if (!present[required[j]]) missing.push(required[j]);
+  }
+
+  if (missing.length) {
+    throw new Error(
+      'Spreadsheet runtime structure incomplete. Run setup() once. Missing Sheets: ' +
+      missing.join(', ')
+    );
+  }
+  return true;
+}
+
+/**
  * 写入/读取前把网格扩到至少 requiredRows × requiredCols。
  * 默认新表常为 1000×26；站点状态 27 列、决策历史 38 列会越界。
  */
