@@ -6,9 +6,20 @@
 
 var fs = require('fs');
 var path = require('path');
+var vm = require('vm');
 
 function assert(cond, msg) {
   if (!cond) throw new Error(msg);
+}
+
+function assertThrows(fn, pattern, msg) {
+  var error = null;
+  try {
+    fn();
+  } catch (caught) {
+    error = caught;
+  }
+  assert(error && pattern.test(String(error.message || error)), msg);
 }
 
 var root = path.join(__dirname, '..');
@@ -18,14 +29,64 @@ var codeSrc = fs.readFileSync(path.join(root, 'Code.gs'), 'utf8');
 var identitySrc = fs.readFileSync(path.join(root, 'SiteIdentity.gs'), 'utf8');
 var decisionSrc = fs.readFileSync(path.join(root, 'DecisionEngine.gs'), 'utf8');
 
+var configContext = {};
+vm.runInNewContext(configSrc, configContext);
+var identityContext = {};
+vm.runInNewContext(identitySrc + '\nthis.getSiteIdentityKey_ = getSiteIdentityKey_;', identityContext);
+
 // --- 1. Additive schemas and registry-aligned defaults ---
 assert(
   /var SITE_HEADERS = \['站点名称', 'Property URL', 'Sitemap URL', 'Day0', 'Enabled', 'site_id'\]/.test(configSrc),
   'site config appends site_id'
 );
 assert(/'TopQueries', 'TopPages', 'NewQueries', 'Status', 'Error', 'site_id'/.test(configSrc), 'snapshot appends site_id');
-assert((configSrc.match(/siteId:/g) || []).length === 8, 'all DEFAULT_SITES have registry siteId');
-assert(/siteId: 'agent-64-spies-never-die'/.test(configSrc), 'Agent 64 uses registry site_id');
+
+var knownStableSiteIds = {
+  'Agefield High: Rock the School': 'agefield-high-rock-the-school',
+  'Mortal Shell II': 'mortal-shell-ii',
+  BeastLink: 'beastlink',
+  'Sovereign Tower': 'sovereign-tower',
+  'Approximately Up': 'approximately-up',
+  'Grain Rot': 'grain-rot',
+  'Leafy Corner': 'leafy-corner',
+  'Agent 64: Spies Never Die': 'agent-64-spies-never-die'
+};
+
+function assertSiteIdentitySet(sites, label) {
+  assert(Array.isArray(sites) && sites.length > 0, label + ' has sites');
+  var ids = sites.map(function (site, index) {
+    var siteId = String((site && (site.siteId || site.site_id)) || '').trim();
+    assert(siteId, label + ' site[' + index + '] has non-empty siteId');
+    assert(/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(siteId), label + ' site[' + index + '] has lowercase kebab-case siteId');
+    assert(identityContext.getSiteIdentityKey_(site) === 'site_id:' + siteId, label + ' site[' + index + '] uses site_id identity');
+    return siteId;
+  });
+  assert(new Set(ids).size === ids.length, label + ' siteIds are unique');
+}
+
+var defaultSites = configContext.DEFAULT_SITES;
+assertSiteIdentitySet(defaultSites, 'DEFAULT_SITES');
+Object.keys(knownStableSiteIds).forEach(function (name) {
+  var site = defaultSites.find(function (candidate) { return candidate.name === name; });
+  assert(site && site.siteId === knownStableSiteIds[name], name + ' stable site_id is unchanged');
+});
+
+// Adding a future valid site must not require changing a hardcoded site count.
+assertSiteIdentitySet(defaultSites.concat([{
+  name: 'Future Valid Site',
+  propertyUrl: 'https://future-valid-site.example/',
+  siteId: 'future-valid-site'
+}]), 'DEFAULT_SITES plus future site');
+
+assertThrows(function () {
+  assertSiteIdentitySet(defaultSites.concat([{ name: 'Blank Site', siteId: '' }]), 'blank fixture');
+}, /non-empty siteId/, 'blank site_id must fail');
+assertThrows(function () {
+  assertSiteIdentitySet(defaultSites.concat([{ name: 'Duplicate Site', siteId: defaultSites[0].siteId }]), 'duplicate fixture');
+}, /siteIds are unique/, 'duplicate site_id must fail');
+assertThrows(function () {
+  assertSiteIdentitySet(defaultSites.concat([{ name: 'Malformed Site', siteId: 'Future Site 2026' }]), 'malformed fixture');
+}, /lowercase kebab-case siteId/, 'malformed site_id must fail');
 
 // --- 2. Site config reader: new and legacy rows ---
 assert(/getSiteConfigColumns_\(sheet\)/.test(sheetSrc), 'reader resolves config columns');
