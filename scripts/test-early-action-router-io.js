@@ -12,6 +12,7 @@ function assert(condition, message) {
 var root = path.join(__dirname, '..');
 var configSrc = fs.readFileSync(path.join(root, 'Config.gs'), 'utf8');
 var routerSrc = fs.readFileSync(path.join(root, 'EarlyActionRouter.gs'), 'utf8');
+var gateSrc = fs.readFileSync(path.join(root, 'OneCycleNotificationGate.gs'), 'utf8');
 
 function extractAssign(src, name) {
   var match = src.match(new RegExp('var ' + name + '\\s*=\\s*([\\s\\S]*?);\\s*\\n(?:var |/\\*|function )'));
@@ -138,6 +139,7 @@ context.writeExternalOpportunityCandidatesM0_ = function (candidates) {
 };
 
 vm.createContext(context);
+vm.runInContext(gateSrc, context);
 vm.runInContext(routerSrc, context);
 
 var snapshots = [{
@@ -160,20 +162,51 @@ var earlyRecords = [{
 
 var first = context.runEarlyActionRouter({snapshots: snapshots, earlyRecords: earlyRecords, now: new Date('2026-08-24T10:00:00Z')});
 assert(first.plans.length === 1, 'first run creates one site-win plan');
-assert(first.opportunities === 1 && first.todayActions === 1 && first.researchJobs === 0, 'first run writes one action and no job');
+assert(first.opportunities === 1 && first.todayActions === 0 && first.researchJobs === 0, 'signal-only winner writes no action or job');
 assert(sheets['内容机会'].rows.length === 1, 'one opportunity row persisted');
-assert(sheets['今日行动'].rows.length === 1, 'one today action row persisted');
+assert(!sheets['今日行动'] || sheets['今日行动'].rows.length === 0, 'signal-only winner writes no today action');
 var opportunityCol = context.headerIndexMap_(sheets['内容机会'].header);
-var actionCol = context.headerIndexMap_(sheets['今日行动'].header);
 assert(sheets['内容机会'].rows[0][opportunityCol.OpportunityType] === 'EARLY_SITE_WIN', 'opportunity type persisted');
-assert(sheets['内容机会'].rows[0][opportunityCol.SignalState] === 'AUTO_HANDLED', 'opportunity state persisted');
-assert(sheets['今日行动'].rows[0][actionCol.SourceSystem] === 'EARLY', 'today action source persisted');
-assert(sheets['今日行动'].rows[0][actionCol.OpportunityType] === 'EARLY_SITE_WIN', 'today action type persisted');
+assert(sheets['内容机会'].rows[0][opportunityCol.SignalState] === 'WATCH', 'opportunity final decision persisted');
 
 var second = context.runEarlyActionRouter({snapshots: snapshots, earlyRecords: earlyRecords, now: new Date('2026-08-24T11:00:00Z')});
 assert(second.plans.length === 0, 'repeat run is state-deduped');
-assert(sheets['内容机会'].rows.length === 1 && sheets['今日行动'].rows.length === 1, 'repeat run creates no duplicate rows');
+assert(sheets['内容机会'].rows.length === 1 && (!sheets['今日行动'] || sheets['今日行动'].rows.length === 0), 'repeat run creates no duplicate rows');
 assert(properties.EARLY_ACTION_ROUTER_STATE_V1, 'router state persisted');
 assert(logs.some(function (message) { return /runEarlyActionRouter 完成/.test(message); }), 'router runtime log emitted');
+
+// A finalized, meaningful new-page candidate crosses the gate exactly once.
+var validSnapshot = [{
+  site: snapshots[0].site,
+  dataState: 'FINALIZED',
+  finalizedDataDate: '2026-08-24',
+  incomplete: false,
+  clusters: [{key: 'ISAAC', hasExistingPage: false, topPage: '/'}]
+}];
+var valid = context.runEarlyActionRouter({
+  snapshots: validSnapshot,
+  earlyRecords: [],
+  followupRecords: [{
+    site: 'Project P.I.T.T.',
+    clusterKey: 'ISAAC',
+    clusterLabel: 'Isaac guide',
+    signals: ['NEW_INTENT'],
+    confidence: 'MEDIUM',
+    currentImpressions: 20,
+    currentClicks: 1,
+    currentTopPage: '/',
+    expectedPage: '',
+    observationCount: 1,
+    opportunityStage: 'CAPTURE',
+    reason: 'finalized GSC evidence'
+  }],
+  now: new Date('2026-08-24T12:00:00Z')
+});
+assert(valid.plans.length === 1 && valid.todayActions === 1, 'validated new-page candidate writes one action');
+assert(sheets['今日行动'].rows.length === 1, 'one validated today action persisted');
+var validActionCol = context.headerIndexMap_(sheets['今日行动'].header);
+assert(sheets['今日行动'].rows[0][validActionCol.RecommendedAction] === 'NEW_PAGE_CANDIDATE', 'final action persisted');
+assert(/Data cutoff: 2026-08-24/.test(sheets['今日行动'].rows[0][validActionCol.Reason]), 'data cutoff included in notification');
+assert(/Recommended action: NEW_PAGE_CANDIDATE/.test(sheets['今日行动'].rows[0][validActionCol.Reason]), 'recommended action included in notification');
 
 console.log('PASS scripts/test-early-action-router-io.js (production-like write and idempotent repeat)');

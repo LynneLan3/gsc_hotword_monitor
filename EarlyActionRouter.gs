@@ -26,6 +26,18 @@ function runEarlyActionRouter(opts) {
     rules: rules,
     now: now
   });
+
+  // Signals and opportunities are still retained, but only one validated
+  // Final Decision may reach 今日行动 / notification in this cycle.
+  if (typeof validateOneCycleActionPlan_ === 'function') {
+    for (var v = 0; v < plans.length; v++) {
+      applyOneCycleActionGate_(
+        plans[v],
+        oneCycleValidationContextForPlan_(plans[v], opts, snapshots, rules)
+      );
+    }
+    plans = selectOneCycleFinalPlans_(plans);
+  }
   var existingJobs = loadEarlyResearchJobs_();
   var result = {
     plans: plans,
@@ -519,7 +531,12 @@ function upsertEarlyOpportunity_(plan) {
     opportunityStage: plan.opportunityStage,
     routingDecision: plan.routingDecision,
     reason: plan.reason,
-    state: plan.signalState
+    state: plan.signalState,
+    finalDecision: plan.finalDecision || '',
+    finalAction: plan.finalAction || '',
+    dataCutoff: plan.dataCutoff || '',
+    pageLastChanged: plan.pageLastChanged || '',
+    currentState: plan.currentState || ''
   };
   writeExternalOpportunityCandidatesM0_([{
     OpportunityID: plan.opportunityId,
