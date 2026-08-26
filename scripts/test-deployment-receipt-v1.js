@@ -11,6 +11,7 @@ const config = fs.readFileSync(path.join(root, 'Config.gs'), 'utf8');
 const ledger = fs.readFileSync(path.join(root, 'ExperimentLedger.gs'), 'utf8');
 const intent = fs.readFileSync(path.join(root, 'IntentOpportunityEngine.gs'), 'utf8');
 const early = fs.readFileSync(path.join(root, 'EarlyFollowupEngine.gs'), 'utf8');
+const developmentTaskHeaders = eval(`[${config.match(/var DEVELOPMENT_TASK_HEADERS\s*=\s*\[([\s\S]*?)\];/)[1]}]`);
 
 class FakeSheet {
   constructor(headers, rows = []) { this.rows = [headers.slice(), ...rows.map((r) => r.slice())]; }
@@ -70,7 +71,8 @@ function makeContext(today = '2026-08-24', existing = false) {
     '内容更新记录': new FakeSheet(headers('CONTENT_UPDATE_HEADERS'), contentRows),
     '干预观察': new FakeSheet(headers('INTERVENTION_OBSERVATION_HEADERS')),
     '干预时间线': new FakeSheet(headers('INTERVENTION_TIMELINE_HEADERS')),
-    '决策历史': new FakeSheet(['DecisionID'])
+    '决策历史': new FakeSheet(['DecisionID']),
+    '开发任务': new FakeSheet(headers('DEVELOPMENT_TASK_HEADERS'))
   };
   if (existing) sheets['干预时间线'].appendRow(['PITT-LONGTAIL-CAPTURE-20260824', '2026-08-24']);
   const ss = new FakeSpreadsheet(sheets);
@@ -80,7 +82,7 @@ function makeContext(today = '2026-08-24', existing = false) {
     CONTENT_UPDATE_HEADERS: headers('CONTENT_UPDATE_HEADERS'),
     INTERVENTION_OBSERVATION_HEADERS: headers('INTERVENTION_OBSERVATION_HEADERS'),
     INTERVENTION_TIMELINE_HEADERS: headers('INTERVENTION_TIMELINE_HEADERS'),
-    SHEET_NAMES: { SITES: '站点配置', DAILY: 'GSC日数据', PAGES: 'Page明细', QUERY_PAGES: 'Query页面明细', CONTENT_UPDATES: '内容更新记录', INTERVENTION_OBSERVATIONS: '干预观察', INTERVENTION_TIMELINE: '干预时间线', DECISION_HISTORY: '决策历史' },
+    SHEET_NAMES: { SITES: '站点配置', DAILY: 'GSC日数据', PAGES: 'Page明细', QUERY_PAGES: 'Query页面明细', CONTENT_UPDATES: '内容更新记录', INTERVENTION_OBSERVATIONS: '干预观察', INTERVENTION_TIMELINE: '干预时间线', DECISION_HISTORY: '决策历史', DEVELOPMENT_TASKS: '开发任务' },
     todayStr_: () => today,
     formatDate_: (v) => new Date(v).toISOString().slice(0, 10),
     normalizeKeyDate_: (v) => {
@@ -152,6 +154,36 @@ const accepted = context.ingestDeploymentReceipt(receipt);
 assert.equal(accepted.result, 'ACCEPTED');
 assert.equal(ss.getSheetByName('内容更新记录').getLastRow() - 1, 5);
 assert.equal(ss.getSheetByName('干预观察').getLastRow() - 1, 20);
+
+// Canonical attribution keeps GoalID independent from OpportunityID and can
+// derive the implementation identity from the existing Development Task.
+const attributed = makeContext();
+const taskHeaderList = developmentTaskHeaders;
+const taskRow = Array(taskHeaderList.length).fill('');
+for (const [name, value] of [
+  ['开发任务ID', 'DEV-PITT-1'], ['OpportunityID', 'opp-pitt-1'], ['DecisionID', 'decision-pitt-1'],
+  ['SiteID', 'project-p-i-t-t'], ['ActionType', 'CREATE_PAGE']
+]) taskRow[taskHeaderList.indexOf(name)] = value;
+attributed.ss.getSheetByName('开发任务').appendRow(taskRow);
+attributed.ss.getSheetByName('决策历史').appendRow(['decision-pitt-1']);
+attributed.context.loadDecisionIdSetFromHistory_ = () => ({ 'decision-pitt-1': true });
+const attributedReceipt = {
+  schemaVersion: 'deployment-receipt-v1', receiptKey: 'ATTRIBUTION-1', goalId: 'goal-independent',
+  developmentTaskId: 'DEV-PITT-1', siteName: 'Project P.I.T.T.', batchId: 'ATTR-20260824',
+  productionDeployedAt: '2026-08-24T10:00:00+08:00', commitSHA: 'a'.repeat(40),
+  deploymentURL: 'https://pitt-preview.vercel.app', productionURL: 'https://pitt.example/',
+  releaseDate: '2026-08-24', affectedPages: [{ path: '/new/', primaryURL: 'https://pitt.example/new/', reason: 'task' }]
+};
+assert.equal(attributed.context.ingestDeploymentReceipt(attributedReceipt).result, 'ACCEPTED');
+const attributedContent = attributed.ss.getSheetByName('内容更新记录').rows[1];
+const attributedContentHeader = Object.fromEntries(attributed.context.CONTENT_UPDATE_HEADERS.map((x, i) => [x, i]));
+assert.equal(attributedContent[attributedContentHeader.DevelopmentTaskID], 'DEV-PITT-1');
+assert.equal(attributedContent[attributedContentHeader.OpportunityID], 'opp-pitt-1');
+assert.equal(attributedContent[attributedContentHeader.DecisionID], 'decision-pitt-1');
+assert.equal(attributedContent[attributedContentHeader.GoalID], 'goal-independent');
+assert.throws(() => attributed.context.ingestDeploymentReceipt({
+  ...attributedReceipt, receiptKey: 'ATTRIBUTION-CONFLICT', opportunityId: 'opp-other'
+}), /OpportunityID conflict/);
 assert.deepEqual(ss.getSheetByName('干预观察').rows.slice(1).map((r) => r[7]).sort(),
   ['2026-08-25', '2026-08-25', '2026-08-25', '2026-08-25', '2026-08-25',
     '2026-08-27', '2026-08-27', '2026-08-27', '2026-08-27', '2026-08-27',

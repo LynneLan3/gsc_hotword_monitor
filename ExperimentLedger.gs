@@ -213,11 +213,31 @@ function resolvePublishedIntervention_(receipt, entry, task, historyIds) {
   };
 }
 
-function ledgerMergeStableValue_(name, receiptValue, taskValue) {
+function ledgerMergeStableValue_(name, receiptValue, taskValue, errorPrefix) {
   var a = String(receiptValue || '').trim();
   var b = String(taskValue || '').trim();
-  if (a && b && a !== b) throw new Error('recordPublishedBatch: Development Task ' + name + ' conflict: receipt=' + a + ' task=' + b);
+  if (a && b && a !== b) throw new Error((errorPrefix === undefined ? 'recordPublishedBatch: ' : errorPrefix) + 'Development Task ' + name + ' conflict: receipt=' + a + ' task=' + b);
   return a || b;
+}
+
+function resolveDeploymentReceiptAttribution_(receipt) {
+  receipt = receipt || {};
+  var taskId = String(receipt.developmentTaskId || '').trim();
+  var task = taskId ? resolveLedgerDevelopmentTask_(taskId) : {};
+  if (taskId && !task.taskId) throw new Error('ingestDeploymentReceipt: DevelopmentTaskID not found: ' + taskId);
+
+  receipt.siteId = ledgerMergeStableValue_('SiteID', receipt.siteId, task.siteId, 'ingestDeploymentReceipt: ');
+  receipt.opportunityId = ledgerMergeStableValue_('OpportunityID', receipt.opportunityId, task.opportunityId, 'ingestDeploymentReceipt: ');
+  receipt.decisionId = ledgerMergeStableValue_('DecisionID', receipt.decisionId, task.decisionId, 'ingestDeploymentReceipt: ');
+  var taskAction = String(task.actionType || '').trim().toUpperCase();
+  if (!receipt.action && taskAction) receipt.action = taskAction;
+  for (var i = 0; i < (receipt.affectedPages || []).length; i++) {
+    if (!receipt.affectedPages[i].action && receipt.action) receipt.affectedPages[i].action = receipt.action;
+  }
+  if (taskAction && receipt.action && taskAction !== receipt.action) {
+    throw new Error('Development Task ActionType conflict: receipt=' + receipt.action + ' task=' + taskAction);
+  }
+  return receipt;
 }
 
 function resolveLedgerDevelopmentTask_(taskId) {
@@ -876,6 +896,7 @@ function compactLedgerResult_(plan, status) {
 /** Public, transport-independent receipt entry point. */
 function ingestDeploymentReceipt(receipt) {
   var normalized = normalizeDeploymentReceipt_(receipt);
+  resolveDeploymentReceiptAttribution_(normalized);
   validateDeploymentReceipt_(normalized);
   var lock = LockService.getScriptLock();
   if (!lock.tryLock(15000)) throw new Error('ingestDeploymentReceipt: write lock busy');
@@ -923,6 +944,12 @@ function normalizeDeploymentReceipt_(input) {
     schemaVersion: String(receipt.schemaVersion || '').trim(),
     receiptKey: String(receipt.receiptKey || receipt.receipt_key || '').trim(),
     interventionId: String(receipt.interventionId || receipt.intervention_id || '').trim(),
+    developmentTaskId: String(
+      receipt.developmentTaskId || receipt.development_task_id || receipt.DevelopmentTaskID || ''
+    ).trim(),
+    opportunityId: String(
+      receipt.opportunityId || receipt.opportunity_id || receipt.OpportunityID || ''
+    ).trim(),
     goalId: String(receipt.goalId || receipt.goal_id || '').trim(),
     siteId: String(receipt.siteId || receipt.site_id || '').trim(),
     siteName: String(receipt.siteName || receipt.site || '').trim(),
@@ -949,13 +976,16 @@ function validateDeploymentReceipt_(receipt) {
     throw new Error('ingestDeploymentReceipt: schemaVersion mismatch');
   }
   var required = [
-    'receiptKey', 'siteId', 'siteName', 'batchId', 'commitSHA',
+    'receiptKey', 'siteName', 'batchId', 'commitSHA',
     'deploymentURL', 'productionURL', 'productionDeployedAt', 'action'
   ];
   for (var i = 0; i < required.length; i++) {
     if (!String(receipt[required[i]] || '').trim()) {
       throw new Error('ingestDeploymentReceipt: missing ' + required[i]);
     }
+  }
+  if (!receipt.siteId && !receipt.developmentTaskId) {
+    throw new Error('ingestDeploymentReceipt: siteId or developmentTaskId is required');
   }
   if (!ledgerProductionLocalDate_(receipt.productionDeployedAt)) {
     throw new Error('ingestDeploymentReceipt: invalid productionDeployedAt');
@@ -1135,6 +1165,8 @@ function buildDeploymentReceiptPlan_(receipt, interventionId) {
   return {
     receiptKey: receipt.receiptKey,
     interventionId: interventionId,
+    developmentTaskId: receipt.developmentTaskId,
+    opportunityId: receipt.opportunityId,
     goalId: receipt.goalId,
     siteId: receipt.siteId,
     site: receipt.siteName,
@@ -1342,6 +1374,7 @@ function buildDeploymentContentFields_(plan, page) {
     '更新说明': page.reason || plan.action,
     '更新类型': page.action,
     'DecisionID': plan.decisionId,
+    'DevelopmentTaskID': plan.developmentTaskId,
     'InterventionID': plan.interventionId,
     'SiteID': plan.siteId,
     'BatchID': plan.batchId,
@@ -1360,7 +1393,7 @@ function buildDeploymentContentFields_(plan, page) {
     'DeploymentURL': plan.deploymentUrl,
     'ProductionURL': plan.productionUrl,
     'ProductionDeployedAt': plan.deployedAt,
-    'OpportunityID': plan.goalId,
+    'OpportunityID': plan.opportunityId,
     'RecordedMode': DEPLOYMENT_RECEIPT_RECORDED_MODE,
     'BaselineDataDate': page.baseline.dataDate,
     'BaselinePageClicks7D': page.baseline.clicks,
