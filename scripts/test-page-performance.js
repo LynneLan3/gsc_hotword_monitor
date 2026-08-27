@@ -47,7 +47,7 @@ assert(/ensureSheet_\(SHEET_NAMES\.PAGES, PAGE_HEADERS\)/.test(sheetSrc), 'setup
 var headersMatch = configSrc.match(/var PAGE_HEADERS\s*=\s*(\[[\s\S]*?\]);/);
 assert(headersMatch, 'PAGE_HEADERS present');
 var headers = eval(headersMatch[1]);
-assert(headers.join('|') === 'DataDate|Site|PageURL|PagePath|Clicks|Impressions|CTR|Position', 'page headers');
+assert(headers.join('|') === 'DataDate|Site|PageURL|PagePath|Clicks|Impressions|CTR|Position|site_id', 'page headers');
 
 // --- 3. 唯一键 DataDate + Site + PageURL ---
 var upsertFn = extractFn(sheetSrc, 'upsertPageRow_');
@@ -118,7 +118,7 @@ assert(freshDays && Number(freshDays[1]) === 5, 'FRESH_QUERY_DAYS remains 5');
 var dailyFn = extractFn(codeSrc, 'syncFreshPageDetails_');
 assert(/getFreshQueryDateRange_\(runDate\)/.test(dailyFn), 'daily page sync uses fresh range');
 assert(
-  /syncFreshPageDetails_\(siteName, propertyUrl, runDate\)/.test(
+  /syncFreshPageDetails_\(siteName, propertyUrl, runDate, siteId\)/.test(
     extractFn(codeSrc, 'processSiteDaily_')
   ),
   'runDaily collects Page明细'

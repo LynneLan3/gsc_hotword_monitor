@@ -40,6 +40,11 @@ assert(
   'site config appends site_id'
 );
 assert(/'TopQueries', 'TopPages', 'NewQueries', 'Status', 'Error', 'site_id'/.test(configSrc), 'snapshot appends site_id');
+assert(/'AveragePosition', 'ReturnedQueryCount', 'TopQueries', 'TopPages', 'site_id'/.test(configSrc), 'daily appends site_id');
+assert(/'AveragePosition'\]?,?\s*'site_id'/.test(configSrc) || /'AveragePosition', 'site_id'/.test(configSrc), 'query appends site_id');
+assert(/'Clicks', 'Impressions', 'CTR', 'Position', 'site_id'/.test(configSrc), 'page appends site_id');
+assert(/'Clicks', 'Impressions', 'CTR', 'AveragePosition', 'site_id'/.test(configSrc), 'query-page appends site_id');
+assert(/'GoogleCanonical', 'UserCanonical', 'CrawledAs', 'Error', 'site_id'/.test(configSrc), 'URL index appends site_id');
 
 var knownStableSiteIds = {
   'Agefield High: Rock the School': 'agefield-high-rock-the-school',
@@ -149,5 +154,12 @@ assert(identityKey({ name: 'Legacy Site' }) === 'site_name:Legacy Site', 'legacy
 // Decision Engine is an explicit no-touch boundary for this phase.
 assert(!/site_id|siteId/.test(decisionSrc), 'Decision Engine remains untouched by site_id adoption');
 assert(/site\.siteId \|\| ''/.test(codeSrc), 'future snapshots carry site_id');
+assert(/upsertDailyRow_\(\[[\s\S]*?topPages, siteId/.test(codeSrc), 'daily rows carry site_id');
+assert(/upsertQueryRow_\(\[[\s\S]*?siteId \|\| ''/.test(codeSrc), 'query rows carry site_id');
+assert(/upsertQueryPageRow_\(\[[\s\S]*?siteId \|\| ''/.test(codeSrc), 'query-page rows carry site_id');
+assert(/upsertPageRow_\(\[[\s\S]*?siteId \|\| ''/.test(codeSrc), 'page rows carry site_id');
+assert(/appendUrlIndexRow_\(\[[\s\S]*?siteId/.test(codeSrc), 'URL index rows carry site_id');
+assert(/ensureAdditiveHeader_\(SHEET_NAMES\.DAILY, 'site_id', 10\)/.test(identitySrc), 'daily header is additive');
+assert(/ensureAdditiveHeader_\(SHEET_NAMES\.URL_INDEX, 'site_id', 14\)/.test(identitySrc), 'URL index header is additive');
 
 console.log('PASS scripts/test-site-identity.js');

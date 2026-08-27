@@ -146,7 +146,7 @@ assert(Object.keys(store).length === 2, 'second empty day still preserves both d
 // --- 5. 原有 runDaily fresh Query×Page 行为不变 ---
 assert(/syncFreshQueryPageDetails_/.test(codeSrc), 'runDaily still syncs Query×Page');
 assert(
-  /syncFreshQueryPageDetails_\(siteName, propertyUrl, runDate\)/.test(
+  /syncFreshQueryPageDetails_\(siteName, propertyUrl, runDate, siteId\)/.test(
     extractFn(codeSrc, 'processSiteDaily_')
   ),
   'daily path still calls syncFreshQueryPageDetails_'

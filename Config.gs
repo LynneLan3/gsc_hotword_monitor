@@ -150,20 +150,20 @@ var SNAPSHOT_HEADERS = [
 ];
 var DAILY_HEADERS = [
   'DataDate', 'Site', 'Clicks', 'Impressions', 'CTR',
-  'AveragePosition', 'ReturnedQueryCount', 'TopQueries', 'TopPages'
+  'AveragePosition', 'ReturnedQueryCount', 'TopQueries', 'TopPages', 'site_id'
 ];
 var QUERY_HEADERS = [
-  'DataDate', 'Site', 'Query', 'Clicks', 'Impressions', 'CTR', 'AveragePosition'
+  'DataDate', 'Site', 'Query', 'Clicks', 'Impressions', 'CTR', 'AveragePosition', 'site_id'
 ];
 /** Fresh page-only 维度；Winner Page 事实源。rowLimit 仍用 QUERY_ROW_LIMIT */
 var PAGE_HEADERS = [
   'DataDate', 'Site', 'PageURL', 'PagePath',
-  'Clicks', 'Impressions', 'CTR', 'Position'
+  'Clicks', 'Impressions', 'CTR', 'Position', 'site_id'
 ];
 /** Fresh Query×Page 联合维度；rowLimit 仍用 QUERY_ROW_LIMIT（小站够用，不保证长期完整） */
 var QUERY_PAGE_HEADERS = [
   'DataDate', 'Site', 'Query', 'PageURL', 'PagePath',
-  'Clicks', 'Impressions', 'CTR', 'AveragePosition'
+  'Clicks', 'Impressions', 'CTR', 'AveragePosition', 'site_id'
 ];
 /**
  * 实时 24h Query 爆量监控（hourly_all 旁路）。
@@ -305,7 +305,7 @@ var INTENT_CLUSTER_THRESHOLDS = {
 var URL_INDEX_HEADERS = [
   'RunDate', 'Site', 'URL', 'Verdict', 'CoverageState', 'RobotsTxtState',
   'IndexingState', 'LastCrawlTime', 'PageFetchState',
-  'GoogleCanonical', 'UserCanonical', 'CrawledAs', 'Error'
+  'GoogleCanonical', 'UserCanonical', 'CrawledAs', 'Error', 'site_id'
 ];
 var LOG_HEADERS = ['Timestamp', 'Level', 'Site', 'Message'];
 var RULE_HEADERS = ['规则Key', '当前值', '说明'];

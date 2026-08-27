@@ -37,6 +37,11 @@ function siteIdentityMatches_(left, right) {
 function ensureAdditiveSiteIdentityHeaders_() {
   ensureAdditiveHeader_(SHEET_NAMES.SITES, 'site_id', 6);
   ensureAdditiveHeader_(SHEET_NAMES.SNAPSHOT, 'site_id', 20);
+  ensureAdditiveHeader_(SHEET_NAMES.DAILY, 'site_id', 10);
+  ensureAdditiveHeader_(SHEET_NAMES.QUERIES, 'site_id', 8);
+  ensureAdditiveHeader_(SHEET_NAMES.PAGES, 'site_id', 9);
+  ensureAdditiveHeader_(SHEET_NAMES.QUERY_PAGES, 'site_id', 10);
+  ensureAdditiveHeader_(SHEET_NAMES.URL_INDEX, 'site_id', 14);
 }
 
 function ensureAdditiveHeader_(sheetName, header, column) {

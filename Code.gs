@@ -171,7 +171,7 @@ function runDailyUnlocked_(isContinuation) {
           appendSnapshotRow_([
             runDate, '', site.name, site.propertyUrl, '',
             '', '', '', '', '', '', '', '', '',
-            '', '', '', '🔴 需要检查', errMsg
+            '', '', '', '🔴 需要检查', errMsg, site.siteId || ''
           ]);
         }
         markDailySiteDone_(site.name);
@@ -442,6 +442,7 @@ function setIndexAuditCursor_(n) {
 function processSiteUrlInspection_(site, runDate) {
   var propertyUrl = site.propertyUrl;
   var siteName = site.name;
+  var siteId = site.siteId || '';
   var sitemapUrls = fetchSitemapUrls(site.sitemapUrl);
   var indexedCount = 0;
   var errors = [];
@@ -451,7 +452,7 @@ function processSiteUrlInspection_(site, runDate) {
     var insp = inspectUrl(pageUrl, propertyUrl);
     if (!insp.ok) {
       appendUrlIndexRow_([
-        runDate, siteName, pageUrl, '', '', '', '', '', '', '', '', '', insp.error
+        runDate, siteName, pageUrl, '', '', '', '', '', '', '', '', '', insp.error, siteId
       ]);
       errors.push('Inspection ' + pageUrl + ': ' + insp.error);
       continue;
@@ -462,7 +463,7 @@ function processSiteUrlInspection_(site, runDate) {
       runDate, siteName, pageUrl,
       st.verdict, st.coverageState, st.robotsTxtState, st.indexingState,
       st.lastCrawlTime, st.pageFetchState, st.googleCanonical, st.userCanonical,
-      st.crawledAs, ''
+      st.crawledAs, '', siteId
     ]);
   }
 
@@ -487,6 +488,7 @@ function processSiteDaily_(site, runDate) {
   var errors = [];
   var propertyUrl = site.propertyUrl;
   var siteName = site.name;
+  var siteId = site.siteId || '';
   var permissionBlocked = false;
   writeLog_('INFO', siteName, '开始采集 propertyUrl=' + propertyUrl);
 
@@ -565,7 +567,7 @@ function processSiteDaily_(site, runDate) {
       upsertDailyRow_([
         latestDate, siteName,
         totals.clicks, totals.impressions, totals.ctr, totals.position,
-        returnedQueryCount, topQueries, topPages
+        returnedQueryCount, topQueries, topPages, siteId
       ]);
     } catch (e) {
       errors.push('写GSC日数据: ' + e.message);
@@ -583,7 +585,7 @@ function processSiteDaily_(site, runDate) {
   // 4b) Fresh Query明细（dataState=all；权限异常时跳过，绝不空写覆盖历史）
   if (!permissionBlocked) {
     try {
-      syncFreshQueryDetails_(siteName, propertyUrl, runDate);
+      syncFreshQueryDetails_(siteName, propertyUrl, runDate, siteId);
     } catch (e) {
       if (isGscPermissionError_(e)) {
         permissionBlocked = true;
@@ -603,7 +605,7 @@ function processSiteDaily_(site, runDate) {
   // 4c) Fresh Query×Page → Query页面明细（增强层；失败不阻断主流程 / Status）
   if (!permissionBlocked) {
     try {
-      syncFreshQueryPageDetails_(siteName, propertyUrl, runDate);
+      syncFreshQueryPageDetails_(siteName, propertyUrl, runDate, siteId);
     } catch (e) {
       if (isGscPermissionError_(e)) {
         writeLog_(
@@ -620,7 +622,7 @@ function processSiteDaily_(site, runDate) {
   // 4d) Fresh Page-only → Page明细（Winner Page 事实源；失败不阻断主流程 / Status）
   if (!permissionBlocked) {
     try {
-      syncFreshPageDetails_(siteName, propertyUrl, runDate);
+      syncFreshPageDetails_(siteName, propertyUrl, runDate, siteId);
     } catch (e) {
       if (isGscPermissionError_(e)) {
         writeLog_(
@@ -673,7 +675,7 @@ function processSiteDaily_(site, runDate) {
     newQueriesText,
     status,
     errors.join(' | '),
-    site.siteId || ''
+    siteId
   ]);
 
   writeLog_(
@@ -692,7 +694,7 @@ function processSiteDaily_(site, runDate) {
  * - 某日 API 返回 0 行：保留历史，不删不覆盖
  * - 重复运行幂等更新同一键
  */
-function syncFreshQueryDetails_(siteName, propertyUrl, runDate) {
+function syncFreshQueryDetails_(siteName, propertyUrl, runDate, siteId) {
   var range = getFreshQueryDateRange_(runDate);
   var coverage = fetchFreshDateCoverage_(
     propertyUrl,
@@ -727,7 +729,7 @@ function syncFreshQueryDetails_(siteName, propertyUrl, runDate) {
       apiRowCount++;
       var result = upsertQueryRow_([
         dataDate, siteName, qName,
-        qr.clicks || 0, qr.impressions || 0, qr.ctr || 0, qr.position || 0
+        qr.clicks || 0, qr.impressions || 0, qr.ctr || 0, qr.position || 0, siteId || ''
       ]);
       if (result && result.action === 'update') updated++;
       else inserted++;
@@ -779,7 +781,7 @@ function syncFreshQueryDetails_(siteName, propertyUrl, runDate) {
  * 0 rows 为正常：不写、不删其它日期历史。
  * @return {{inserted:number, updated:number, apiRowCount:number}}
  */
-function upsertQueryPageDetailsForDate_(siteName, propertyUrl, dataDate) {
+function upsertQueryPageDetailsForDate_(siteName, propertyUrl, dataDate, siteId) {
   var rows = fetchFreshQueryPages(propertyUrl, dataDate, QUERY_ROW_LIMIT);
   var inserted = 0;
   var updated = 0;
@@ -797,7 +799,8 @@ function upsertQueryPageDetailsForDate_(siteName, propertyUrl, dataDate) {
       qr.clicks || 0,
       qr.impressions || 0,
       qr.ctr || 0,
-      qr.position || 0
+      qr.position || 0,
+      siteId || ''
     ]);
     if (result && result.action === 'update') updated++;
     else inserted++;
@@ -810,7 +813,7 @@ function upsertQueryPageDetailsForDate_(siteName, propertyUrl, dataDate) {
  * 0 rows 为正常：不写、不删其它日期历史。
  * @return {{inserted:number, updated:number, apiRowCount:number}}
  */
-function upsertPageDetailsForDate_(siteName, propertyUrl, dataDate) {
+function upsertPageDetailsForDate_(siteName, propertyUrl, dataDate, siteId) {
   var rows = fetchFreshPages(propertyUrl, dataDate, QUERY_ROW_LIMIT);
   var inserted = 0;
   var updated = 0;
@@ -827,7 +830,8 @@ function upsertPageDetailsForDate_(siteName, propertyUrl, dataDate) {
       pr.clicks || 0,
       pr.impressions || 0,
       pr.ctr || 0,
-      pr.position || 0
+      pr.position || 0,
+      siteId || ''
     ]);
     if (result && result.action === 'update') updated++;
     else inserted++;
@@ -840,7 +844,7 @@ function upsertPageDetailsForDate_(siteName, propertyUrl, dataDate) {
  * 0 rows 为正常状态（该日暂无联合维度数据），不记 ERROR、不删历史。
  * 使用 QUERY_ROW_LIMIT=1000：Query×Page 行数可能多于 Query 单维，小站阶段够用，不保证长期完整。
  */
-function syncFreshQueryPageDetails_(siteName, propertyUrl, runDate) {
+function syncFreshQueryPageDetails_(siteName, propertyUrl, runDate, siteId) {
   var range = getFreshQueryDateRange_(runDate);
   var dates = listDatesInclusive_(range.startDate, range.endDate);
   var inserted = 0;
@@ -850,7 +854,7 @@ function syncFreshQueryPageDetails_(siteName, propertyUrl, runDate) {
 
   for (var di = 0; di < dates.length; di++) {
     var dataDate = dates[di];
-    var dayResult = upsertQueryPageDetailsForDate_(siteName, propertyUrl, dataDate);
+    var dayResult = upsertQueryPageDetailsForDate_(siteName, propertyUrl, dataDate, siteId);
     inserted += dayResult.inserted;
     updated += dayResult.updated;
     apiRowCount += dayResult.apiRowCount;
@@ -883,7 +887,7 @@ function syncFreshQueryPageDetails_(siteName, propertyUrl, runDate) {
  * 写入/更新近 FRESH_QUERY_DAYS 个 GSC 日的 Fresh Page-only（upsert：DataDate+Site+PageURL）。
  * 0 rows 为正常状态，不记 ERROR、不删历史。
  */
-function syncFreshPageDetails_(siteName, propertyUrl, runDate) {
+function syncFreshPageDetails_(siteName, propertyUrl, runDate, siteId) {
   var range = getFreshQueryDateRange_(runDate);
   var dates = listDatesInclusive_(range.startDate, range.endDate);
   var inserted = 0;
@@ -893,7 +897,7 @@ function syncFreshPageDetails_(siteName, propertyUrl, runDate) {
 
   for (var di = 0; di < dates.length; di++) {
     var dataDate = dates[di];
-    var dayResult = upsertPageDetailsForDate_(siteName, propertyUrl, dataDate);
+    var dayResult = upsertPageDetailsForDate_(siteName, propertyUrl, dataDate, siteId);
     inserted += dayResult.inserted;
     updated += dayResult.updated;
     apiRowCount += dayResult.apiRowCount;
@@ -1030,7 +1034,7 @@ function backfillSite_(site, startDate, endDate) {
     upsertDailyRow_([
       dataDate, site.name,
       totals.clicks, totals.impressions, totals.ctr, totals.position,
-      queryRows.length, topQueries, topPages
+      queryRows.length, topQueries, topPages, site.siteId || ''
     ]);
 
     // 近 FRESH_QUERY_DAYS 天由 syncFreshQueryDetails_ 写入；更早日期用 finalized
@@ -1039,14 +1043,15 @@ function backfillSite_(site, startDate, endDate) {
         var qr = queryRows[qi];
         upsertQueryRow_([
           dataDate, site.name, (qr.keys && qr.keys[0]) || '',
-          qr.clicks || 0, qr.impressions || 0, qr.ctr || 0, qr.position || 0
+          qr.clicks || 0, qr.impressions || 0, qr.ctr || 0, qr.position || 0,
+          site.siteId || ''
         ]);
       }
     }
   }
 
   try {
-    syncFreshQueryDetails_(site.name, site.propertyUrl, endDate);
+    syncFreshQueryDetails_(site.name, site.propertyUrl, endDate, site.siteId || '');
   } catch (e) {
     writeLog_('WARN', site.name, '回填 Fresh Query 失败: ' + e.message);
   }
@@ -1118,7 +1123,8 @@ function backfillQueryPageDetailsForSite_(site, startDate, endDate) {
       var dayResult = upsertQueryPageDetailsForDate_(
         site.name,
         site.propertyUrl,
-        dataDate
+        dataDate,
+        site.siteId || ''
       );
       inserted += dayResult.inserted;
       updated += dayResult.updated;
@@ -1200,7 +1206,8 @@ function backfillPageDetailsForSite_(site, startDate, endDate) {
       var dayResult = upsertPageDetailsForDate_(
         site.name,
         site.propertyUrl,
-        dataDate
+        dataDate,
+        site.siteId || ''
       );
       inserted += dayResult.inserted;
       updated += dayResult.updated;
