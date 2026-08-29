@@ -155,6 +155,54 @@ assert.equal(accepted.result, 'ACCEPTED');
 assert.equal(ss.getSheetByName('内容更新记录').getLastRow() - 1, 5);
 assert.equal(ss.getSheetByName('干预观察').getLastRow() - 1, 20);
 
+// Receipt identity regression: a legacy sheet may have GoalID/RecordedAt in a
+// different physical order. Both fields must round-trip by header name.
+const shuffled = makeContext();
+const canonicalContentHeaders = shuffled.context.CONTENT_UPDATE_HEADERS.slice();
+const shuffledContentHeaders = canonicalContentHeaders.slice().reverse().concat('LegacyNote');
+shuffled.ss.sheets['内容更新记录'] = new FakeSheet(shuffledContentHeaders);
+const shuffledAccepted = shuffled.context.ingestDeploymentReceipt({
+  ...receipt, receiptKey: 'PITT-SHUFFLED-20260824', interventionId: 'PITT-SHUFFLED', goalId: 'G015',
+  affectedPages: [{ path: '/walkthrough/', action: 'CREATE_PAGE', primaryURL: 'https://pitt.example/walkthrough/' }]
+});
+assert.equal(shuffledAccepted.result, 'ACCEPTED');
+const shuffledMap = Object.fromEntries(shuffledContentHeaders.map((x, i) => [x, i]));
+const shuffledRow = shuffled.ss.getSheetByName('内容更新记录').rows[1];
+assert.equal(shuffledRow[shuffledMap.GoalID], 'G015');
+assert.equal(shuffledRow[shuffledMap.RecordedAt], '2026-08-24T12:00:00+08:00');
+assert.equal(shuffledRow[shuffledMap['页面路径']], '/walkthrough/');
+
+// G015 Wave 1 regression: the six page/action/query contract is one native
+// receipt and replaying it remains idempotent.
+const wave = makeContext();
+const waveReceipt = {
+  ...receipt, receiptKey: 'G015-p1b-launch-expansion-20260829', interventionId: 'G015-p1b-launch-expansion-20260829',
+  goalId: 'G015', batchId: 'G015-p1b-launch-expansion-20260829', siteId: 'project-p-i-t-t',
+  affectedPages: [
+    ['/walkthrough/', 'CREATE_PAGE', ['brigandine abyss walkthrough']],
+    ['/monster-list/', 'UPDATE_PAGE', ['brigandine abyss monster list', 'brigandine abyss monsters', 'brigandine abyss units']],
+    ['/classes/', 'UPDATE_PAGE', ['brigandine abyss classes']],
+    ['/difficulty-30-seasons/', 'CREATE_PAGE', []],
+    ['/quests-training/', 'CREATE_PAGE', []],
+    ['/class-change-items/', 'UPDATE_PAGE', []]
+  ].map(([path, action, triggerQueries]) => ({
+    path, action, primaryURL: `https://pitt.example${path}`, triggerQueries,
+    triggerType: triggerQueries.length ? 'GSC_QUERY_PAGE' : '', sourceRefs: triggerQueries.length ? ['GSC Query页面明细'] : []
+  }))
+};
+const waveAccepted = wave.context.ingestDeploymentReceipt(waveReceipt);
+assert.equal(waveAccepted.result, 'ACCEPTED');
+assert.equal(wave.ss.getSheetByName('内容更新记录').getLastRow() - 1, 6);
+assert.equal(wave.ss.getSheetByName('干预观察').getLastRow() - 1, 24);
+assert.equal(wave.context.ingestDeploymentReceipt(waveReceipt).result, 'DUPLICATE_ACCEPTED');
+assert.equal(wave.ss.getSheetByName('内容更新记录').getLastRow() - 1, 6);
+const waveRows = wave.ss.getSheetByName('内容更新记录').rows.slice(1);
+const waveHeader = Object.fromEntries(wave.context.CONTENT_UPDATE_HEADERS.map((x, i) => [x, i]));
+assert(waveRows.every((row) => row[waveHeader.GoalID] === 'G015'));
+assert(waveRows.find((row) => row[waveHeader['页面路径']] === '/walkthrough/')[waveHeader.TriggerQueries].includes('walkthrough'));
+assert.equal(waveRows.find((row) => row[waveHeader['页面路径']] === '/classes/')[waveHeader.TriggerQueries], '["brigandine abyss classes"]');
+assert.equal(waveRows.find((row) => row[waveHeader['页面路径']] === '/quests-training/')[waveHeader.TriggerQueries], '[]');
+
 // Canonical attribution keeps GoalID independent from OpportunityID and can
 // derive the implementation identity from the existing Development Task.
 const attributed = makeContext();
@@ -194,9 +242,9 @@ const contentHeaders = Object.fromEntries(receipt && context.CONTENT_UPDATE_HEAD
 const updateRows = ss.getSheetByName('内容更新记录').rows.slice(1);
 const newBaseline = updateRows.find((r) => r[contentHeaders['页面路径']] === '/percentage-pipe/');
 const existingBaseline = updateRows.find((r) => r[contentHeaders['页面路径']] === '/200kg-plate/');
-assert.equal(newBaseline[contentHeaders.BaselinePageClicks7D], 0, 'new URL baseline clicks are zero');
-assert.equal(newBaseline[contentHeaders.BaselinePageImpressions7D], 0, 'new URL baseline impressions are zero');
-assert.equal(existingBaseline[contentHeaders.BaselinePageImpressions7D], 0, 'UPDATE_PAGE without page traffic is zero but not new');
+assert.equal(newBaseline[contentHeaders.BaselinePageClicks7D], '', 'new page has no fabricated click baseline');
+assert.equal(newBaseline[contentHeaders.BaselinePageImpressions7D], '', 'new page has no fabricated impression baseline');
+assert.equal(existingBaseline[contentHeaders.BaselinePageImpressions7D], '', 'existing page without traffic stays unavailable');
 assert.equal(context.ingestDeploymentReceipt(receipt).result, 'DUPLICATE_ACCEPTED');
 assert.equal(ss.getSheetByName('内容更新记录').getLastRow() - 1, 5);
 assert.equal(ss.getSheetByName('干预观察').getLastRow() - 1, 20);
@@ -234,20 +282,20 @@ const fuseBaseline = recoveredContent.find((r) => r[recoveredHeaders['页面路�
 const homeBaseline = recoveredContent.find((r) => r[recoveredHeaders['页面路径']] === '/');
 const newPageBaseline = recoveredContent.find((r) => r[recoveredHeaders['页面路径']] === '/percentage-pipe/');
 assert.equal(fuseBaseline[recoveredHeaders.BaselineDataDate], '2026-08-23');
-assert.equal(fuseBaseline[recoveredHeaders.BaselinePageClicks7D], 0);
-assert.equal(fuseBaseline[recoveredHeaders.BaselinePageImpressions7D], 0);
-assert.equal(fuseBaseline[recoveredHeaders.BaselinePageQueryCount7D], 0);
+assert.equal(fuseBaseline[recoveredHeaders.BaselinePageClicks7D], '');
+assert.equal(fuseBaseline[recoveredHeaders.BaselinePageImpressions7D], '');
+assert.equal(fuseBaseline[recoveredHeaders.BaselinePageQueryCount7D], '');
 assert.equal(homeBaseline[recoveredHeaders.BaselinePageClicks7D], 7);
 assert.equal(homeBaseline[recoveredHeaders.BaselinePageImpressions7D], 139);
 assert.equal(homeBaseline[recoveredHeaders.BaselinePagePosition], 7.057553957);
 assert.equal(homeBaseline[recoveredHeaders.BaselineSiteClicks7D], 7);
 assert.equal(homeBaseline[recoveredHeaders.BaselineSiteImpressions7D], 139);
-assert.equal(newPageBaseline[recoveredHeaders.BaselinePageClicks7D], 0);
-assert.equal(newPageBaseline[recoveredHeaders.BaselinePageImpressions7D], 0);
+assert.equal(newPageBaseline[recoveredHeaders.BaselinePageClicks7D], '');
+assert.equal(newPageBaseline[recoveredHeaders.BaselinePageImpressions7D], '');
 const recoveredObsHeaders = Object.fromEntries(existing.context.INTERVENTION_OBSERVATION_HEADERS.map((x, i) => [x, i]));
 const fuseObservation = existing.ss.getSheetByName('干预观察').rows.slice(1).find((r) => r[recoveredObsHeaders.PrimaryURL].includes('/up-achievement-fuses/'));
-assert.equal(fuseObservation[recoveredObsHeaders.BaselineClicks7D], 0);
-assert.equal(fuseObservation[recoveredObsHeaders.BaselineImpressions7D], 0);
+assert.equal(fuseObservation[recoveredObsHeaders.BaselineClicks7D], '');
+assert.equal(fuseObservation[recoveredObsHeaders.BaselineImpressions7D], '');
 assert.equal(fuseObservation[recoveredObsHeaders.BaselineMode], 'EXISTING_URL_NO_GSC_TRAFFIC');
 assert.equal(fuseObservation[recoveredObsHeaders.BaselineSiteClicks7D], 7);
 assert.equal(fuseObservation[recoveredObsHeaders.BaselineSiteImpressions7D], 139);
@@ -258,9 +306,9 @@ assert.equal(homeObservation[recoveredObsHeaders.BaselineCTR], 7 / 139);
 assert.equal(homeObservation[recoveredObsHeaders.BaselinePosition], 7.057553957);
 assert.equal(homeObservation[recoveredObsHeaders.BaselineSiteImpressions7D], 139);
 const newObservation = existing.ss.getSheetByName('干预观察').rows.slice(1).find((r) => r[recoveredObsHeaders.PrimaryURL].includes('/percentage-pipe/'));
-assert.equal(newObservation[recoveredObsHeaders.BaselineClicks7D], 0);
-assert.equal(newObservation[recoveredObsHeaders.BaselineImpressions7D], 0);
-assert.equal(newObservation[recoveredObsHeaders.BaselineMode], 'NEW_URL_BASELINE');
+assert.equal(newObservation[recoveredObsHeaders.BaselineClicks7D], '');
+assert.equal(newObservation[recoveredObsHeaders.BaselineImpressions7D], '');
+assert.equal(newObservation[recoveredObsHeaders.BaselineMode], 'NEW_PAGE_NO_PRE_BASELINE');
 assert.equal(existing.context.reconcileInterventionPipeline().observations, 20);
 assert.equal(existing.ss.getSheetByName('干预观察').getLastRow() - 1, 20);
 const schedule = { D1: '2026-08-25', D3: '2026-08-27', D7: '2026-08-31', D14: '2026-09-07' };
@@ -343,7 +391,7 @@ for (const row of persistedRows) {
 const persistedFuse = persistedRows.find((r) => r[persistedHeader.PrimaryURL].includes('/up-achievement-fuses/'));
 const persistedNew = persistedRows.find((r) => r[persistedHeader.PrimaryURL].includes('/percentage-pipe/'));
 assert.equal(persistedFuse[persistedHeader.BaselineMode], 'EXISTING_URL_NO_GSC_TRAFFIC');
-assert.equal(persistedNew[persistedHeader.BaselineMode], 'NEW_URL_BASELINE');
+assert.equal(persistedNew[persistedHeader.BaselineMode], 'NEW_PAGE_NO_PRE_BASELINE');
 assert.equal(persistedFuse[persistedHeader.ObservedSiteClicks7D], '');
 assert.equal(persistedFuse[persistedHeader.ObservedSiteImpressions7D], '');
 assert.equal(persistedFuse[persistedHeader.AttributionMode], 'INTERVENTION_NATIVE');

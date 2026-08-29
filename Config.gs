@@ -1402,6 +1402,11 @@ var DEFAULT_SITES = [
     name: 'Agent 64: Spies Never Die',
     propertyUrl: 'https://agent-64.vercel.app/',
     siteId: 'agent-64-spies-never-die'
+  },
+  {
+    name: 'Serious Sam: Shatterverse',
+    propertyUrl: 'https://serious-sam-shatterverse.vercel.app/',
+    siteId: 'serious-sam-shatterverse'
   }
 ];
 

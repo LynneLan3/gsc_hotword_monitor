@@ -136,7 +136,7 @@
 
 **Query页面明细**：记录 GSC Fresh Query 与实际 Landing Page 的联合维度数据。字段为 `DataDate / Site / Query / PageURL / PagePath / Clicks / Impressions / CTR / AveragePosition`。用于判断某个 Query 当前由哪个页面获得曝光（`dataState=all`，近 `FRESH_QUERY_DAYS` 天）。
 
-「站点配置」会预填 7 个站。`Enabled` 默认勾选。`Day0` 先是空的。
+「站点配置」会预填 9 个站。`Enabled` 默认勾选。`Day0` 先是空的。
 
 也可以用 Sheet 顶部菜单：**热词站监控 → 初始化表格**（首次打开 Sheet 后刷新一次页面，菜单才会出现）。
 

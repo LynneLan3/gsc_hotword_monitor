@@ -543,15 +543,14 @@ function buildLedgerContentRow_(plan) {
 function writeLedgerContentReceipt_(plan) {
   var packed = loadLedgerSheetRows_(SHEET_NAMES.CONTENT_UPDATES);
   var fields = buildLedgerContentRow_(plan);
-  var row = [];
-  for (var h = 0; h < CONTENT_UPDATE_HEADERS.length; h++) row.push(fields[CONTENT_UPDATE_HEADERS[h]] === undefined ? '' : fields[CONTENT_UPDATE_HEADERS[h]]);
+  var row = ledgerRowFromFields_(packed, fields);
   var existing = findLedgerReceiptByKey_(packed, plan.receiptKey);
   if (existing) {
-    var current = packed.rows[existing.rowIndex - 2].slice(0, CONTENT_UPDATE_HEADERS.length);
-    for (var i = 0; i < CONTENT_UPDATE_HEADERS.length; i++) {
+    var current = packed.rows[existing.rowIndex - 2].slice();
+    for (var i = 0; i < packed.header.length; i++) {
       if (ledgerBlank_(current[i]) && !ledgerBlank_(row[i])) current[i] = row[i];
     }
-    packed.sheet.getRange(existing.rowIndex, 1, 1, CONTENT_UPDATE_HEADERS.length).setValues([current]);
+    packed.sheet.getRange(existing.rowIndex, 1, 1, packed.header.length).setValues([current]);
     return { action: 'update', rowIndex: existing.rowIndex };
   }
   packed.sheet.appendRow(row);
@@ -560,6 +559,14 @@ function writeLedgerContentReceipt_(plan) {
 
 function ledgerBlank_(value) {
   return value === null || value === undefined || String(value).trim() === '';
+}
+
+/** Serialize by the bound Sheet's actual header order, never constant offsets. */
+function ledgerRowFromFields_(packed, fields, current) {
+  return (packed.header || []).map(function (header, index) {
+    if (Object.prototype.hasOwnProperty.call(fields || {}, header)) return fields[header];
+    return current && index < current.length ? current[index] : '';
+  });
 }
 
 function writeLedgerObservationRows_(plan) {
@@ -1075,6 +1082,299 @@ function ingestDeploymentReceipt_(receipt) {
   };
 }
 
+/**
+ * Bounded, idempotent repair for the G015 BRIGANDINE ABYSS Wave 1 receipt.
+ * It reuses the existing receipt identity when present, adds only the three
+ * missing pages, and repairs the two identity fields by actual header name.
+ */
+function repairG015BrigandineInterventionReceipts() {
+  var lock = LockService.getScriptLock();
+  if (!lock.tryLock(15000)) throw new Error('repairG015BrigandineInterventionReceipts: write lock busy');
+  try {
+    return repairG015BrigandineInterventionReceiptsUnlocked_();
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+function repairG015BrigandineInterventionReceiptsUnlocked_() {
+  var siteId = 'brigandine-abyss';
+  var siteName = 'BRIGANDINE ABYSS';
+  var batchId = 'G015-p1b-launch-expansion-20260829';
+  var commitSHA = 'ff757f81d89226aad7b753c3c24e19e03af77536';
+  var productionURL = 'https://brigandine-abyss.vercel.app/';
+  var productionDeployedAt = '2026-08-29T03:42:27Z';
+  var pages = [
+    { path: '/walkthrough/', action: 'CREATE_PAGE', queries: ['brigandine abyss walkthrough'] },
+    { path: '/monster-list/', action: 'UPDATE_PAGE', queries: ['brigandine abyss monster list', 'brigandine abyss monsters', 'brigandine abyss units'] },
+    { path: '/classes/', action: 'UPDATE_PAGE', queries: ['brigandine abyss classes'] },
+    { path: '/difficulty-30-seasons/', action: 'CREATE_PAGE', queries: [] },
+    { path: '/quests-training/', action: 'CREATE_PAGE', queries: [] },
+    { path: '/class-change-items/', action: 'UPDATE_PAGE', queries: [] }
+  ];
+  var packed = loadLedgerSheetRows_(SHEET_NAMES.CONTENT_UPDATES);
+  var matching = [];
+  for (var i = 0; i < packed.rows.length; i++) {
+    var row = packed.rows[i];
+    if (ledgerCell_(row, packed.map, 'SiteID') !== siteId) continue;
+    if (ledgerCell_(row, packed.map, 'BatchID') !== batchId) continue;
+    if (ledgerCell_(row, packed.map, 'CommitSHA') !== commitSHA) continue;
+    matching.push(row);
+  }
+  // Older receipt attempts wrote one receipt identity per page. Keep the
+  // first row for each known path and remove only duplicate G015 rows from
+  // this bounded repair target before applying the canonical identity.
+  var retainedByPath = {};
+  var duplicateRowIndexes = [];
+  for (var m = 0; m < matching.length; m++) {
+    var matchingPath = ledgerNormalizePath_(ledgerCell_(matching[m], packed.map, '页面路径') ||
+      ledgerCell_(matching[m], packed.map, 'PrimaryURL'));
+    if (retainedByPath[matchingPath]) {
+      duplicateRowIndexes.push(packed.rows.indexOf(matching[m]) + 2);
+    } else {
+      retainedByPath[matchingPath] = true;
+    }
+  }
+  for (var d = duplicateRowIndexes.length - 1; d >= 0; d--) packed.sheet.deleteRow(duplicateRowIndexes[d]);
+  if (duplicateRowIndexes.length) {
+    packed = loadLedgerSheetRows_(SHEET_NAMES.CONTENT_UPDATES);
+    matching = [];
+    for (var n = 0; n < packed.rows.length; n++) {
+      var retained = packed.rows[n];
+      if (ledgerCell_(retained, packed.map, 'SiteID') === siteId &&
+          ledgerCell_(retained, packed.map, 'BatchID') === batchId &&
+          ledgerCell_(retained, packed.map, 'CommitSHA') === commitSHA) matching.push(retained);
+    }
+  }
+  var receiptKey = matching.length ? ledgerCell_(matching[0], packed.map, 'ReceiptKey') : '';
+  var interventionId = matching.length ? ledgerCell_(matching[0], packed.map, 'InterventionID') : '';
+  receiptKey = receiptKey || batchId;
+  interventionId = interventionId || batchId;
+
+  // Correct contaminated rows before the idempotent receipt upsert. If the
+  // old positional writer put its timestamp under GoalID, preserve it as the
+  // actual receipt time; otherwise use this repair's recorded timestamp.
+  var repaired = 0;
+  var goalCol = packed.map.GoalID;
+  var recordedCol = packed.map.RecordedAt;
+  for (var r = 0; r < matching.length; r++) {
+    var current = matching[r].slice();
+    var recorded = recordedCol === undefined ? '' : current[recordedCol];
+    var misplaced = goalCol === undefined ? '' : current[goalCol];
+    var nextRecorded = ledgerBlank_(recorded) && /^\d{4}-\d{2}-\d{2}[T ]/.test(String(misplaced || '').trim())
+      ? misplaced : (recorded || nowRecordedAt_());
+    var changed = false;
+    var pagePath = ledgerNormalizePath_(ledgerCell_(matching[r], packed.map, '页面路径') ||
+      ledgerCell_(matching[r], packed.map, 'PrimaryURL'));
+    var pageReceiptCol = packed.map.PageReceiptKey;
+    var receiptCol = packed.map.ReceiptKey;
+    var interventionCol = packed.map.InterventionID;
+    var canonicalPageReceipt = receiptKey + '|' + pagePath;
+    if (receiptCol !== undefined && current[receiptCol] !== receiptKey) { current[receiptCol] = receiptKey; changed = true; }
+    if (interventionCol !== undefined && current[interventionCol] !== interventionId) { current[interventionCol] = interventionId; changed = true; }
+    if (pageReceiptCol !== undefined && current[pageReceiptCol] !== canonicalPageReceipt) { current[pageReceiptCol] = canonicalPageReceipt; changed = true; }
+    if (goalCol !== undefined && current[goalCol] !== 'G015') { current[goalCol] = 'G015'; changed = true; }
+    if (recordedCol !== undefined && ledgerBlank_(current[recordedCol])) { current[recordedCol] = nextRecorded; changed = true; }
+    if (changed) {
+      var rowIndex = packed.rows.indexOf(matching[r]) + 2;
+      packed.sheet.getRange(rowIndex, 1, 1, packed.header.length).setValues([current]);
+      repaired++;
+    }
+  }
+
+  var affectedPages = pages.map(function (page) {
+    return {
+      path: page.path,
+      action: page.action,
+      primaryURL: productionURL.replace(/\/$/, '') + page.path,
+      triggerType: page.queries.length ? 'GSC_QUERY_PAGE' : '',
+      triggerQueries: page.queries,
+      triggerSummary: page.queries.length ? 'G015 Wave 1 production intervention evidence' : '',
+      sourceRefs: page.queries.length ? ['GSC Query页面明细'] : [],
+      reason: 'G015 Wave 1 launch expansion'
+    };
+  });
+  var repairReceipt = normalizeDeploymentReceipt_({
+    schemaVersion: DEPLOYMENT_RECEIPT_SCHEMA_VERSION,
+    receiptKey: receiptKey,
+    interventionId: interventionId,
+    goalId: 'G015',
+    siteId: siteId,
+    siteName: siteName,
+    batchId: batchId,
+    productionDeployedAt: productionDeployedAt,
+    commitSHA: commitSHA,
+    deploymentURL: productionURL,
+    productionURL: productionURL,
+    releaseDate: '2026-08-29',
+    releaseOffsetDay: '',
+    lifecyclePhase: 'LAUNCH_EXPANSION',
+    action: 'UPDATE_PAGE',
+    affectedPages: affectedPages
+  });
+  resolveDeploymentReceiptAttribution_(repairReceipt);
+  validateDeploymentReceipt_(repairReceipt);
+  var result = ingestDeploymentReceipt_(repairReceipt);
+  // Recompute the six durable baseline fields from authoritative pre-launch
+  // tables. This bounded repair also removes legacy zero placeholders when the
+  // correct result is unavailable; it never promotes incomplete history.
+  var baselinePacked = loadLedgerSheetRows_(SHEET_NAMES.CONTENT_UPDATES);
+  var baselineByPath = {};
+  pages.forEach(function (page) {
+    baselineByPath[page.path] = captureDeploymentBaseline_(
+      siteName, page.path, productionURL, '2026-08-29', '', page.action
+    );
+  });
+  var baselineFields = ['BaselineDataDate', 'BaselinePageClicks7D',
+    'BaselinePageImpressions7D', 'BaselinePageCTR', 'BaselinePagePosition',
+    'BaselinePageQueryCount7D', 'BaselineSiteClicks7D',
+    'BaselineSiteImpressions7D'];
+  for (var b = 0; b < baselinePacked.rows.length; b++) {
+    var baselineRow = baselinePacked.rows[b];
+    if (ledgerCell_(baselineRow, baselinePacked.map, 'SiteID') !== siteId ||
+        ledgerCell_(baselineRow, baselinePacked.map, 'BatchID') !== batchId ||
+        ledgerCell_(baselineRow, baselinePacked.map, 'CommitSHA') !== commitSHA) continue;
+    var baselinePath = ledgerNormalizePath_(ledgerCell_(baselineRow, baselinePacked.map, '页面路径') ||
+      ledgerCell_(baselineRow, baselinePacked.map, 'PrimaryURL'));
+    var recoveredBaseline = baselineByPath[baselinePath];
+    if (!recoveredBaseline) continue;
+    var baselineNext = baselineRow.slice();
+    var baselineChanged = false;
+    baselineFields.forEach(function (header) {
+      var col = baselinePacked.map[header];
+      if (col === undefined) return;
+      var nextValue = recoveredBaseline[{
+        BaselineDataDate: 'dataDate', BaselinePageClicks7D: 'clicks',
+        BaselinePageImpressions7D: 'impressions', BaselinePageCTR: 'ctr',
+        BaselinePagePosition: 'position', BaselinePageQueryCount7D: 'queryCount',
+        BaselineSiteClicks7D: 'siteClicks', BaselineSiteImpressions7D: 'siteImpressions'
+      }[header]];
+      if (baselineNext[col] !== nextValue) { baselineNext[col] = nextValue; baselineChanged = true; }
+    });
+    if (baselineChanged) {
+      baselinePacked.sheet.getRange(b + 2, 1, 1, baselinePacked.header.length).setValues([baselineNext]);
+    }
+  }
+  var reconciliation = reconcileInterventionPipeline();
+  return {
+    ok: true,
+    receipt: result,
+    repairedIdentityRows: repaired,
+    reconciliation: reconciliation,
+    expectedPages: pages.length
+  };
+}
+
+/** Read-only production evidence for the bounded G015 repair. */
+function inspectG015BrigandineInterventionReceipts() {
+  var siteId = 'brigandine-abyss';
+  var batchId = 'G015-p1b-launch-expansion-20260829';
+  var commitSHA = 'ff757f81d89226aad7b753c3c24e19e03af77536';
+  var content = loadLedgerSheetRows_(SHEET_NAMES.CONTENT_UPDATES);
+  var rows = [];
+  for (var i = 0; i < content.rows.length; i++) {
+    var row = content.rows[i];
+    if (ledgerCell_(row, content.map, 'SiteID') !== siteId ||
+        ledgerCell_(row, content.map, 'BatchID') !== batchId ||
+        ledgerCell_(row, content.map, 'CommitSHA') !== commitSHA) continue;
+    var item = {};
+    ['页面路径', 'Action', 'GoalID', 'RecordedAt', 'BaselineDataDate',
+      'BaselinePageClicks7D', 'BaselinePageImpressions7D', 'BaselinePageCTR',
+      'BaselinePagePosition', 'BaselinePageQueryCount7D', 'BaselineSiteClicks7D',
+      'BaselineSiteImpressions7D', 'BaselineMode', 'TriggerQueries',
+      'InterventionID', 'ReceiptKey', 'PageReceiptKey'].forEach(function (header) {
+        item[header] = ledgerRawCell_(row, content.map, header);
+      });
+    rows.push(item);
+  }
+  var ids = {};
+  for (var r = 0; r < rows.length; r++) ids[rows[r].InterventionID] = true;
+  var observations = loadLedgerSheetRows_(SHEET_NAMES.INTERVENTION_OBSERVATIONS);
+  var observationCount = 0;
+  var observationRows = [];
+  Object.keys(ids).forEach(function (id) {
+    for (var o = 0; o < observations.rows.length; o++) {
+      if (ledgerCell_(observations.rows[o], observations.map, 'InterventionID') !== id) continue;
+      observationCount++;
+      var observation = {};
+      ['PrimaryURL', 'Horizon', 'TargetDate', 'Status', 'BaselineDataDate',
+        'BaselineClicks7D', 'BaselineImpressions7D', 'BaselineCTR',
+        'BaselinePosition', 'BaselineQueryCount7D', 'BaselineSiteClicks7D',
+        'BaselineSiteImpressions7D', 'BaselineMode'].forEach(function (header) {
+          observation[header] = ledgerRawCell_(observations.rows[o], observations.map, header);
+        });
+      observationRows.push(observation);
+    }
+  });
+  var timeline = loadLedgerSheetRows_(SHEET_NAMES.INTERVENTION_TIMELINE);
+  var timelineCount = 0;
+  Object.keys(ids).forEach(function (id) {
+    for (var t = 0; t < timeline.rows.length; t++) {
+      if (ledgerCell_(timeline.rows[t], timeline.map, 'InterventionID') === id) timelineCount++;
+    }
+  });
+  return { headers: content.header, rows: rows, observationRows: observationRows,
+    observationCount: observationCount, timelineCount: timelineCount };
+}
+
+/** Repair only G015 content baseline fields from persisted native observations. */
+function repairG015BrigandineContentBaselineFields() {
+  var lock = LockService.getScriptLock();
+  if (!lock.tryLock(15000)) throw new Error('repairG015BrigandineContentBaselineFields: write lock busy');
+  try {
+    var content = loadLedgerSheetRows_(SHEET_NAMES.CONTENT_UPDATES);
+    var observations = loadLedgerSheetRows_(SHEET_NAMES.INTERVENTION_OBSERVATIONS);
+    var baselineByPath = {};
+    for (var i = 0; i < observations.rows.length; i++) {
+      var obs = observations.rows[i];
+      var id = ledgerCell_(obs, observations.map, 'InterventionID');
+      if (id !== '2026-08-29-brigandine-abyss-create-page-001') continue;
+      var path = ledgerNormalizePath_(ledgerCell_(obs, observations.map, 'PrimaryURL'));
+      if (baselineByPath[path]) continue;
+      baselineByPath[path] = {
+        dataDate: ledgerRawCell_(obs, observations.map, 'BaselineDataDate'),
+        clicks: ledgerRawCell_(obs, observations.map, 'BaselineClicks7D'),
+        impressions: ledgerRawCell_(obs, observations.map, 'BaselineImpressions7D'),
+        ctr: ledgerRawCell_(obs, observations.map, 'BaselineCTR'),
+        position: ledgerRawCell_(obs, observations.map, 'BaselinePosition'),
+        queryCount: ledgerRawCell_(obs, observations.map, 'BaselineQueryCount7D'),
+        siteClicks: ledgerRawCell_(obs, observations.map, 'BaselineSiteClicks7D'),
+        siteImpressions: ledgerRawCell_(obs, observations.map, 'BaselineSiteImpressions7D')
+      };
+    }
+    var fields = {
+      BaselineDataDate: 'dataDate', BaselinePageClicks7D: 'clicks',
+      BaselinePageImpressions7D: 'impressions', BaselinePageCTR: 'ctr',
+      BaselinePagePosition: 'position', BaselinePageQueryCount7D: 'queryCount',
+      BaselineSiteClicks7D: 'siteClicks', BaselineSiteImpressions7D: 'siteImpressions'
+    };
+    var repaired = 0;
+    for (var r = 0; r < content.rows.length; r++) {
+      var row = content.rows[r];
+      if (ledgerCell_(row, content.map, 'SiteID') !== 'brigandine-abyss' ||
+          ledgerCell_(row, content.map, 'BatchID') !== 'G015-p1b-launch-expansion-20260829' ||
+          ledgerCell_(row, content.map, 'CommitSHA') !== 'ff757f81d89226aad7b753c3c24e19e03af77536') continue;
+      var page = baselineByPath[ledgerNormalizePath_(ledgerCell_(row, content.map, '页面路径'))];
+      if (!page) continue;
+      var next = row.slice();
+      var changed = false;
+      Object.keys(fields).forEach(function (header) {
+        var col = content.map[header];
+        if (col === undefined) return;
+        var value = page[fields[header]];
+        if (next[col] !== value) { next[col] = value; changed = true; }
+      });
+      if (changed) {
+        content.sheet.getRange(r + 2, 1, 1, content.header.length).setValues([next]);
+        repaired++;
+      }
+    }
+    return { ok: true, repaired: repaired, pages: Object.keys(baselineByPath).length };
+  } finally {
+    lock.releaseLock();
+  }
+}
+
 function validateDeploymentReceiptSite_(receipt) {
   if (typeof getSpreadsheet_ !== 'function') return true;
   var ss = getSpreadsheet_();
@@ -1245,18 +1545,18 @@ function captureDeploymentBaseline_(site, primaryUrl, productionUrl, deployedDat
     }
   }
   if (!hasAnyPageEvidence && String(action || '').trim().toUpperCase() === 'CREATE_PAGE') {
-    baseline.clicks = 0;
-    baseline.impressions = 0;
+    baseline.clicks = '';
+    baseline.impressions = '';
     baseline.ctr = '';
     baseline.position = '';
-    baseline.queryCount = 0;
-    baseline.mode = 'NEW_URL_BASELINE';
+    baseline.queryCount = '';
+    baseline.mode = 'NEW_PAGE_NO_PRE_BASELINE';
   } else if (!hasAnyPageEvidence) {
-    baseline.clicks = 0;
-    baseline.impressions = 0;
+    baseline.clicks = '';
+    baseline.impressions = '';
     baseline.ctr = '';
     baseline.position = '';
-    baseline.queryCount = 0;
+    baseline.queryCount = '';
     baseline.mode = 'EXISTING_URL_NO_GSC_TRAFFIC';
   } else if (hasPageTraffic && deploymentHasSevenDayCoverage_(pages, site, target, end, false)) {
     baseline.mode = 'EXISTING_URL_BASELINE';
@@ -1277,13 +1577,12 @@ function captureDeploymentBaseline_(site, primaryUrl, productionUrl, deployedDat
 
 function deploymentBaselineComplete_(baseline) {
   baseline = baseline || {};
-  if (!String(baseline.dataDate || '').trim()) return false;
   var mode = String(baseline.mode || '').trim();
   if (mode === 'BASELINE_UNKNOWN') return false;
-  if (mode === 'NEW_URL_BASELINE' || mode === 'EXISTING_URL_NO_GSC_TRAFFIC') {
-    return !ledgerBlank_(baseline.clicks) && !ledgerBlank_(baseline.impressions) &&
-      !ledgerBlank_(baseline.queryCount);
+  if (mode === 'NEW_PAGE_NO_PRE_BASELINE' || mode === 'EXISTING_URL_NO_GSC_TRAFFIC') {
+    return true;
   }
+  if (!String(baseline.dataDate || '').trim()) return false;
   if (ledgerBlank_(baseline.clicks) || ledgerBlank_(baseline.impressions) ||
       ledgerBlank_(baseline.queryCount) || ledgerBlank_(baseline.siteClicks) ||
       ledgerBlank_(baseline.siteImpressions)) return false;
@@ -1356,9 +1655,7 @@ function repairDeploymentContentBaselineRows_(packed, rows, plan) {
       changed = true;
     });
     if (changed) {
-      packed.sheet.getRange(rowIndex, 1, 1, CONTENT_UPDATE_HEADERS.length).setValues([
-        row.slice(0, CONTENT_UPDATE_HEADERS.length)
-      ]);
+      packed.sheet.getRange(rowIndex, 1, 1, packed.header.length).setValues([row.slice()]);
       repaired++;
     }
   }
@@ -1413,16 +1710,14 @@ function buildDeploymentContentFields_(plan, page) {
 function upsertDeploymentContentPage_(plan, page) {
   var packed = loadLedgerSheetRows_(SHEET_NAMES.CONTENT_UPDATES);
   var fields = buildDeploymentContentFields_(plan, page);
-  var row = CONTENT_UPDATE_HEADERS.map(function (header) {
-    return fields[header] === undefined ? '' : fields[header];
-  });
+  var row = ledgerRowFromFields_(packed, fields);
   var match = findDeploymentContentPage_(packed, plan, page);
   if (match) {
-    var current = packed.rows[match.rowIndex - 2].slice(0, CONTENT_UPDATE_HEADERS.length);
-    for (var i = 0; i < CONTENT_UPDATE_HEADERS.length; i++) {
+    var current = packed.rows[match.rowIndex - 2].slice();
+    for (var i = 0; i < packed.header.length; i++) {
       if (ledgerBlank_(current[i]) && !ledgerBlank_(row[i])) current[i] = row[i];
     }
-    packed.sheet.getRange(match.rowIndex, 1, 1, CONTENT_UPDATE_HEADERS.length).setValues([current]);
+    packed.sheet.getRange(match.rowIndex, 1, 1, packed.header.length).setValues([current]);
     return { duplicate: true, rowIndex: match.rowIndex };
   }
   packed.sheet.appendRow(row);

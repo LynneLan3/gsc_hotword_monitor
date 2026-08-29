@@ -149,6 +149,10 @@ var SITE_REPOSITORY_REFERENCES_BY_ID_ = {
   'agent-64-spies-never-die': {
     repoPath: '/Users/lanling/Code/hot_words_websites/agent-64-short-domain-fix',
     githubRepo: 'LynneLan3/game-wiki-starter'
+  },
+  'serious-sam-shatterverse': {
+    repoPath: '/Users/lanling/Code/hot_words_websites/Serious Sam',
+    githubRepo: 'LynneLan3/Serious-Sam-Shatterverse'
   }
 };
 

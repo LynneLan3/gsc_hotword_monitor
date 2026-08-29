@@ -54,7 +54,8 @@ var knownStableSiteIds = {
   'Approximately Up': 'approximately-up',
   'Grain Rot': 'grain-rot',
   'Leafy Corner': 'leafy-corner',
-  'Agent 64: Spies Never Die': 'agent-64-spies-never-die'
+  'Agent 64: Spies Never Die': 'agent-64-spies-never-die',
+  'Serious Sam: Shatterverse': 'serious-sam-shatterverse'
 };
 
 function assertSiteIdentitySet(sites, label) {
