@@ -3,7 +3,7 @@
  *
  * SITE_LAUNCH is a single-receipt boundary: after the existing Experiment
  * Ledger records the launch, the same receipt idempotently enrolls the site in
- * GSC monitoring and marks the Steam site project as LIVE.  siteId is consumed
+ * GSC monitoring and marks the Steam site project as LIVE. siteId is consumed
  * from the receipt; it is never regenerated from the game name here.
  */
 var PUBLISH_RUNTIME_STEAM_SPREADSHEET_ID = '1WVg2p_Vero3MB2JN4yxmtHkLQRgkWO2mz95X4ms9nLE';
@@ -124,6 +124,15 @@ function publishRuntimeDate_(value) {
   return Utilities.formatDate(date, Session.getScriptTimeZone(), 'yyyy-MM-dd');
 }
 
+function publishRuntimePath_(value) {
+  var raw = String(value || '').trim();
+  if (!raw) return '';
+  raw = raw.replace(/^https?:\/\/[^/]+/i, '');
+  raw = raw.split(/[?#]/)[0] || '/';
+  if (raw.charAt(0) !== '/') raw = '/' + raw;
+  return raw;
+}
+
 function publishRuntimeLaunchPageCount_(common, launch) {
   var explicit = Number(common.launchPageCount);
   if (isFinite(explicit) && explicit >= 0) return explicit;
@@ -131,14 +140,10 @@ function publishRuntimeLaunchPageCount_(common, launch) {
   var seen = {};
   var count = 0;
   for (var i = 0; i < values.length; i++) {
-    var raw = String(values[i] || '').trim();
-    if (!raw) continue;
-    try {
-      var url = new URL(raw, String(common.productionUrl || ''));
-      var path = url.pathname || '/';
-      if (path === '/' || path === '/guides/' || path === '/routes/' || path === '/robots.txt' || path.indexOf('/sitemap') === 0) continue;
-      if (!seen[path]) { seen[path] = true; count += 1; }
-    } catch (e) {}
+    var path = publishRuntimePath_(values[i]);
+    if (!path) continue;
+    if (path === '/' || path === '/guides/' || path === '/routes/' || path === '/robots.txt' || path.indexOf('/sitemap') === 0) continue;
+    if (!seen[path]) { seen[path] = true; count += 1; }
   }
   return count;
 }
