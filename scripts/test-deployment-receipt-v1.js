@@ -103,7 +103,11 @@ function makeContext(today = '2026-08-24', existing = false) {
     ensureContentUpdateHeader_: () => {},
     loadDecisionIdSetFromHistory_: () => ({}),
     writeLog_: () => {},
-    LockService: { getScriptLock: () => ({ tryLock: () => true, releaseLock: () => {} }) },
+    withSharedWriteLock_: (fn) => fn(),
+    LockService: {
+      getScriptLock: () => ({ tryLock: () => true, releaseLock: () => {} }),
+      getUserLock: () => ({ tryLock: () => true, releaseLock: () => {} })
+    },
     PropertiesService: { getScriptProperties: () => ({ getProperty: () => 'secret', setProperty: () => {} }) },
     Utilities: { formatDate: () => '2026-08-24' },
     Session: { getScriptTimeZone: () => 'Asia/Shanghai' }

@@ -48,13 +48,9 @@ function recordPublishedBatch(payload) {
   validatePublishedReceipt_(receipt);
   if (receipt.dryRun) return planPublishedBatch_(receipt, true);
 
-  var lock = LockService.getScriptLock();
-  if (!lock.tryLock(15000)) throw new Error('recordPublishedBatch: ledger write lock busy');
-  try {
+  return withSharedWriteLock_(function () {
     return planPublishedBatch_(receipt, false);
-  } finally {
-    lock.releaseLock();
-  }
+  });
 }
 
 function normalizePublishedReceipt_(payload) {
@@ -872,9 +868,8 @@ function maintainExperimentLedger_() {
 
 /** Independent manual/debug entry point. */
 function runExperimentLedgerMaintenance() {
-  var lock = LockService.getScriptLock();
-  if (!lock.tryLock(15000)) throw new Error('runExperimentLedgerMaintenance: lock busy');
-  try {
+  return withSharedWriteLock_(function () {
+    try {
     setupSheets();
     var result = maintainExperimentLedger_();
     writeLog_('INFO', '', 'runExperimentLedgerMaintenance completed ' + JSON.stringify(result));
@@ -882,9 +877,8 @@ function runExperimentLedgerMaintenance() {
   } catch (e) {
     writeLog_('WARN', '', 'runExperimentLedgerMaintenance failed: ' + (e.message || e));
     throw e;
-  } finally {
-    lock.releaseLock();
-  }
+    }
+  });
 }
 
 function compactLedgerResult_(plan, status) {
@@ -905,13 +899,9 @@ function ingestDeploymentReceipt(receipt) {
   var normalized = normalizeDeploymentReceipt_(receipt);
   resolveDeploymentReceiptAttribution_(normalized);
   validateDeploymentReceipt_(normalized);
-  var lock = LockService.getScriptLock();
-  if (!lock.tryLock(15000)) throw new Error('ingestDeploymentReceipt: write lock busy');
-  try {
+  return withSharedWriteLock_(function () {
     return ingestDeploymentReceipt_(normalized);
-  } finally {
-    lock.releaseLock();
-  }
+  });
 }
 
 function normalizeDeploymentReceipt_(input) {
@@ -1083,18 +1073,234 @@ function ingestDeploymentReceipt_(receipt) {
 }
 
 /**
+ * One-time, idempotent bookkeeping repair for the already deployed P.I.T.T.
+ * intent-refresh intervention. This is deliberately fixed to the supplied
+ * receipt identity; it is not a new tracking surface or a general importer.
+ */
+function repairPittIntentRefresh20260829() {
+  return withSharedWriteLock_(function () {
+    try {
+    var batchId = 'PITT-GSC-INTENT-REFRESH-20260829';
+    var interventionId = batchId;
+    var commitSHA = '82ab1c840ed6e020f12abcb1fd633049f5cd2f71';
+    var receiptKey = 'project-p-i-t-t|' + commitSHA + '|CONTENT_REFRESH|' + batchId;
+    var deployedAt = '2026-08-29T04:41:59Z';
+    var siteName = 'Project P.I.T.T.';
+    var siteId = 'project-p-i-t-t';
+    var productionURL = 'https://project-p-i-t-t.vercel.app';
+    var deploymentURL = 'https://project-p-i-t-3eon8c604-lynnelan3s-projects.vercel.app';
+    var pages = [
+      ['/percentage-pipe/', ['project pitt percentage pipe', 'project pitt pipe 0 percent', 'project pitt what to put in pipe'], 'Refresh Full Release 0% to 100% solution: 10 Anomalies × 10% → 100% → IGTAP.'],
+      ['/up-achievement-fuses/', ['project pitt fuses', 'project pitt fuse box', 'project pitt up achievement'], 'Clarify three Fuse search landmarks, Fuse Box, insertion, UP? linkage, and 200kg progression.'],
+      ['/x300-combo/', ['project pitt x300 combo', 'project pitt 300 combo', 'project pitt mega achievement'], 'Convert abstract automation guidance into a concrete single-lane 300 Combo operating procedure.'],
+      ['/200kg-plate/', ['project pitt 200kg', 'project pitt 200kg scale', 'what to do after 200kg project pitt'], 'Light winner-page reinforcement: mass/items, workable combinations, weight query, and next step.']
+    ];
+
+    ensureDevelopmentTaskSheets_();
+    var taskSheet = getSpreadsheet_().getSheetByName(SHEET_NAMES.DEVELOPMENT_TASKS);
+    var existingTasks = loadExistingDevelopmentTaskKeys_(taskSheet);
+    var taskId = developmentTaskIdFromSource_(batchId);
+    var taskCreated = false;
+    if (!existingTasks.sourceIds[batchId] && taskSheet) {
+      var task = {
+        development_task_id: taskId,
+        created_at: new Date(deployedAt),
+        source_job_id: batchId,
+        site: siteName,
+        game: siteName,
+        page_path: '/percentage-pipe/',
+        goal: DEVELOPMENT_GOAL_LABELS.UPDATE_EXISTING,
+        evidence_link: 'content-jobs/percentage-pipe/research.md; content-jobs/fuses/research.md; content-jobs/x300-combo/research.md; content-jobs/200kg-scale/research.md',
+        priority: DEVELOPMENT_PRIORITY_LABELS.HIGH,
+        status: DEVELOPMENT_TASK_STATUS_LABELS.DONE,
+        completed_at: new Date(deployedAt),
+        note: 'Bookkeeping repair for deployed four-page intervention; authority URLs preserved; no new page.',
+        opportunity_id: '',
+        decision_id: '',
+        site_id: siteId,
+        action_type: 'CONTENT_REFRESH',
+        task_type: 'CONTENT_IMPLEMENTATION',
+        task_reason: 'PITT second-round GSC intent refresh; four existing authority pages.',
+        source_reference: 'Batch/' + batchId,
+        handoff_status: 'DONE',
+        handoff_reference: receiptKey
+      };
+      taskSheet.appendRow(developmentTaskSheetRow_(task));
+      taskCreated = true;
+    }
+
+    var reconciled = reconcilePittRefreshActions_(siteName);
+    if (typeof syncHumanDecisions === 'function') syncHumanDecisions();
+
+    var receipt = {
+      schemaVersion: DEPLOYMENT_RECEIPT_SCHEMA_VERSION,
+      receiptKey: receiptKey,
+      interventionId: interventionId,
+      developmentTaskId: taskId,
+      siteId: siteId,
+      siteName: siteName,
+      batchId: batchId,
+      commitSHA: commitSHA,
+      deploymentURL: deploymentURL,
+      productionURL: productionURL,
+      productionDeployedAt: deployedAt,
+      releaseDate: '2026-08-19',
+      lifecyclePhase: 'GSC_INTENT_REFRESH',
+      action: 'CONTENT_REFRESH',
+      contentProvider: 'APIMart',
+      contentModel: 'gpt-5-mini',
+      generationCalls: 4,
+      affectedPages: pages.map(function (item) {
+        return {
+          path: item[0],
+          action: 'CONTENT_REFRESH',
+          primaryURL: productionURL + item[0],
+          triggerType: 'GSC_INTENT_REFRESH',
+          triggerQueries: item[1],
+          triggerSummary: item[2],
+          sourceRefs: ['content-jobs/' + (item[0] === '/up-achievement-fuses/' ? 'fuses' : item[0] === '/200kg-plate/' ? '200kg-scale' : item[0].replace(/^\//, '').replace(/\/$/, '')) + '/research.md', 'APIMart article output'],
+          reason: 'CONTENT_REFRESH; existing authority URL'
+        };
+      })
+    };
+    resolveDeploymentReceiptAttribution_(receipt);
+    validateDeploymentReceipt_(receipt);
+    var receiptResult = ingestDeploymentReceipt_(receipt);
+    repairPittRefreshBaselineModes_(receiptKey, interventionId);
+    var verification = verifyPittRefreshLedger_(receiptKey, interventionId, pages);
+    return {
+      ok: true,
+      taskId: taskId,
+      taskCreated: taskCreated,
+      reconciled: reconciled,
+      receipt: receiptResult,
+      verification: verification
+    };
+    } catch (e) {
+      throw e;
+    }
+  });
+}
+
+function reconcilePittRefreshActions_(siteName) {
+  var result = { todayActions: 0, decisionHistory: 0, records: [] };
+  var marker = 'RECONCILED ' + 'PITT-GSC-INTENT-REFRESH-20260829';
+  var actionSheet = getSpreadsheet_().getSheetByName(SHEET_NAMES.TODAY_ACTIONS);
+  if (actionSheet && actionSheet.getLastRow() >= 2) {
+    var width = Math.max(actionSheet.getLastColumn(), TODAY_ACTION_HEADERS.length);
+    var header = actionSheet.getRange(1, 1, 1, width).getValues()[0];
+    var map = headerIndexMap_(header);
+    var rows = actionSheet.getRange(2, 1, actionSheet.getLastRow() - 1, width).getValues();
+    for (var i = 0; i < rows.length; i++) {
+      var row = rows[i];
+      var action = String(row[map.RecommendedAction] || '').trim().toUpperCase();
+      var status = String(row[map.Status] || '').trim().toUpperCase();
+      var rowText = row.map(function (value) { return String(value || ''); }).join(' ').toUpperCase();
+      if (String(row[map.Site] || '').trim() !== siteName ||
+          !(action === 'NEW_PAGE' || action.indexOf('NEW_PAGE') >= 0 || action.indexOf('新建') >= 0) ||
+          !(rowText.indexOf('200KG') >= 0 || rowText.indexOf('FUSE') >= 0 || rowText.indexOf('保险丝') >= 0) ||
+          !(status === 'TODO' || status === '待开发')) continue;
+      row[map.Status] = 'SKIP';
+      if (map['人工备注'] !== undefined) row[map['人工备注']] = marker + '；existing authority page for 200kg/Fuse retained';
+      actionSheet.getRange(i + 2, 1, 1, width).setValues([row]);
+      result.todayActions++;
+      result.records.push({ source: '今日行动', row: i + 2, action: action, decisionId: map.DecisionID === undefined ? '' : String(row[map.DecisionID] || '') });
+    }
+  }
+  var historySheet = getSpreadsheet_().getSheetByName(SHEET_NAMES.DECISION_HISTORY);
+  if (historySheet && historySheet.getLastRow() >= 2) {
+    var hWidth = Math.max(historySheet.getLastColumn(), DECISION_HISTORY_HEADERS.length);
+    var hHeader = historySheet.getRange(1, 1, 1, hWidth).getValues()[0];
+    var hMap = headerIndexMap_(hHeader);
+    var hRows = historySheet.getRange(2, 1, historySheet.getLastRow() - 1, hWidth).getValues();
+    for (var h = 0; h < hRows.length; h++) {
+      var hRow = hRows[h];
+      var hAction = String(hRow[hMap.RecommendedAction] || '').trim().toUpperCase();
+      var hSite = String(hRow[hMap.Site] || '').trim();
+      var hText = hRow.map(function (value) { return String(value || ''); }).join(' ').toUpperCase();
+      if (hSite !== siteName || !(hAction === 'NEW_PAGE' || hAction.indexOf('NEW_PAGE') >= 0 || hAction.indexOf('新建') >= 0) ||
+          !(hText.indexOf('200KG') >= 0 || hText.indexOf('FUSE') >= 0 || hText.indexOf('保险丝') >= 0)) continue;
+      var note = hMap.HumanNote === undefined ? '' : String(hRow[hMap.HumanNote] || '');
+      if (note.indexOf(marker) >= 0) continue;
+      if (hMap.HumanDecision !== undefined) historySheet.getRange(h + 2, hMap.HumanDecision + 1).setValue('SKIP');
+      if (hMap.HumanNote !== undefined) historySheet.getRange(h + 2, hMap.HumanNote + 1).setValue(marker + '；existing authority page retained');
+      result.decisionHistory++;
+      result.records.push({ source: '决策历史', row: h + 2, action: hAction, decisionId: hMap.DecisionID === undefined ? '' : String(hRow[hMap.DecisionID] || '') });
+    }
+  }
+  return result;
+}
+
+function repairPittRefreshBaselineModes_(receiptKey, interventionId) {
+  var mode = 'PERSISTED_PRE_DEPLOYMENT_GSC';
+  var targets = [
+    { sheetName: SHEET_NAMES.CONTENT_UPDATES, idHeader: 'ReceiptKey', modeHeader: 'BaselineMode' },
+    { sheetName: SHEET_NAMES.INTERVENTION_OBSERVATIONS, idHeader: 'InterventionID', modeHeader: 'BaselineMode' }
+  ];
+  var repaired = 0;
+  targets.forEach(function (target) {
+    var packed = loadLedgerSheetRows_(target.sheetName);
+    var idCol = packed.map[target.idHeader];
+    var interventionCol = packed.map.InterventionID;
+    var modeCol = packed.map[target.modeHeader];
+    if (idCol === undefined || modeCol === undefined) return;
+    for (var i = 0; i < packed.rows.length; i++) {
+      var row = packed.rows[i];
+      var matches = target.idHeader === 'ReceiptKey'
+        ? String(row[idCol] || '').trim() === receiptKey
+        : String(row[interventionCol] || '').trim() === interventionId;
+      if (matches && ledgerBlank_(row[modeCol])) {
+        packed.sheet.getRange(i + 2, modeCol + 1).setValue(mode);
+        repaired++;
+      }
+    }
+  });
+  return repaired;
+}
+
+function verifyPittRefreshLedger_(receiptKey, interventionId, pages) {
+  var content = loadLedgerSheetRows_(SHEET_NAMES.CONTENT_UPDATES);
+  var observations = loadLedgerSheetRows_(SHEET_NAMES.INTERVENTION_OBSERVATIONS);
+  var pagePaths = pages.map(function (p) { return p[0]; });
+  var contentMatches = [];
+  for (var i = 0; i < content.rows.length; i++) {
+    var row = content.rows[i];
+    if (ledgerCell_(row, content.map, 'ReceiptKey') === receiptKey && ledgerCell_(row, content.map, 'InterventionID') === interventionId) {
+      contentMatches.push({ path: ledgerNormalizePath_(ledgerCell_(row, content.map, '页面路径')), baselineDataDate: ledgerCell_(row, content.map, 'BaselineDataDate'), baselineMode: ledgerCell_(row, content.map, 'BaselineMode') });
+    }
+  }
+  var observationMatches = {};
+  for (var o = 0; o < observations.rows.length; o++) {
+    var obs = observations.rows[o];
+    if (ledgerCell_(obs, observations.map, 'InterventionID') !== interventionId) continue;
+    var key = ledgerNormalizePath_(ledgerCell_(obs, observations.map, 'PrimaryURL')) + '|' + ledgerCell_(obs, observations.map, 'Horizon');
+    observationMatches[key] = (observationMatches[key] || 0) + 1;
+  }
+  var expected = {};
+  pagePaths.forEach(function (p) { ['D1', 'D3', 'D7', 'D14'].forEach(function (h) { expected[p + '|' + h] = true; }); });
+  var duplicateObservations = Object.keys(observationMatches).filter(function (k) { return observationMatches[k] > 1; });
+  return {
+    contentRows: contentMatches,
+    contentRowsExactlyFour: contentMatches.length === 4 && pagePaths.every(function (p) { return contentMatches.some(function (m) { return m.path === p; }); }),
+    observationCount: Object.keys(observationMatches).length,
+    observationsExactly16: Object.keys(observationMatches).length === 16 && Object.keys(expected).every(function (k) { return observationMatches[k] === 1; }),
+    duplicateObservations: duplicateObservations
+  };
+}
+
+/**
  * Bounded, idempotent repair for the G015 BRIGANDINE ABYSS Wave 1 receipt.
  * It reuses the existing receipt identity when present, adds only the three
  * missing pages, and repairs the two identity fields by actual header name.
  */
 function repairG015BrigandineInterventionReceipts() {
-  var lock = LockService.getScriptLock();
-  if (!lock.tryLock(15000)) throw new Error('repairG015BrigandineInterventionReceipts: write lock busy');
-  try {
+  return withSharedWriteLock_(function () {
+    try {
     return repairG015BrigandineInterventionReceiptsUnlocked_();
-  } finally {
-    lock.releaseLock();
-  }
+    } catch (e) {
+      throw e;
+    }
+  });
 }
 
 function repairG015BrigandineInterventionReceiptsUnlocked_() {
@@ -1319,9 +1525,8 @@ function inspectG015BrigandineInterventionReceipts() {
 
 /** Repair only G015 content baseline fields from persisted native observations. */
 function repairG015BrigandineContentBaselineFields() {
-  var lock = LockService.getScriptLock();
-  if (!lock.tryLock(15000)) throw new Error('repairG015BrigandineContentBaselineFields: write lock busy');
-  try {
+  return withSharedWriteLock_(function () {
+    try {
     var content = loadLedgerSheetRows_(SHEET_NAMES.CONTENT_UPDATES);
     var observations = loadLedgerSheetRows_(SHEET_NAMES.INTERVENTION_OBSERVATIONS);
     var baselineByPath = {};
@@ -1370,9 +1575,10 @@ function repairG015BrigandineContentBaselineFields() {
       }
     }
     return { ok: true, repaired: repaired, pages: Object.keys(baselineByPath).length };
-  } finally {
-    lock.releaseLock();
-  }
+    } catch (e) {
+      throw e;
+    }
+  });
 }
 
 function validateDeploymentReceiptSite_(receipt) {
@@ -2149,13 +2355,9 @@ function repairPittInterventionObservations() {
 
 /** Daily runner entry point; no new trigger is created. */
 function runInterventionObservations() {
-  var lock = LockService.getScriptLock();
-  if (!lock.tryLock(15000)) throw new Error('runInterventionObservations: lock busy');
-  try {
+  return withSharedWriteLock_(function () {
     return runInterventionObservationsUnlocked_();
-  } finally {
-    lock.releaseLock();
-  }
+  });
 }
 
 function runInterventionObservationsUnlocked_() {

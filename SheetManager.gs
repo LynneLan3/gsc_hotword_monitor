@@ -804,26 +804,28 @@ function getSiteConfigColumns_(sheet) {
  * @return {{rowIndex:number, action:string}} action = 'insert' | 'update'
  */
 function upsertRow_(sheetName, headers, row, keyFn) {
-  var sheet = getSpreadsheet_().getSheetByName(sheetName);
-  if (!sheet) {
-    sheet = ensureSheet_(sheetName, headers);
-  }
+  return withSharedWriteLock_(function () {
+    var sheet = getSpreadsheet_().getSheetByName(sheetName);
+    if (!sheet) {
+      sheet = ensureSheet_(sheetName, headers);
+    }
 
-  var lastRow = sheet.getLastRow();
-  var key = keyFn(row);
+    var lastRow = sheet.getLastRow();
+    var key = keyFn(row);
 
-  if (lastRow >= 2) {
-    var existing = sheet.getRange(2, 1, lastRow, headers.length).getValues();
-    for (var i = 0; i < existing.length; i++) {
-      if (keyFn(existing[i]) === key) {
-        sheet.getRange(i + 2, 1, 1, headers.length).setValues([row]);
-        return { rowIndex: i + 2, action: 'update' };
+    if (lastRow >= 2) {
+      var existing = sheet.getRange(2, 1, lastRow, headers.length).getValues();
+      for (var i = 0; i < existing.length; i++) {
+        if (keyFn(existing[i]) === key) {
+          sheet.getRange(i + 2, 1, 1, headers.length).setValues([row]);
+          return { rowIndex: i + 2, action: 'update' };
+        }
       }
     }
-  }
 
-  sheet.appendRow(row);
-  return { rowIndex: sheet.getLastRow(), action: 'insert' };
+    sheet.appendRow(row);
+    return { rowIndex: sheet.getLastRow(), action: 'insert' };
+  });
 }
 
 function upsertDailyRow_(row) {
@@ -874,9 +876,11 @@ function appendSnapshotRow_(row) {
 }
 
 function appendUrlIndexRow_(row) {
-  var sheet = getSpreadsheet_().getSheetByName(SHEET_NAMES.URL_INDEX);
-  if (!sheet) sheet = ensureSheet_(SHEET_NAMES.URL_INDEX, URL_INDEX_HEADERS);
-  sheet.appendRow(row);
+  return withSharedWriteLock_(function () {
+    var sheet = getSpreadsheet_().getSheetByName(SHEET_NAMES.URL_INDEX);
+    if (!sheet) sheet = ensureSheet_(SHEET_NAMES.URL_INDEX, URL_INDEX_HEADERS);
+    sheet.appendRow(row);
+  });
 }
 
 /**

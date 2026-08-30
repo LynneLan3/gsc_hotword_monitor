@@ -27,9 +27,19 @@ if (receipt?.schemaVersion !== 'hotword-publish-receipt-v1' || missing.length ||
   process.exit(2);
 }
 
+const isSiteLaunch = interventions.some((item) => String(item?.action || '').trim().toUpperCase() === 'SITE_LAUNCH');
+if (isSiteLaunch) {
+  const launchRequired = ['game', 'steamAppId', 'decisionId', 'opportunityId', 'repositoryUrl', 'sitemapUrl'];
+  const launchMissing = launchRequired.filter((key) => !common || !String(common[key] || '').trim());
+  if (launchMissing.length) {
+    console.error(`FAIL SITE_LAUNCH runtime fields missing: ${launchMissing.join(', ')}`);
+    process.exit(2);
+  }
+}
+
 const params = JSON.stringify([receipt]);
 const claspUser = process.env.HOTWORD_CLASP_USER?.trim() || 'hotword-ledger';
-const result = spawnSync('clasp', ['--json', 'run', 'recordPublishedBatch', '--user', claspUser, '--params', params], {
+const result = spawnSync('clasp', ['--json', 'run', 'recordPublishedBatchWithRuntimeSync', '--user', claspUser, '--params', params], {
   cwd: path.resolve(path.dirname(new URL(import.meta.url).pathname), '..'),
   encoding: 'utf8'
 });
@@ -37,7 +47,7 @@ const result = spawnSync('clasp', ['--json', 'run', 'recordPublishedBatch', '--u
 const stdout = String(result.stdout || '').trim();
 const stderr = String(result.stderr || '').trim();
 if (result.error || result.status !== 0) {
-  console.error(`FAIL ledger writeback: ${result.error ? result.error.message : stderr || stdout || `exit ${result.status}`}`);
+  console.error(`FAIL ledger/runtime writeback: ${result.error ? result.error.message : stderr || stdout || `exit ${result.status}`}`);
   process.exit(result.status || 1);
 }
 
@@ -51,10 +61,16 @@ try {
 
 const value = response && (response.response || response.result) ? (response.response || response.result) : response;
 if (!value || value.ok !== true) {
-  console.error(`FAIL ledger writeback: ${stdout}`);
+  console.error(`FAIL ledger/runtime writeback: ${stdout}`);
+  process.exit(1);
+}
+
+if (isSiteLaunch && (!value.runtimeSync || value.runtimeSync.ok !== true)) {
+  console.error(`FAIL SITE_LAUNCH runtime sync incomplete: ${stdout}`);
   process.exit(1);
 }
 
 const ids = (value.interventions || []).map((item) => item.interventionId).filter(Boolean).join(',');
 const baseline = (value.interventions || []).map((item) => item.baselineDataDate || '(blank)').join(',');
-console.log(`PASS ledger writeback batch=${value.batchId || ''} interventions=${ids || '(none)'} baseline=${baseline}`);
+const runtime = value.runtimeSync?.ok ? ` runtime=PASS siteId=${value.runtimeSync.siteId || common.siteId}` : '';
+console.log(`PASS ledger writeback batch=${value.batchId || ''} interventions=${ids || '(none)'} baseline=${baseline}${runtime}`);

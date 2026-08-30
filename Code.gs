@@ -79,26 +79,9 @@ function runDailyContinuation_() {
 }
 
 function runDailyWithLock_(isContinuation) {
-  var lock = LockService.getScriptLock();
-  if (!lock.tryLock(15000)) {
-    var skipMsg = isContinuation
-      ? 'runDaily 续跑跳过：已有实例在运行（LockService）'
-      : 'runDaily 跳过：已有实例在运行（LockService）';
-    writeLog_('WARN', '', skipMsg);
-    Logger.log(isContinuation ? 'runDaily continuation skipped: lock busy' : 'runDaily skipped: lock busy');
-    if (isContinuation) {
-      scheduleDailyContinuation_();
-    }
-    return isContinuation
-      ? 'runDaily continuation skipped: lock busy'
-      : 'runDaily skipped: lock busy';
-  }
-
-  try {
-    return runDailyUnlocked_(!!isContinuation);
-  } finally {
-    lock.releaseLock();
-  }
+  // GSC/API collection must not hold the shared spreadsheet lock. Individual
+  // write primitives and the short finalizer phase acquire it as needed.
+  return runDailyUnlocked_(!!isContinuation);
 }
 
 /** runDaily 主体（已持锁） */
@@ -206,24 +189,15 @@ function runDailyUnlocked_(isContinuation) {
  * 不重置分批采集进度，不重跑已完成站点。
  */
 function runDailyFinalizer() {
-  var lock = LockService.getScriptLock();
-  if (!lock.tryLock(15000)) {
-    writeLog_('WARN', '', 'runDailyFinalizer 跳过：已有实例在运行（LockService）');
-    Logger.log('runDailyFinalizer skipped: lock busy');
-    return 'runDailyFinalizer skipped: lock busy';
-  }
-  try {
-    assertRuntimePrerequisites_();
-    var sites = getEnabledSites();
-    var runDate = todayStr_();
-    return runDailyFinalizerUnlocked_(sites, runDate);
-  } finally {
-    lock.releaseLock();
-  }
+  assertRuntimePrerequisites_();
+  var sites = getEnabledSites();
+  var runDate = todayStr_();
+  return runDailyFinalizerUnlocked_(sites, runDate);
 }
 
 function runDailyFinalizerUnlocked_(sites, runDate) {
-  try {
+  return withSharedWriteLock_(function () {
+    try {
     sortMonitoringSheetsNewestFirst_();
     runDecisionEngine();
     runContentOpportunityEngine();
@@ -234,8 +208,6 @@ function runDailyFinalizerUnlocked_(sites, runDate) {
     refreshImplementationHandoffs_();
     try {
       maintainExperimentLedger_();
-      // Receipt observations run after all GSC collection and reuse this
-      // daily lock; no second daily trigger is created.
       runInterventionObservationsUnlocked_();
     } catch (ledgerError) {
       var ledgerDetail = formatErrorWithStack_(ledgerError);
@@ -255,8 +227,9 @@ function runDailyFinalizerUnlocked_(sites, runDate) {
     writeLog_('ERROR', '', 'DAILY_FINALIZER_FAILED | ' + detail);
     Logger.log('DAILY_FINALIZER_FAILED | ' + detail);
     Logger.log('DECISION_ENGINE_FAILED | ' + detail);
-    throw e;
-  }
+      throw e;
+    }
+  });
 }
 
 function nextDailyPendingSites_(sites, doneNames) {

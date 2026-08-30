@@ -3,6 +3,23 @@
  * Token 仅在内存中短暂使用，绝不写入 Sheet / Logger。
  */
 
+// One identity-independent lock domain for shared spreadsheet mutations.
+// The depth guard prevents nested LockService acquisition in one execution.
+var SHARED_WRITE_LOCK_DEPTH_ = 0;
+
+function withSharedWriteLock_(fn) {
+  if (SHARED_WRITE_LOCK_DEPTH_ > 0) return fn();
+  var lock = LockService.getScriptLock();
+  if (!lock.tryLock(30000)) throw new Error('shared spreadsheet write lock busy');
+  SHARED_WRITE_LOCK_DEPTH_ = 1;
+  try {
+    return fn();
+  } finally {
+    SHARED_WRITE_LOCK_DEPTH_ = 0;
+    lock.releaseLock();
+  }
+}
+
 /**
  * 统一 GSC / Google API 请求
  * @param {string} url
@@ -347,19 +364,21 @@ function formatErrorWithStack_(err) {
 }
 
 function writeLog_(level, site, message) {
-  try {
-    var ss = SpreadsheetApp.getActiveSpreadsheet();
-    var sheet = ss.getSheetByName(SHEET_NAMES.LOG);
-    if (!sheet) return;
-    sheet.appendRow([
-      new Date(),
-      level || 'INFO',
-      site || '',
-      String(message || '')
-    ]);
-  } catch (e) {
-    // 日志失败不影响主流程
-  }
+  return withSharedWriteLock_(function () {
+    try {
+      var ss = SpreadsheetApp.getActiveSpreadsheet();
+      var sheet = ss.getSheetByName(SHEET_NAMES.LOG);
+      if (!sheet) return;
+      sheet.appendRow([
+        new Date(),
+        level || 'INFO',
+        site || '',
+        String(message || '')
+      ]);
+    } catch (e) {
+      // 日志失败不影响主流程
+    }
+  });
 }
 
 function ensureTrailingSlash_(url) {
@@ -402,4 +421,3 @@ function alertUi_(message) {
     Logger.log(text);
   }
 }
-
