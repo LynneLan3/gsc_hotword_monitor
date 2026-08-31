@@ -1,0 +1,83 @@
+{
+  "schemaVersion": "hotword-pending-receipt-v1",
+  "status": "recorded",
+  "ledgerStatus": "DEPLOYED_LEDGER_RECORDED",
+  "batchId": "project-p-i-t-t-site-opt-20260831",
+  "siteId": "project-p-i-t-t",
+  "sourceReceiptPath": "/Users/lanling/Code/hot_words_websites/Project P.I.T.T./.publish-receipts/project-p-i-t-t-site-opt-20260831.normalized.json",
+  "pendingSince": "2026-08-31T07:05:21.607Z",
+  "lastAttemptAt": "2026-08-31T07:47:46.571Z",
+  "lastAttemptError": "",
+  "recordedAt": "2026-08-31T07:47:46.571Z",
+  "interventionIds": [
+    "iv-34a332011225fe56",
+    "iv-35d2e5dd39b7815d",
+    "iv-13c15c144cd590c4"
+  ],
+  "baselineDataDates": [
+    "Fri Aug 28 2026 00:00:00 GMT+0800 (GMT+08:00)",
+    "Fri Aug 28 2026 00:00:00 GMT+0800 (GMT+08:00)",
+    "Fri Aug 28 2026 00:00:00 GMT+0800 (GMT+08:00)"
+  ],
+  "interventionKeys": [
+    "project-p-i-t-t-site-opt-20260831|project-p-i-t-t|/|CONTENT_OPTIMIZE|",
+    "project-p-i-t-t-site-opt-20260831|project-p-i-t-t|/guides/|UPDATE_PAGE|",
+    "project-p-i-t-t-site-opt-20260831|project-p-i-t-t|/|INTERNAL_LINK|project pitt keypad code"
+  ],
+  "receipt": {
+    "schemaVersion": "hotword-publish-receipt-v1",
+    "common": {
+      "site": "Project P.I.T.T.",
+      "siteId": "project-p-i-t-t",
+      "game": "Project P.I.T.T.",
+      "releaseDate": "2026-08-19",
+      "lifecyclePhase": "growth",
+      "batchId": "project-p-i-t-t-site-opt-20260831",
+      "commitSha": "cc4db56b23569b0d684abdf2d32538cb273297ca",
+      "deploymentId": "dpl_4tNVirVK5zzixZ76odEwVqHGf5eu",
+      "deploymentUrl": "https://project-p-i-t-q1uvnlnos-lynnelan3s-projects.vercel.app",
+      "productionUrl": "https://project-p-i-t-t.vercel.app",
+      "deployedAt": "2026-08-31T07:04:52.000Z"
+    },
+    "interventions": [
+      {
+        "action": "CONTENT_OPTIMIZE",
+        "primaryUrl": "/",
+        "affectedUrls": [
+          "/"
+        ],
+        "triggerType": "technical",
+        "triggerQueries": [],
+        "triggerSummary": "Homepage LCP optimization without visual or URL changes.",
+        "changeSummary": "Hero LCP image: correct intrinsic 616×353 dimensions, tighter srcset (400/616w webp), sync decoding, eager/high fetchpriority; non-LCP homepage screenshots remain lazy-loaded.",
+        "reason": "Improve first-contentful paint and LCP while preserving existing homepage content and layout."
+      },
+      {
+        "action": "UPDATE_PAGE",
+        "primaryUrl": "/guides/",
+        "affectedUrls": [
+          "/guides/"
+        ],
+        "triggerType": "content_research",
+        "triggerQueries": [],
+        "triggerSummary": "Guides index auto-synced to published docs collection.",
+        "changeSummary": "/guides/ now renders a canonical guide library from getGuides() (15 published guides), including Elevator Code, Shift Scheduler, Trade Terminal, Panel Rack, Troubleshooting, and Updates without maintaining a second manual list.",
+        "reason": "Fix /guides/ lag behind newly published guides by deriving the index from the content collection source of truth."
+      },
+      {
+        "action": "INTERNAL_LINK",
+        "primaryUrl": "/",
+        "affectedUrls": [
+          "/elevator-code/"
+        ],
+        "triggerType": "gsc_query",
+        "triggerQueries": [
+          "project pitt keypad code"
+        ],
+        "triggerSummary": "Route keypad query to dedicated elevator code guide from homepage Popular Questions.",
+        "changeSummary": "Homepage Popular Questions: What is my elevator keypad code? target changed /secret-ending/ → /elevator-code/; Secret Ending page and END? link unchanged.",
+        "reason": "Send keypad intent to the dedicated elevator code authority page while preserving Secret Ending for END? intent."
+      }
+    ]
+  }
+}

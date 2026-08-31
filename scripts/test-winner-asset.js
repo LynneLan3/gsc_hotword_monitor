@@ -706,7 +706,7 @@ assert(
 );
 
 var codeGs = fs.readFileSync(path.join(__dirname, '..', 'Code.gs'), 'utf8');
-assert(codeGs.indexOf('runWinnerAssetEngine') >= 0, 'Code.gs menu must call runWinnerAssetEngine');
+assert(codeGs.indexOf("addItem('重建内容资产候选'") < 0, 'retired asset menu hidden');
 
 assert(
   pagePathFromUrl_('https://approximately-up.vercel.app/') === '/',

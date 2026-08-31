@@ -470,7 +470,7 @@ assert(/DECISION_OUTCOMES:\s*'决策结果'/.test(configSrc), 'sheet name');
 assert(/DECISION_OUTCOME_HEADERS/.test(configSrc), 'headers');
 assert(!/DomainScore/.test(configSrc.match(/var DECISION_OUTCOME_HEADERS = \[[\s\S]*?\];/)[0]), 'no DomainScore header');
 assert(/function runDecisionOutcomeObservation\(/.test(outcomeSrc), 'runner');
-assert(/观察决策结果/.test(codeSrc), 'menu');
+assert(!/\.addItem\('观察决策结果'/.test(codeSrc), 'retired menu hidden');
 assert(/决策结果：在 Decision 后的 D7/.test(sheetSrc), 'usage');
 assert(/ensureSheet_\(SHEET_NAMES\.DECISION_OUTCOMES/.test(sheetSrc), 'setup');
 // Decision Engine scoring untouched by outcome file

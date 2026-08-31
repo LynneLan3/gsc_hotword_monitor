@@ -599,7 +599,7 @@ assert(
   'Page明细 in UI order'
 );
 assert(/ensureSheet_\(SHEET_NAMES\.PAGES/.test(sheetSrc), 'setup creates Page明细');
-assert(/补采14天Page明细/.test(codeSrc), 'page backfill menu');
+assert(!/\.addItem\('补采14天Page明细'/.test(codeSrc), 'retired page backfill menu hidden');
 assert(/function buildPortfolioStatus_/.test(engineSrc), 'buildPortfolioStatus_');
 assert(/SHEET_NAMES\.PORTFOLIO/.test(configSrc), 'SHEET_NAMES.PORTFOLIO');
 assert(/T3_BUSINESS|T4_SCALE/.test(engineSrc) === false, 'no T3/T4');
@@ -609,7 +609,7 @@ assert(!/function decideRecommendedAction_/.test(engineSrc), 'must not reimpleme
 assert(/ensureSheet_\(SHEET_NAMES\.PORTFOLIO/.test(sheetSrc), 'setup creates 站点经营');
 assert(/SHEET_NAMES\.PORTFOLIO/.test(configSrc.match(/var SHEET_UI_ORDER = \[[\s\S]*?\];/)[0]), 'ui order');
 assert(/try \{\s*runPortfolioEngine\(\);/.test(decisionSrc), 'decision run hooks portfolio');
-assert(/重建站点经营/.test(codeSrc), 'menu item');
+assert(!/\.addItem\('重建站点经营'/.test(codeSrc), 'retired portfolio menu hidden');
 assert(/人工经营决定/.test(configSrc.match(/var PORTFOLIO_HEADERS = \[[\s\S]*?\];/)[0]), 'manual col');
 
 console.log('PASS scripts/test-portfolio-engine.js');

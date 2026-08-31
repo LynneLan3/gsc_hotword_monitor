@@ -355,7 +355,7 @@ assert(
   'Case8 no outcome write'
 );
 assert(
-  contentSrc.indexOf('sheet.appendRow(plan.row)') >= 0,
+  contentSrc.indexOf('sheet.appendRow(row)') >= 0,
   'Case7 writes via content appendRow only'
 );
 assert(
@@ -405,15 +405,18 @@ assert(/'来源'/.test(headers), 'header 来源');
 assert(/'更新说明'/.test(headers), 'header 更新说明');
 assert(/'更新类型'/.test(headers), 'header 更新类型');
 assert(/'DecisionID'/.test(headers), 'header DecisionID');
+assert(/'InterventionID'/.test(headers), 'header InterventionID');
+assert(/'PageReceiptKey'/.test(headers), 'header PageReceiptKey');
 assert(
   headers.indexOf('更新说明') < headers.indexOf('更新类型') &&
-    headers.indexOf('更新类型') < headers.indexOf('DecisionID'),
-  'DecisionID is last'
+    headers.indexOf('更新类型') < headers.indexOf('DecisionID') &&
+    headers.indexOf('DecisionID') < headers.indexOf('InterventionID'),
+  'legacy headers stay before publish canonical columns'
 );
 assert(/CONTENT_INTERVENTION_TYPES/.test(configSrc), 'types enum');
 assert(/function recordContentInterventionAt_/.test(contentSrc), 'writer');
 assert(/function ensureContentUpdateHeader_/.test(contentSrc), 'ensure header');
-assert(/记录内容更新/.test(codeSrc), 'menu');
+assert(!/\.addItem\('记录内容更新'/.test(codeSrc), 'intervention is no longer an onOpen menu action');
 assert(/recordContentInterventionAt_/.test(decisionSrc), 'compat delegate');
 assert(/ensureContentUpdateHeader_/.test(decisionSrc), 'engine ensure');
 assert(/只有网站实际发生页面修改时才记录/.test(sheetSrc), 'usage');

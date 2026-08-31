@@ -823,7 +823,7 @@ assert(
   ),
   'ui order'
 );
-assert(/重建效果评价/.test(codeSrc), 'menu');
+assert(!/\.addItem\('重建效果评价'/.test(codeSrc), 'retired menu hidden');
 assert(
   !/function runDaily\([\s\S]*?rebuildEffectEvaluation/.test(codeSrc),
   'not in runDaily'

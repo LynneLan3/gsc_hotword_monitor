@@ -1,0 +1,48 @@
+{
+  "schemaVersion": "hotword-pending-receipt-v1",
+  "status": "recorded",
+  "ledgerStatus": "DEPLOYED_LEDGER_RECORDED",
+  "batchId": "brigandine-abyss-p0-seo-protection-20260831",
+  "siteId": "brigandine-abyss",
+  "sourceReceiptPath": "./pending-receipts/brigandine-abyss/brigandine-abyss-p0-seo-protection-20260831.json",
+  "pendingSince": "2026-08-31T07:04:21.851Z",
+  "lastAttemptAt": "2026-08-31T07:47:25.956Z",
+  "lastAttemptError": "",
+  "recordedAt": "2026-08-31T07:47:25.956Z",
+  "interventionIds": [
+    "iv-7ce4709d9b48710f"
+  ],
+  "baselineDataDates": [],
+  "interventionKeys": [
+    "brigandine-abyss-p0-seo-protection-20260831|brigandine-abyss|/|INDEX_FIX|"
+  ],
+  "receipt": {
+    "schemaVersion": "hotword-publish-receipt-v1",
+    "common": {
+      "site": "BRIGANDINE ABYSS Guide — Classes, Factions, Trophies & Strategy",
+      "siteId": "brigandine-abyss",
+      "game": "BRIGANDINE ABYSS",
+      "batchId": "brigandine-abyss-p0-seo-protection-20260831",
+      "productionUrl": "https://brigandine-abyss.vercel.app",
+      "attributionMode": "OBSERVATIONAL_ONLY",
+      "commitSha": "ee343c2318faa2c636aa962da16481634dc63c02",
+      "deploymentUrl": "https://brigandine-abyss-k1enfgsd7-lynnelan3s-projects.vercel.app",
+      "deployedAt": "2026-08-31T07:04:21.819Z"
+    },
+    "interventions": [
+      {
+        "action": "INDEX_FIX",
+        "primaryUrl": "https://brigandine-abyss.vercel.app/",
+        "affectedUrls": [
+          "https://brigandine-abyss.vercel.app/",
+          "https://brigandine-abyss.vercel.app/monsters/",
+          "https://brigandine-abyss.vercel.app/class-change/",
+          "https://brigandine-abyss.vercel.app/rally-support/",
+          "https://brigandine-abyss.vercel.app/quests-exploration/"
+        ],
+        "reason": "P0/P1 SEO protection: add permanent legacy URL redirects (404→308) for /monster-list/, /class-change-items/, /rally-support-guide/, /quests-training/; optimize mobile homepage LCP hero responsive image sizes without changing indexable URLs or Classes/homepage SEO copy.",
+        "triggerType": "manual"
+      }
+    ]
+  }
+}

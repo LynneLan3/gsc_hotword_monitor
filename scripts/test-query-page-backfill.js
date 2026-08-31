@@ -189,8 +189,8 @@ assert(!/startRow/.test(extractFn(codeSrc, 'upsertQueryPageDetailsForDate_')), '
 
 // Menu
 assert(
-  /补采14天Query页面明细',\s*'backfillQueryPageDetails14Days'/.test(codeSrc),
-  'menu item for independent backfill'
+  !/\.addItem\('补采14天Query页面明细'/.test(codeSrc),
+  'retired backfill menu hidden'
 );
 
 // Portfolio rules untouched

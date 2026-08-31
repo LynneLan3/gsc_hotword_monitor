@@ -5,41 +5,12 @@
 function onOpen() {
   SpreadsheetApp.getUi()
     .createMenu('热词站监控')
-    .addItem('初始化表格', 'setup')
-    .addItem('整理工作表视图', 'organizeSheetUi')
-    .addItem('立即运行一次', 'runDaily')
-    .addItem('重试每日后处理', 'runDailyFinalizer')
-    .addItem('运行决策引擎', 'runDecisionEngine')
-    .addItem('重建站点经营', 'runPortfolioEngine')
-    .addItem('重建内容资产候选', 'runWinnerAssetEngine')
-    .addItem('处理内容资产决定', 'processWinnerAssetDecisions')
-    .addItem('同步内容资产研究结果', 'syncWinnerAssetResearchResults')
-    .addItem('观察决策结果', 'runDecisionOutcomeObservation')
-    .addItem('同步人工决策', 'syncHumanDecisions')
-    .addItem('记录内容更新', 'recordContentInterventionMenu')
-    .addItem('重建反馈样本', 'rebuildFeedbackSamples')
-    .addItem('重建规则评分卡', 'rebuildRuleScorecard')
-    .addItem('重建评价资格', 'rebuildEvaluationEligibility')
-    .addItem('重建效果变化', 'rebuildOutcomeDelta')
-    .addItem('重建效果评价', 'rebuildEffectEvaluation')
-    .addItem('运行内容机会引擎', 'runContentOpportunityEngine')
-    .addItem('刷新需求雷达', 'refreshDemandRadar')
-    .addItem('运行实时Query监控', 'runFreshQueryMonitor')
-    .addItem('创建需求发现任务', 'createDemandDiscoveryJobs')
-    .addItem('创建搜索需求任务', 'createSearchDemandJobs')
-    .addItem('创建研究任务', 'createResearchJobs')
-    .addItem('重置并创建研究任务', 'resetAndCreateResearchJobs')
-    .addItem('处理研究审核决定', 'processResearchReviewDecisions')
-    .addItem('创建开发任务', 'createDevelopmentTasks')
-    .addItem('运行URL索引批次', 'runIndexAuditBatch')
-    .addItem('回填最近14天GSC数据', 'backfill14Days')
-    .addItem('补采14天Query页面明细', 'backfillQueryPageDetails14Days')
-    .addItem('补采14天Page明细', 'backfillPageDetails14Days')
+    .addItem('运行每日监控', 'runDaily')
+    .addItem('运行实时 Query 监控', 'runFreshQueryMonitor')
+    .addItem('运行 URL 索引批次', 'runIndexAuditBatch')
+    .addItem('系统状态', 'showGscSystemStatus')
     .addSeparator()
-    .addItem('测试GSC权限', 'testGscAccess')
-    .addItem('运行自测', 'runSelfTests')
-    .addItem('创建每日自动任务', 'createDailyTrigger')
-    .addItem('删除每日自动任务', 'removeDailyTrigger')
+    .addItem('管理员：重装自动触发器', 'createDailyTrigger')
     .addToUi();
 }
 
@@ -229,6 +200,8 @@ function runDailyFinalizerUnlocked_(sites, runDate) {
     runDecisionEngine();
     runContentOpportunityEngine();
     refreshDemandRadar_(sites, runDate);
+    reconcileInterventionObservations_();
+    saveGscMonitoringRaw_('gsc-daily-' + runDate, runDate);
     sortSheetsNewestFirst_([SHEET_NAMES.LOG]);
     setDailyRunPhase_('done');
     deleteDailyContinuationTriggers_();
@@ -365,6 +338,7 @@ function runIndexAuditBatch() {
 
   if (cursor >= total) {
     writeLog_('INFO', '', '今日URL索引轮询已全部完成 ' + total + '/' + total);
+    saveGscMonitoringRaw_('gsc-url-' + runDate, runDate);
     sortSheetsNewestFirst_([SHEET_NAMES.URL_INDEX, SHEET_NAMES.LOG]);
     return;
   }
@@ -395,6 +369,7 @@ function runIndexAuditBatch() {
 
   if (cursor >= total) {
     writeLog_('INFO', '', '今日URL索引轮询已全部完成 ' + total + '/' + total);
+    saveGscMonitoringRaw_('gsc-url-' + runDate, runDate);
   } else {
     writeLog_('INFO', '', 'runIndexAuditBatch 结束，今日进度 ' + cursor + '/' + total);
   }
@@ -1727,4 +1702,3 @@ function readAgent64ShortDomainStatus_() {
     runDate: runDate
   };
 }
-

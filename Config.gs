@@ -33,8 +33,19 @@ var SHEET_NAMES = {
   RESEARCH_REVIEW: '研究审核',
   DEVELOPMENT_TASKS: '开发任务',
   CONTENT_UPDATES: '内容更新记录',
+  INTERVENTION_OBSERVATIONS: '干预观察',
   /** 旧/实验层：仅用于识别与隐藏，setup 不会创建 */
   PAGE_OPPORTUNITIES: 'PAGE_OPPORTUNITIES'
+};
+
+var GSC_MONITORING_HISTORY = {
+  spreadsheetName: 'GSC_监控回测历史库',
+  propertyKey: 'GSC_MONITORING_HISTORY_SPREADSHEET_ID_V1',
+  tables: {
+    siteDaily: 'gsc_site_daily', queryDaily: 'gsc_query_daily', pageDaily: 'gsc_page_daily',
+    queryPageDaily: 'gsc_query_page_daily', urlIndex: 'gsc_url_index_history',
+    decision: 'gsc_decision_history', intervention: 'gsc_intervention_history', runManifest: 'gsc_run_manifest'
+  }
 };
 
 /**
@@ -395,6 +406,20 @@ var OBSERVATION_STATUS = {
   DATA_MISSING: 'DATA_MISSING'
 };
 
+/** 干预观察唯一状态；旧 Decision Outcome 的 PENDING 仍保持兼容。 */
+var INTERVENTION_OBSERVATION_STATUS = {
+  WAITING_HORIZON: 'WAITING_HORIZON',
+  WAITING_DATA: 'WAITING_DATA',
+  OBSERVED: 'OBSERVED'
+};
+
+/** Intervention observation baseline resolution (existing BaselineMode column values). */
+var BASELINE_MODE = {
+  NO_PREDEPLOY_DATA: 'NO_PREDEPLOY_DATA',
+  WAITING_FOR_GSC: 'WAITING_FOR_GSC',
+  GSC_ALIGNED: 'GSC_ALIGNED'
+};
+
 /**
  * 反馈样本（派生分析视图，可 rebuild）。
  * 一条 DecisionID 一行；不复制全部 Snapshot / Outcome 字段。
@@ -626,13 +651,82 @@ var TODAY_ACTION_EXCLUDED = {
 };
 
 /**
+ * Publish receipt 可映射到「内容更新记录」已有 canonical 列的子集。
+ * 禁止再追加一套平行 publish schema；写入时必须按 header name → column index。
+ */
+var CONTENT_UPDATE_PUBLISH_FIELD_HEADERS = [
+  'InterventionID',
+  'SiteID',
+  'BatchID',
+  'Action',
+  'PrimaryURL',
+  'AffectedURLs',
+  'TriggerType',
+  'TriggerQueries',
+  'TriggerSummary',
+  'SourceRefs',
+  'Reason',
+  'LifecyclePhase',
+  'ReleaseDate',
+  'ReleaseOffsetDay',
+  'CommitSHA',
+  'DeploymentURL',
+  'ProductionURL',
+  'ProductionDeployedAt',
+  'DevelopmentTaskID',
+  'OpportunityID',
+  'RecordedMode',
+  'BaselineDataDate',
+  'BaselinePageClicks7D',
+  'BaselinePageImpressions7D',
+  'BaselinePageCTR',
+  'BaselinePagePosition',
+  'BaselinePageQueryCount7D',
+  'BaselineSiteClicks7D',
+  'BaselineSiteImpressions7D',
+  'ReceiptKey',
+  'PageReceiptKey',
+  'GoalID',
+  'RecordedAt'
+];
+
+/**
  * 内容更新记录 = Content Intervention 权威事实表。
  * 用于 CONTENT_OPTIMIZE / Research Job 观察期冷却；也可绑定 DecisionID。
  * 页面路径为空 = 整站更新。
- * DecisionID / 更新类型追加在末尾，不移动 cooldown 依赖的前 5 列。
+ * 前 7 列（含 DecisionID）为人工可读 + cooldown 依赖列，不移动顺序。
+ * Publish receipt 必须映射到已有 canonical 列；只有真正缺失的列才允许 append。
  */
 var CONTENT_UPDATE_HEADERS = [
-  '更新时间', '站点', '页面路径', '来源', '更新说明', '更新类型', 'DecisionID'
+  '更新时间', '站点', '页面路径', '来源', '更新说明', '更新类型', 'DecisionID',
+  'InterventionID', 'SiteID', 'BatchID', 'Action', 'PrimaryURL', 'AffectedURLs',
+  'TriggerType', 'TriggerQueries', 'TriggerSummary', 'SourceRefs', 'Reason',
+  'LifecyclePhase', 'ReleaseDate', 'ReleaseOffsetDay', 'CommitSHA',
+  'DeploymentURL', 'ProductionURL', 'ProductionDeployedAt', 'DevelopmentTaskID',
+  'OpportunityID', 'RecordedMode', 'BaselineDataDate', 'BaselinePageClicks7D',
+  'BaselinePageImpressions7D', 'BaselinePageCTR', 'BaselinePagePosition',
+  'BaselinePageQueryCount7D', 'BaselineSiteClicks7D', 'BaselineSiteImpressions7D',
+  'ReceiptKey', 'PageReceiptKey', 'GoalID', 'RecordedAt'
+];
+
+/** Automatic Experiment Ledger：GSC-owned intervention observations. */
+var INTERVENTION_OBSERVATION_HEADERS = [
+  'ObservationID', 'InterventionID', 'DecisionID', 'SiteID', 'Site', 'PrimaryURL',
+  'Horizon', 'TargetDate', 'ObservedDataDate', 'Status', 'BaselineDataDate',
+  'BaselineClicks7D', 'BaselineImpressions7D', 'BaselineCTR', 'BaselinePosition',
+  'BaselineQueryCount7D', 'ObservedClicks7D', 'ObservedImpressions7D',
+  'ObservedCTR', 'ObservedPosition', 'ObservedQueryCount7D', 'ClicksDelta',
+  'ImpressionsDelta', 'CTRDelta', 'PositionImprovement', 'QueryCountDelta',
+  'BaselineSiteImpressions7D', 'ObservedSiteImpressions7D', 'AttributionMode',
+  'UpdatedAt', 'BaselineSiteClicks7D', 'ObservedSiteClicks7D', 'BaselineMode',
+  'Outcome', 'OutcomeConfidence', 'Confounders'
+];
+
+var INTERVENTION_OBSERVATION_HORIZONS = [
+  { name: 'D1', days: 1 },
+  { name: 'D3', days: 3 },
+  { name: 'D7', days: 7 },
+  { name: 'D14', days: 14 }
 ];
 
 /**
@@ -2285,4 +2379,3 @@ function getMetricGuideRows_() {
     ]
   ];
 }
-

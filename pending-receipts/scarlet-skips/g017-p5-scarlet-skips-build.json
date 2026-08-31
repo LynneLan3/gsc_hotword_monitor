@@ -1,0 +1,173 @@
+{
+  "schemaVersion": "hotword-pending-receipt-v1",
+  "status": "recorded",
+  "ledgerStatus": "DEPLOYED_LEDGER_RECORDED",
+  "batchId": "g017-p5-scarlet-skips-build",
+  "siteId": "scarlet-skips",
+  "sourceReceiptPath": "/var/folders/0_/yf32n3px3hg_yw5jhdp5yykr0000gp/T/hotword-gsc-writeback-bEPMT5/publish-receipt.json",
+  "pendingSince": "2026-08-31T10:24:54.237Z",
+  "lastAttemptAt": "2026-08-31T10:27:08.168Z",
+  "lastAttemptError": "",
+  "recordedAt": "2026-08-31T10:27:08.168Z",
+  "interventionIds": [
+    "iv-91ca5384be14aaa1",
+    "iv-7d17302e04a834af",
+    "iv-586d135763f33b9f",
+    "iv-30fd629fbffd7bca",
+    "iv-4fe6d78dc12a1e67",
+    "iv-5e6522aa32a45b68"
+  ],
+  "baselineDataDates": [],
+  "interventionKeys": [
+    "g017-p5-scarlet-skips-build|scarlet-skips|/v4-preview/|CREATE_PAGE|",
+    "g017-p5-scarlet-skips-build|scarlet-skips|/v4-preview/search/|CREATE_PAGE|",
+    "g017-p5-scarlet-skips-build|scarlet-skips|/v4-preview/category/|CREATE_PAGE|",
+    "g017-p5-scarlet-skips-build|scarlet-skips|/v4-preview/controls-and-timing/|CREATE_PAGE|",
+    "g017-p5-scarlet-skips-build|scarlet-skips|/v4-preview/upgrade-choices/|CREATE_PAGE|",
+    "g017-p5-scarlet-skips-build|scarlet-skips|/v4-preview/release-and-steam-facts/|CREATE_PAGE|"
+  ],
+  "receipt": {
+    "schemaVersion": "hotword-publish-receipt-v1",
+    "common": {
+      "site": "Scarlet Skips",
+      "siteId": "scarlet-skips",
+      "game": "Scarlet Skips",
+      "batchId": "g017-p5-scarlet-skips-build",
+      "decisionId": "g017-p5-scarlet-skips-build",
+      "developmentTaskId": "g017-p5-scarlet-skips",
+      "opportunityId": "g017-p5-scarlet-skips-opportunity",
+      "commitSha": "69a7bf61dcb215a8d74c3fb4af7b5a46bc9f739e",
+      "deploymentUrl": "https://scarlet-skips-dbslil6ky-lynnelan3s-projects.vercel.app",
+      "productionUrl": "https://scarlet-skips.vercel.app",
+      "deployedAt": "2026-08-31T15:14:00+08:00",
+      "lifecyclePhase": "PRODUCTION",
+      "sourceRefs": [
+        "g017-p5-scarlet-skips-build"
+      ]
+    },
+    "interventions": [
+      {
+        "interventionId": "g017-p5-scarlet-skips-build-page-1",
+        "site": "Scarlet Skips",
+        "siteId": "scarlet-skips",
+        "developmentTaskId": "g017-p5-scarlet-skips",
+        "opportunityId": "g017-p5-scarlet-skips-opportunity",
+        "decisionId": "g017-p5-scarlet-skips-build",
+        "action": "CREATE_PAGE",
+        "primaryUrl": "/v4-preview/",
+        "affectedUrls": [],
+        "reason": "Completed Launch Receipt entered the existing GSC monitoring flow.",
+        "sourceRefs": [
+          "g017-p5-scarlet-skips-build"
+        ],
+        "commitSha": "69a7bf61dcb215a8d74c3fb4af7b5a46bc9f739e",
+        "deploymentUrl": "https://scarlet-skips-dbslil6ky-lynnelan3s-projects.vercel.app",
+        "productionUrl": "https://scarlet-skips.vercel.app",
+        "deployedAt": "2026-08-31T15:14:00+08:00"
+      },
+      {
+        "interventionId": "g017-p5-scarlet-skips-build-page-2",
+        "site": "Scarlet Skips",
+        "siteId": "scarlet-skips",
+        "developmentTaskId": "g017-p5-scarlet-skips",
+        "opportunityId": "g017-p5-scarlet-skips-opportunity",
+        "decisionId": "g017-p5-scarlet-skips-build",
+        "action": "CREATE_PAGE",
+        "primaryUrl": "/v4-preview/search/",
+        "affectedUrls": [],
+        "reason": "Completed Launch Receipt entered the existing GSC monitoring flow.",
+        "sourceRefs": [
+          "g017-p5-scarlet-skips-build"
+        ],
+        "commitSha": "69a7bf61dcb215a8d74c3fb4af7b5a46bc9f739e",
+        "deploymentUrl": "https://scarlet-skips-dbslil6ky-lynnelan3s-projects.vercel.app",
+        "productionUrl": "https://scarlet-skips.vercel.app",
+        "deployedAt": "2026-08-31T15:14:00+08:00"
+      },
+      {
+        "interventionId": "g017-p5-scarlet-skips-build-page-3",
+        "site": "Scarlet Skips",
+        "siteId": "scarlet-skips",
+        "developmentTaskId": "g017-p5-scarlet-skips",
+        "opportunityId": "g017-p5-scarlet-skips-opportunity",
+        "decisionId": "g017-p5-scarlet-skips-build",
+        "action": "CREATE_PAGE",
+        "primaryUrl": "/v4-preview/category/",
+        "affectedUrls": [],
+        "reason": "Completed Launch Receipt entered the existing GSC monitoring flow.",
+        "sourceRefs": [
+          "g017-p5-scarlet-skips-build"
+        ],
+        "commitSha": "69a7bf61dcb215a8d74c3fb4af7b5a46bc9f739e",
+        "deploymentUrl": "https://scarlet-skips-dbslil6ky-lynnelan3s-projects.vercel.app",
+        "productionUrl": "https://scarlet-skips.vercel.app",
+        "deployedAt": "2026-08-31T15:14:00+08:00"
+      },
+      {
+        "interventionId": "g017-p5-scarlet-skips-build-page-4",
+        "site": "Scarlet Skips",
+        "siteId": "scarlet-skips",
+        "developmentTaskId": "g017-p5-scarlet-skips",
+        "opportunityId": "g017-p5-scarlet-skips-opportunity",
+        "decisionId": "g017-p5-scarlet-skips-build",
+        "action": "CREATE_PAGE",
+        "primaryUrl": "/v4-preview/controls-and-timing/",
+        "affectedUrls": [],
+        "reason": "Completed Launch Receipt entered the existing GSC monitoring flow.",
+        "sourceRefs": [
+          "g017-p5-scarlet-skips-build"
+        ],
+        "commitSha": "69a7bf61dcb215a8d74c3fb4af7b5a46bc9f739e",
+        "deploymentUrl": "https://scarlet-skips-dbslil6ky-lynnelan3s-projects.vercel.app",
+        "productionUrl": "https://scarlet-skips.vercel.app",
+        "deployedAt": "2026-08-31T15:14:00+08:00"
+      },
+      {
+        "interventionId": "g017-p5-scarlet-skips-build-page-5",
+        "site": "Scarlet Skips",
+        "siteId": "scarlet-skips",
+        "developmentTaskId": "g017-p5-scarlet-skips",
+        "opportunityId": "g017-p5-scarlet-skips-opportunity",
+        "decisionId": "g017-p5-scarlet-skips-build",
+        "action": "CREATE_PAGE",
+        "primaryUrl": "/v4-preview/upgrade-choices/",
+        "affectedUrls": [],
+        "reason": "Completed Launch Receipt entered the existing GSC monitoring flow.",
+        "sourceRefs": [
+          "g017-p5-scarlet-skips-build"
+        ],
+        "commitSha": "69a7bf61dcb215a8d74c3fb4af7b5a46bc9f739e",
+        "deploymentUrl": "https://scarlet-skips-dbslil6ky-lynnelan3s-projects.vercel.app",
+        "productionUrl": "https://scarlet-skips.vercel.app",
+        "deployedAt": "2026-08-31T15:14:00+08:00"
+      },
+      {
+        "interventionId": "g017-p5-scarlet-skips-build-page-6",
+        "site": "Scarlet Skips",
+        "siteId": "scarlet-skips",
+        "developmentTaskId": "g017-p5-scarlet-skips",
+        "opportunityId": "g017-p5-scarlet-skips-opportunity",
+        "decisionId": "g017-p5-scarlet-skips-build",
+        "action": "CREATE_PAGE",
+        "primaryUrl": "/v4-preview/release-and-steam-facts/",
+        "affectedUrls": [],
+        "reason": "Completed Launch Receipt entered the existing GSC monitoring flow.",
+        "sourceRefs": [
+          "g017-p5-scarlet-skips-build"
+        ],
+        "commitSha": "69a7bf61dcb215a8d74c3fb4af7b5a46bc9f739e",
+        "deploymentUrl": "https://scarlet-skips-dbslil6ky-lynnelan3s-projects.vercel.app",
+        "productionUrl": "https://scarlet-skips.vercel.app",
+        "deployedAt": "2026-08-31T15:14:00+08:00"
+      }
+    ],
+    "launchReceiptKey": "g017-p5-scarlet-skips-build",
+    "templateVersion": "game-wiki-starter-v4",
+    "publishedPageCount": 6,
+    "analyticsReadiness": {
+      "ga4": "INCONCLUSIVE",
+      "vercelAnalytics": "INCONCLUSIVE"
+    },
+    "indexNowStatus": "SUBMITTED"
+  }
+}

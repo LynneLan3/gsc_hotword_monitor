@@ -396,7 +396,7 @@ assert(
   ),
   'ui order'
 );
-assert(/重建评价资格/.test(codeSrc), 'menu');
+assert(!/\.addItem\('重建评价资格'/.test(codeSrc), 'retired menu hidden');
 assert(
   !/function runDaily\([\s\S]*?rebuildEvaluationEligibility/.test(codeSrc),
   'not called from runDaily'

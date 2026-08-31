@@ -451,7 +451,7 @@ assert(/FEEDBACK_SAMPLES:\s*'反馈样本'/.test(configSrc), 'sheet name');
 assert(/FEEDBACK_SAMPLE_HEADERS/.test(configSrc), 'headers');
 assert(/SHEET_NAMES\.FEEDBACK_SAMPLES/.test(configSrc.match(/var SHEET_UI_ORDER = \[[\s\S]*?\];/)[0]), 'ui order');
 assert(/function rebuildFeedbackSamples\(/.test(fbSrc), 'rebuild fn');
-assert(/重建反馈样本/.test(codeSrc), 'menu');
+assert(!/\.addItem\('重建反馈样本'/.test(codeSrc), 'retired menu hidden');
 assert(/反馈样本：系统自动生成的分析视图/.test(sheetSrc), 'usage');
 assert(/'SampleStatus'/.test(configSrc) && /'InterventionCount'/.test(configSrc), 'metrics');
 assert(!/SUCCESS|FAILURE|FALSE_POSITIVE|FALSE_NEGATIVE|Champion/.test(fbSrc), 'no value labels');

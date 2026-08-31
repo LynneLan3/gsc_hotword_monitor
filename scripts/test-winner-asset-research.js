@@ -423,7 +423,7 @@ var codeSrc = fs.readFileSync(path.join(__dirname, '..', 'Code.gs'), 'utf8');
 var dailyStart = codeSrc.indexOf('function runDailyUnlocked_');
 var dailyEnd = codeSrc.indexOf('\nfunction ', dailyStart + 1);
 var dailySrc = codeSrc.slice(dailyStart, dailyEnd === -1 ? undefined : dailyEnd);
-assert(codeSrc.indexOf("addItem('处理内容资产决定', 'processWinnerAssetDecisions')") >= 0, 'menu');
+assert(codeSrc.indexOf("addItem('处理内容资产决定', 'processWinnerAssetDecisions')") < 0, 'retired menu hidden');
 assert(dailySrc.indexOf('processWinnerAssetDecisions') < 0, 'not on runDaily');
 assert(configSrc.indexOf("'研究类型'") >= 0 && configSrc.indexOf('RESEARCH_TYPE') >= 0, '研究类型 field');
 var researchSrc = fs.readFileSync(path.join(__dirname, '..', 'ResearchJobs.gs'), 'utf8');

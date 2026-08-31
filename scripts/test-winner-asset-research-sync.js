@@ -671,8 +671,8 @@ var reviewFn = researchSrc.slice(
 assert(winnerSrc.indexOf('function syncWinnerAssetResearchResults()') >= 0, 'sync entry exists');
 assert(winnerSrc.indexOf('function syncWinnerAssetResearchRows_(') >= 0, 'pure helper exists');
 assert(
-  codeSrc.indexOf("addItem('同步内容资产研究结果', 'syncWinnerAssetResearchResults')") >= 0,
-  'menu item'
+  codeSrc.indexOf("addItem('同步内容资产研究结果', 'syncWinnerAssetResearchResults')") < 0,
+  'retired menu item hidden'
 );
 assert(dailySrc.indexOf('syncWinnerAssetResearchResults') < 0, 'runDaily must not call sync');
 assert(

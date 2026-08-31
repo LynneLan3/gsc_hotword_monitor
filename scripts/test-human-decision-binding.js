@@ -229,7 +229,7 @@ assert(/'DecisionID'/.test(configSrc.match(/var TODAY_ACTION_HEADERS = \[[\s\S]*
 assert(/人工备注/.test(configSrc.match(/var TODAY_ACTION_HEADERS = \[[\s\S]*?\];/)[0]), 'note header');
 assert(/TODAY_ACTION_STATUSES = \['TODO', 'DONE', 'SKIP'\]/.test(configSrc), 'status enum');
 assert(/function syncHumanDecisions\(/.test(humanSrc), 'sync fn');
-assert(/同步人工决策/.test(codeSrc), 'menu');
+assert(!/\.addItem\('同步人工决策'/.test(codeSrc), 'retired menu hidden');
 assert(/decisionId: decisionId/.test(decisionSrc), 'action writes DecisionID');
 assert(/buildDecisionHistoryRow_\([\s\S]*decisionId/.test(decisionSrc), 'history same id');
 assert(/ensureTodayActionHeader_/.test(decisionSrc), 'header ensure');

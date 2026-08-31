@@ -292,7 +292,7 @@ assert(
   'order feedback → scorecard → rules'
 );
 assert(/function rebuildRuleScorecard\(/.test(scSrc), 'rebuild fn');
-assert(/重建规则评分卡/.test(codeSrc), 'menu');
+assert(!/\.addItem\('重建规则评分卡'/.test(codeSrc), 'retired menu hidden');
 assert(/规则评分卡：按 RuleVersion 汇总/.test(sheetSrc), 'usage');
 assert(/'DecisionCount'/.test(configSrc) && /规则评分卡/.test(configSrc), 'metrics');
 assert(!/SUCCESS|FAILURE|FALSE_POSITIVE|WIN_RATE|ACCURACY|Champion/.test(scSrc), 'no eval labels');

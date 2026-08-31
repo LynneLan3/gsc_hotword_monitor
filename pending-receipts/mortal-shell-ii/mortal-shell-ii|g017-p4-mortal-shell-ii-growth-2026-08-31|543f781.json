@@ -1,0 +1,131 @@
+{
+  "schemaVersion": "hotword-pending-receipt-v1",
+  "status": "recorded",
+  "ledgerStatus": "DEPLOYED_LEDGER_RECORDED",
+  "batchId": "mortal-shell-ii|g017-p4-mortal-shell-ii-growth-2026-08-31|543f781",
+  "siteId": "mortal-shell-ii",
+  "sourceReceiptPath": "/tmp/ms2-growth-publish-receipt.json",
+  "pendingSince": "2026-08-31T07:10:40.589Z",
+  "lastAttemptAt": "2026-08-31T07:47:36.490Z",
+  "lastAttemptError": "",
+  "recordedAt": "2026-08-31T07:47:36.490Z",
+  "interventionIds": [
+    "iv-f80066004e1f4002",
+    "iv-3256754b4e2f7b8b",
+    "iv-2867ac2196c0d289",
+    "iv-f26e340f7872a143"
+  ],
+  "baselineDataDates": [
+    "Fri Aug 28 2026 00:00:00 GMT+0800 (GMT+08:00)",
+    "Fri Aug 28 2026 00:00:00 GMT+0800 (GMT+08:00)",
+    "Fri Aug 28 2026 00:00:00 GMT+0800 (GMT+08:00)",
+    "Fri Aug 28 2026 00:00:00 GMT+0800 (GMT+08:00)"
+  ],
+  "interventionKeys": [
+    "mortal-shell-ii|g017-p4-mortal-shell-ii-growth-2026-08-31|543f781|mortal-shell-ii|/mortal-shell-ii/|UPDATE_PAGE|",
+    "mortal-shell-ii|g017-p4-mortal-shell-ii-growth-2026-08-31|543f781|mortal-shell-ii|/mortal-shell-ii/hushed-sanctum/|CREATE_PAGE|",
+    "mortal-shell-ii|g017-p4-mortal-shell-ii-growth-2026-08-31|543f781|mortal-shell-ii|/mortal-shell-ii/known-issues/|CREATE_PAGE|",
+    "mortal-shell-ii|g017-p4-mortal-shell-ii-growth-2026-08-31|543f781|mortal-shell-ii|/mortal-shell-ii/blackmarrow-keys/|UPDATE_PAGE|"
+  ],
+  "receipt": {
+    "schemaVersion": "hotword-publish-receipt-v1",
+    "common": {
+      "site": "Mortal Shell II",
+      "siteId": "mortal-shell-ii",
+      "game": "Mortal Shell II",
+      "batchId": "mortal-shell-ii|g017-p4-mortal-shell-ii-growth-2026-08-31|543f781",
+      "decisionId": "2026-08-26|Mortal Shell II|CONTENT_OPTIMIZE|ms2-ctr-intent-alignment-v1",
+      "commitSha": "543f781",
+      "deploymentUrl": "https://mortal-shell-7od82cm70-lynnelan3s-projects.vercel.app",
+      "productionUrl": "https://mortalshell2guide.com",
+      "deployedAt": "2026-08-31T07:00:35.000Z",
+      "lifecyclePhase": "PUBLISHED",
+      "sourceRefs": [
+        "docs/patches/g017-p4-mortal-shell-ii-growth-2026-08-31.json"
+      ]
+    },
+    "interventions": [
+      {
+        "interventionId": "mortal-shell-ii|g017-p4-mortal-shell-ii-growth-2026-08-31|perf-homepage",
+        "site": "Mortal Shell II",
+        "siteId": "mortal-shell-ii",
+        "decisionId": "2026-08-26|Mortal Shell II|CONTENT_OPTIMIZE|ms2-ctr-intent-alignment-v1",
+        "action": "UPDATE_PAGE",
+        "primaryUrl": "/mortal-shell-ii/",
+        "affectedUrls": [
+          "/mortal-shell-ii/search-index.json"
+        ],
+        "reason": "Mobile performance: hero preload/webp, deferred pagefind, external search index.",
+        "sourceRefs": [
+          "docs/patches/g017-p4-mortal-shell-ii-growth-2026-08-31.json"
+        ],
+        "commitSha": "543f781",
+        "deploymentUrl": "https://mortal-shell-7od82cm70-lynnelan3s-projects.vercel.app",
+        "productionUrl": "https://mortalshell2guide.com",
+        "deployedAt": "2026-08-31T07:00:35.000Z"
+      },
+      {
+        "interventionId": "mortal-shell-ii|g017-p4-mortal-shell-ii-growth-2026-08-31|hushed-sanctum",
+        "site": "Mortal Shell II",
+        "siteId": "mortal-shell-ii",
+        "decisionId": "2026-08-26|Mortal Shell II|CONTENT_OPTIMIZE|ms2-ctr-intent-alignment-v1",
+        "action": "CREATE_PAGE",
+        "primaryUrl": "/mortal-shell-ii/hushed-sanctum/",
+        "affectedUrls": [],
+        "reason": "GSC query mortal shell 2 hushed sanctum — location/entry/cleanse page.",
+        "sourceRefs": [
+          "docs/patches/g017-p4-mortal-shell-ii-growth-2026-08-31.json"
+        ],
+        "commitSha": "543f781",
+        "deploymentUrl": "https://mortal-shell-7od82cm70-lynnelan3s-projects.vercel.app",
+        "productionUrl": "https://mortalshell2guide.com",
+        "deployedAt": "2026-08-31T07:00:35.000Z"
+      },
+      {
+        "interventionId": "mortal-shell-ii|g017-p4-mortal-shell-ii-growth-2026-08-31|known-issues",
+        "site": "Mortal Shell II",
+        "siteId": "mortal-shell-ii",
+        "decisionId": "2026-08-26|Mortal Shell II|CONTENT_OPTIMIZE|ms2-ctr-intent-alignment-v1",
+        "action": "CREATE_PAGE",
+        "primaryUrl": "/mortal-shell-ii/known-issues/",
+        "affectedUrls": [],
+        "reason": "Troubleshooting navigation hub; does not compete with crashing-pc.",
+        "sourceRefs": [
+          "docs/patches/g017-p4-mortal-shell-ii-growth-2026-08-31.json"
+        ],
+        "commitSha": "543f781",
+        "deploymentUrl": "https://mortal-shell-7od82cm70-lynnelan3s-projects.vercel.app",
+        "productionUrl": "https://mortalshell2guide.com",
+        "deployedAt": "2026-08-31T07:00:35.000Z"
+      },
+      {
+        "interventionId": "mortal-shell-ii|g017-p4-mortal-shell-ii-growth-2026-08-31|blackmarrow-indexing",
+        "site": "Mortal Shell II",
+        "siteId": "mortal-shell-ii",
+        "decisionId": "2026-08-26|Mortal Shell II|CONTENT_OPTIMIZE|ms2-ctr-intent-alignment-v1",
+        "action": "UPDATE_PAGE",
+        "primaryUrl": "/mortal-shell-ii/blackmarrow-keys/",
+        "affectedUrls": [
+          "/mortal-shell-ii/guides/",
+          "/mortal-shell-ii/tarstones/"
+        ],
+        "reason": "Hub discovery links only; page body unchanged.",
+        "sourceRefs": [
+          "docs/patches/g017-p4-mortal-shell-ii-growth-2026-08-31.json"
+        ],
+        "commitSha": "543f781",
+        "deploymentUrl": "https://mortal-shell-7od82cm70-lynnelan3s-projects.vercel.app",
+        "productionUrl": "https://mortalshell2guide.com",
+        "deployedAt": "2026-08-31T07:00:35.000Z"
+      }
+    ],
+    "launchReceiptKey": "mortal-shell-ii|g017-p4-mortal-shell-ii-growth-2026-08-31|543f781",
+    "templateVersion": "legacy-astro-starlight",
+    "publishedPageCount": 6,
+    "analyticsReadiness": {
+      "ga4": "READY",
+      "vercelAnalytics": "READY"
+    },
+    "indexNowStatus": "NOT_RUN"
+  }
+}

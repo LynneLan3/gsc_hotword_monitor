@@ -100,8 +100,8 @@ assert(
   'search runner zh label'
 );
 assert(
-  /addItem\('创建搜索需求任务', 'createSearchDemandJobs'\)/.test(codeSrc),
-  'menu createSearchDemandJobs'
+  !/addItem\('创建搜索需求任务', 'createSearchDemandJobs'\)/.test(codeSrc),
+  'search demand menu is retired'
 );
 assert(!/createSearchDemandJobs/.test(codeSrc.slice(
   codeSrc.indexOf('function runDailyUnlocked_'),

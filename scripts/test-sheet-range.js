@@ -81,7 +81,7 @@ assert(finalizer.indexOf("setDailyRunPhase_('done')") > finalizer.indexOf('runDe
 var unlocked = extractFn(codeSrc, 'runDailyUnlocked_');
 assert(!/DECISION_ENGINE_FAILED/.test(unlocked), 'runDaily no longer swallows decision errors');
 assert(/runDailyFinalizerUnlocked_/.test(unlocked), 'runDaily delegates finalizer');
-assert(codeSrc.indexOf("addItem('重试每日后处理', 'runDailyFinalizer')") >= 0, 'menu retry finalizer');
+assert(codeSrc.indexOf("addItem('重试每日后处理', 'runDailyFinalizer')") < 0, 'retired finalizer menu hidden');
 
 function sheetDataRowCount_(lastRow) {
   return lastRow >= 2 ? lastRow - 1 : 0;

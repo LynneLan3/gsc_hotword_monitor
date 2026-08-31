@@ -369,7 +369,7 @@ assert(
   ),
   'ui order'
 );
-assert(/重建效果变化/.test(codeSrc), 'menu');
+assert(!/\.addItem\('重建效果变化'/.test(codeSrc), 'retired menu hidden');
 assert(
   !/function runDaily\([\s\S]*?rebuildOutcomeDelta/.test(codeSrc),
   'not in runDaily'

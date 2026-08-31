@@ -167,7 +167,10 @@ function applyColumnWidths_(sheet, name) {
     };
   } else if (name === SHEET_NAMES.CONTENT_UPDATES) {
     widths = {
-      1: 110, 2: 220, 3: 240, 4: 120, 5: 360, 6: 140, 7: 280
+      1: 110, 2: 220, 3: 240, 4: 120, 5: 360, 6: 140, 7: 280,
+      8: 140, 9: 220, 10: 140, 11: 180, 12: 220, 13: 120, 14: 220,
+      15: 260, 16: 180, 17: 260, 18: 220, 19: 200, 20: 220, 21: 180,
+      22: 220, 23: 260, 24: 180
     };
   } else if (name === SHEET_NAMES.FEEDBACK_SAMPLES) {
     widths = {
@@ -817,7 +820,11 @@ function getLatestKnownIndexStats_(siteName) {
 
 function normalizeKeyDate_(v) {
   if (v instanceof Date) return formatDate_(v);
-  return String(v || '').trim().substring(0, 10);
+  var raw = String(v || '').trim();
+  if (!raw) return '';
+  if (/^\d{4}-\d{2}-\d{2}/.test(raw)) return raw.substring(0, 10);
+  var parsed = new Date(raw);
+  return isNaN(parsed.getTime()) ? '' : formatDate_(parsed);
 }
 
 /**

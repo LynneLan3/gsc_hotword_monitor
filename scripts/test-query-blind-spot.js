@@ -22,7 +22,7 @@ assert(/var QUERY_BLIND_SPOT_V1/.test(configSrc), 'QUERY_BLIND_SPOT_V1 in Config
 assert(/QUERY_BLIND_SPOT_TRIGGER\s*=\s*'QUERY_BLIND_SPOT'/.test(configSrc), 'trigger constant');
 assert(/function detectQueryBlindSpots_/.test(radarSrc), 'detectQueryBlindSpots_');
 assert(/function evaluateQueryBlindSpot_/.test(radarSrc), 'evaluateQueryBlindSpot_');
-assert(/normalizeOpportunityPath_/.test(radarSrc), 'reuses Opportunity path matcher');
+assert(/canonicalRadarPathname_/.test(radarSrc), 'uses canonical radar path matcher');
 assert(/SHEET_NAMES\.PAGES|Page明细/.test(radarSrc), 'reads Page明细 conceptually');
 assert(!/loadQueryRowsBySite_/.test(radarSrc.split('function debugDetectQueryBlindSpots')[0]),
   'detector compute path must not guess page from Query明细');
