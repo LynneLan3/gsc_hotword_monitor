@@ -27,7 +27,293 @@ export const EXIT = {
 	LEDGER_FAILED: 1,
 	INVALID_INPUT: 2,
 	LEDGER_PENDING: 10,
+	RECEIPT_FAILED: 11,
+	WRITEBACK_PENDING: 12,
 };
+
+export const DEPLOYMENT_RECEIPT_SCHEMA = 'deployment-receipt-v1';
+
+export const PUBLISH_COMPLETION_STATUS = {
+	COMPLETE: 'COMPLETE',
+	RECEIPT_FAILED: 'RECEIPT_FAILED',
+	WRITEBACK_PENDING: 'WRITEBACK_PENDING',
+	PRODUCTION_FAILED: 'PRODUCTION_FAILED',
+};
+
+function normalizeProductionUrl(raw) {
+	const value = asString(raw).replace(/\/+$/, '');
+	return value ? `${value}/` : '';
+}
+
+function normalizeReceiptPath(raw) {
+	const value = asString(raw);
+	if (!value || value === '/') return '/';
+	return `/${value.replace(/^\/+|\/+$/g, '')}/`;
+}
+
+export function validateDeploymentReceiptMinimum(receipt) {
+	const required = [
+		'receiptKey', 'siteId', 'siteName', 'batchId', 'commitSHA',
+		'deploymentURL', 'productionURL', 'productionDeployedAt', 'action',
+	];
+	const missing = required.filter((key) => !asString(receipt?.[key]));
+	if (receipt?.schemaVersion !== DEPLOYMENT_RECEIPT_SCHEMA || missing.length ||
+		!Array.isArray(receipt?.affectedPages) || !receipt.affectedPages.length) {
+		throw new Error(`invalid deployment receipt fields${missing.length ? `: ${missing.join(', ')}` : ''}`);
+	}
+	return true;
+}
+
+export function buildDeploymentReceiptFromPublishReceipt(receipt) {
+	validatePublishReceipt(receipt);
+	const common = receipt.common || {};
+	const productionUrl = normalizeProductionUrl(common.productionUrl);
+	const toPage = (item) => {
+		const path = normalizeReceiptPath(item.primaryUrl);
+		const action = asString(item.action || common.action).toUpperCase() || 'OTHER';
+		return {
+			path,
+			action,
+			primaryURL: `${productionUrl.replace(/\/$/, '')}${path === '/' ? '/' : path}`,
+			triggerType: asString(item.triggerType),
+			triggerQueries: Array.isArray(item.triggerQueries) ? item.triggerQueries : [],
+			triggerSummary: asString(item.triggerSummary),
+			sourceRefs: Array.isArray(item.sourceRefs) ? item.sourceRefs : (Array.isArray(item.sourceRefs) ? item.sourceRefs : []),
+			reason: asString(item.reason || item.changeSummary),
+		};
+	};
+	return {
+		schemaVersion: DEPLOYMENT_RECEIPT_SCHEMA,
+		receiptKey: asString(receipt.launchReceiptKey || common.batchId),
+		interventionId: asString(receipt.interventionId || `receipt-${common.batchId}`),
+		developmentTaskId: asString(common.developmentTaskId),
+		opportunityId: asString(common.opportunityId),
+		goalId: asString(common.goalId),
+		siteId: asString(common.siteId),
+		siteName: asString(common.site),
+		batchId: asString(common.batchId),
+		decisionId: asString(common.decisionId),
+		productionDeployedAt: asString(common.deployedAt),
+		commitSHA: asString(common.commitSha),
+		deploymentURL: asString(common.deploymentUrl),
+		productionURL: productionUrl,
+		releaseDate: asString(common.releaseDate),
+		lifecyclePhase: asString(common.lifecyclePhase),
+		action: asString(receipt.batchAction || common.action || receipt.interventions?.[0]?.action).toUpperCase(),
+		reason: asString(receipt.reason || receipt.interventions?.[0]?.reason),
+		sourceRefs: Array.isArray(receipt.sourceRefs) ? receipt.sourceRefs : [],
+		affectedPages: receipt.interventions.map(toPage),
+	};
+}
+
+function buildDeploymentLedgerResult(value, receipt) {
+	const duplicate = value?.result === 'DUPLICATE_ACCEPTED';
+	return {
+		status: DEPLOYED_LEDGER_STATUS.RECORDED,
+		ok: true,
+		skipped: duplicate,
+		result: value?.result || 'ACCEPTED',
+		output: `${duplicate ? 'SKIP' : 'PASS'} deployment receipt result=${value?.result || 'ACCEPTED'} receiptKey=${value?.receiptKey || receipt.receiptKey} intervention=${value?.interventionId || receipt.interventionId} contentUpdates=${value?.contentUpdates ?? 0} observations=${value?.observations ?? 0}`,
+		error: '',
+		summary: {
+			batchId: receipt.batchId,
+			receiptKey: value?.receiptKey || receipt.receiptKey,
+			interventionId: value?.interventionId || receipt.interventionId,
+			contentUpdates: value?.contentUpdates ?? 0,
+			observations: value?.observations ?? 0,
+			baselineDataDate: value?.baselineDataDate || '',
+			deployedAt: receipt.productionDeployedAt,
+		},
+		response: value,
+	};
+}
+
+function invokeIngestDeploymentReceiptViaClaspCli(receipt, options = {}) {
+	validateDeploymentReceiptMinimum(receipt);
+	const user = claspUser(options);
+	const params = JSON.stringify([receipt]);
+	const result = spawnSync('clasp', ['--json', 'run', 'ingestDeploymentReceipt', '--user', user, '--params', params], {
+		cwd: options.cwd || GSC_ROOT,
+		encoding: 'utf8',
+		env: { ...process.env, HOTWORD_CLASP_USER: user },
+		timeout: 120_000,
+	});
+	const stdout = String(result.stdout || '').trim();
+	const stderr = String(result.stderr || '').trim();
+	const output = `${stdout}\n${stderr}`.trim();
+	if (result.error || result.status !== 0) {
+		const message = result.error?.message || output;
+		return {
+			status: isRecoverableLedgerError(message) ? DEPLOYED_LEDGER_STATUS.PENDING : DEPLOYED_LEDGER_STATUS.FAILED,
+			ok: false,
+			output,
+			error: message,
+			summary: { batchId: receipt.batchId, receiptKey: receipt.receiptKey },
+			transport: 'clasp-cli',
+		};
+	}
+	let response = null;
+	try {
+		response = JSON.parse(stdout);
+	} catch {
+		return {
+			status: DEPLOYED_LEDGER_STATUS.FAILED,
+			ok: false,
+			output,
+			error: `clasp returned non-JSON output: ${stdout || stderr}`,
+			summary: { batchId: receipt.batchId, receiptKey: receipt.receiptKey },
+			transport: 'clasp-cli',
+		};
+	}
+	const value = response && (response.response || response.result) ? (response.response || response.result) : response;
+	if (!value || value.ok !== true || !['ACCEPTED', 'DUPLICATE_ACCEPTED'].includes(value.result)) {
+		return {
+			status: isRecoverableLedgerError(stdout) ? DEPLOYED_LEDGER_STATUS.PENDING : DEPLOYED_LEDGER_STATUS.FAILED,
+			ok: false,
+			output: stdout,
+			error: stdout,
+			summary: { batchId: receipt.batchId, receiptKey: receipt.receiptKey },
+			response: value,
+			transport: 'clasp-cli',
+		};
+	}
+	return { ...buildDeploymentLedgerResult(value, receipt), transport: 'clasp-cli' };
+}
+
+async function invokeIngestDeploymentReceiptViaApi(receipt, options = {}) {
+	validateDeploymentReceiptMinimum(receipt);
+	const user = claspUser(options);
+	const preflight = options.skipPreflight ? { ok: true } : await preflightClaspCredentials({ ...options, claspUser: user });
+	if (!preflight.ok) {
+		return {
+			status: DEPLOYED_LEDGER_STATUS.PENDING,
+			ok: false,
+			output: preflight.message,
+			error: `${preflight.action} ${preflight.reason}`,
+			summary: { batchId: receipt.batchId, receiptKey: receipt.receiptKey },
+			preflight,
+			transport: 'apps-script-api',
+		};
+	}
+	try {
+		const response = await fetchWithTimeout(`https://script.googleapis.com/v1/scripts/${SCRIPT_ID}:run`, {
+			method: 'POST',
+			headers: {
+				Authorization: `Bearer ${preflight.accessToken}`,
+				'Content-Type': 'application/json',
+			},
+			body: JSON.stringify({
+				function: 'ingestDeploymentReceipt',
+				parameters: [receipt],
+				devMode: options.devMode !== false,
+			}),
+		});
+		const body = await response.json();
+		if (!response.ok || body.error) {
+			const errorText = JSON.stringify(body.error || body);
+			return {
+				status: isRecoverableLedgerError(errorText) ? DEPLOYED_LEDGER_STATUS.PENDING : DEPLOYED_LEDGER_STATUS.FAILED,
+				ok: false,
+				output: errorText,
+				error: body.error?.message || errorText,
+				summary: { batchId: receipt.batchId, receiptKey: receipt.receiptKey },
+				transport: 'apps-script-api',
+			};
+		}
+		const value = body.response?.result;
+		if (!value || value.ok !== true || !['ACCEPTED', 'DUPLICATE_ACCEPTED'].includes(value.result)) {
+			const errorText = JSON.stringify(value || body);
+			return {
+				status: isRecoverableLedgerError(errorText) ? DEPLOYED_LEDGER_STATUS.PENDING : DEPLOYED_LEDGER_STATUS.FAILED,
+				ok: false,
+				output: errorText,
+				error: errorText,
+				summary: { batchId: receipt.batchId, receiptKey: receipt.receiptKey },
+				response: value,
+				transport: 'apps-script-api',
+			};
+		}
+		return { ...buildDeploymentLedgerResult(value, receipt), transport: 'apps-script-api' };
+	} catch (error) {
+		return {
+			status: DEPLOYED_LEDGER_STATUS.PENDING,
+			ok: false,
+			output: String(error.message || error),
+			error: String(error.message || error),
+			summary: { batchId: receipt.batchId, receiptKey: receipt.receiptKey },
+			transport: 'apps-script-api',
+		};
+	}
+}
+
+export async function invokeIngestDeploymentReceipt(receipt, options = {}) {
+	if (options.submit) {
+		const submitted = options.submit(receipt);
+		return submitted && typeof submitted.then === 'function' ? await submitted : submitted;
+	}
+	const preferCli = process.env.HOTWORD_LEDGER_TRANSPORT?.trim() === 'clasp-cli';
+	if (preferCli) return invokeIngestDeploymentReceiptViaClaspCli(receipt, options);
+	const apiResult = await invokeIngestDeploymentReceiptViaApi(receipt, options);
+	if (apiResult.ok) return apiResult;
+	if (apiResult.status === DEPLOYED_LEDGER_STATUS.FAILED && !isRecoverableLedgerError(apiResult.error || apiResult.output)) {
+		return apiResult;
+	}
+	const cliResult = invokeIngestDeploymentReceiptViaClaspCli(receipt, options);
+	if (cliResult.ok) return cliResult;
+	if (apiResult.status === DEPLOYED_LEDGER_STATUS.PENDING || cliResult.status === DEPLOYED_LEDGER_STATUS.PENDING) {
+		return {
+			...cliResult,
+			status: DEPLOYED_LEDGER_STATUS.PENDING,
+			output: `${apiResult.error || apiResult.output}; clasp-cli fallback: ${cliResult.error || cliResult.output}`,
+			error: cliResult.error || apiResult.error,
+		};
+	}
+	return cliResult;
+}
+
+export function resolvePublishCompletionStatus({ productionPassed, receiptResult }) {
+	if (!productionPassed) return PUBLISH_COMPLETION_STATUS.PRODUCTION_FAILED;
+	if (receiptResult?.ok && ['ACCEPTED', 'DUPLICATE_ACCEPTED'].includes(receiptResult.result || receiptResult.response?.result)) {
+		return PUBLISH_COMPLETION_STATUS.COMPLETE;
+	}
+	if (receiptResult?.status === DEPLOYED_LEDGER_STATUS.PENDING || isRecoverableLedgerError(receiptResult?.error || receiptResult?.output)) {
+		return PUBLISH_COMPLETION_STATUS.WRITEBACK_PENDING;
+	}
+	return PUBLISH_COMPLETION_STATUS.RECEIPT_FAILED;
+}
+
+export async function persistAndSubmitDeploymentReceipt(receipt, options = {}) {
+	validateDeploymentReceiptMinimum(receipt);
+	let result;
+	try {
+		result = await invokeIngestDeploymentReceipt(receipt, options);
+	} catch (error) {
+		result = {
+			status: DEPLOYED_LEDGER_STATUS.PENDING,
+			ok: false,
+			output: String(error.message || error),
+			error: String(error.message || error),
+			summary: { batchId: receipt.batchId, receiptKey: receipt.receiptKey },
+		};
+	}
+	return {
+		...result,
+		completionStatus: resolvePublishCompletionStatus({ productionPassed: true, receiptResult: result }),
+	};
+}
+
+export async function finalizeProductionReceiptWriteback(receipt, options = {}) {
+	const deploymentReceipt = receipt?.schemaVersion === DEPLOYMENT_RECEIPT_SCHEMA
+		? receipt
+		: buildDeploymentReceiptFromPublishReceipt(receipt);
+	const current = await persistAndSubmitDeploymentReceipt(deploymentReceipt, options);
+	return { current, deploymentReceipt };
+}
+
+/** @deprecated legacy publish-receipt writer; canonical path is ingestDeploymentReceipt */
+export async function ingestDeploymentReceipt(receipt, options = {}) {
+	return invokeIngestDeploymentReceipt(receipt, options);
+}
 
 function asString(value) {
 	return value === undefined || value === null ? '' : String(value).trim();
@@ -536,6 +822,13 @@ export async function finalizeLedgerWriteback(receipt, options = {}) {
 
 export function exitCodeForLedgerStatus(status) {
 	if (status === DEPLOYED_LEDGER_STATUS.RECORDED || status === LEDGER_STATUS.RECORDED) return EXIT.RECORDED;
-	if (status === DEPLOYED_LEDGER_STATUS.PENDING || status === LEDGER_STATUS.LEDGER_PENDING) return EXIT.LEDGER_PENDING;
+	if (status === DEPLOYED_LEDGER_STATUS.PENDING || status === LEDGER_STATUS.LEDGER_PENDING) return EXIT.WRITEBACK_PENDING;
+	return EXIT.RECEIPT_FAILED;
+}
+
+export function exitCodeForCompletionStatus(status) {
+	if (status === PUBLISH_COMPLETION_STATUS.COMPLETE) return EXIT.RECORDED;
+	if (status === PUBLISH_COMPLETION_STATUS.WRITEBACK_PENDING) return EXIT.WRITEBACK_PENDING;
+	if (status === PUBLISH_COMPLETION_STATUS.RECEIPT_FAILED) return EXIT.RECEIPT_FAILED;
 	return EXIT.LEDGER_FAILED;
 }

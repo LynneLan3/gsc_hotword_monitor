@@ -1,0 +1,172 @@
+{
+  "schemaVersion": "deployment-receipt-v1",
+  "receiptKey": "halloween-the-game-content-expansion-20260901",
+  "interventionId": "receipt-halloween-the-game-content-expansion-20260901",
+  "siteId": "halloween-the-game",
+  "siteName": "Halloween: The Game",
+  "batchId": "halloween-the-game-content-expansion-20260901",
+  "commitSHA": "9663166855723b367b0b7e99ba5a6f22677f93ad",
+  "deploymentURL": "https://halloween-the-game-guide-du2t1wdrb-lynnelan3s-projects.vercel.app",
+  "productionURL": "https://halloween-the-game-guide.vercel.app/",
+  "productionDeployedAt": "2026-09-01T00:34:41Z",
+  "releaseDate": "2026-09-08",
+  "lifecyclePhase": "pre-release",
+  "action": "CONTENT_EXPANSION",
+  "reason": "Pre-release launch-answer site expanded into six gameplay guide pillars before Sep 4 Advance Access, based on official evidence and existing GSC launch traction.",
+  "sourceRefs": [
+    "https://halloween-the-game-guide.vercel.app/",
+    "commit:9663166855723b367b0b7e99ba5a6f22677f93ad"
+  ],
+  "affectedPages": [
+    {
+      "path": "/",
+      "action": "CONTENT_EXPANSION",
+      "primaryURL": "https://halloween-the-game-guide.vercel.app/",
+      "triggerType": "site_expansion",
+      "triggerQueries": [],
+      "triggerSummary": "Home hub expanded to surface six gameplay guide pillars ahead of Advance Access.",
+      "sourceRefs": ["site-spec.yaml"],
+      "reason": "Expanded homepage discovery into maps, characters, Michael Myers, multiplayer, single-player, and PC pillars."
+    },
+    {
+      "path": "/maps/",
+      "action": "CONTENT_EXPANSION",
+      "primaryURL": "https://halloween-the-game-guide.vercel.app/maps/",
+      "triggerType": "site_expansion",
+      "triggerQueries": [],
+      "triggerSummary": "Maps pillar hub added for launch-window map intent.",
+      "sourceRefs": ["site-spec.yaml"],
+      "reason": "New maps pillar hub for Haddonfield launch-window search intent."
+    },
+    {
+      "path": "/maps/haddonfield-heights/",
+      "action": "CONTENT_EXPANSION",
+      "primaryURL": "https://halloween-the-game-guide.vercel.app/maps/haddonfield-heights/",
+      "triggerType": "site_expansion",
+      "triggerQueries": [],
+      "triggerSummary": "Haddonfield Heights map guide published from official map evidence.",
+      "sourceRefs": ["site-spec.yaml"],
+      "reason": "Map guide for Haddonfield Heights based on official IllFonic map disclosures."
+    },
+    {
+      "path": "/maps/haddonfield-town-center/",
+      "action": "CONTENT_EXPANSION",
+      "primaryURL": "https://halloween-the-game-guide.vercel.app/maps/haddonfield-town-center/",
+      "triggerType": "site_expansion",
+      "triggerQueries": [],
+      "triggerSummary": "Haddonfield Town Center map guide published from official map evidence.",
+      "sourceRefs": ["site-spec.yaml"],
+      "reason": "Map guide for Haddonfield Town Center based on official IllFonic map disclosures."
+    },
+    {
+      "path": "/maps/orange-grove-estates/",
+      "action": "CONTENT_EXPANSION",
+      "primaryURL": "https://halloween-the-game-guide.vercel.app/maps/orange-grove-estates/",
+      "triggerType": "site_expansion",
+      "triggerQueries": [],
+      "triggerSummary": "Orange Grove Estates map guide published from official map evidence.",
+      "sourceRefs": ["site-spec.yaml"],
+      "reason": "Map guide for Orange Grove Estates based on official IllFonic map disclosures."
+    },
+    {
+      "path": "/characters/",
+      "action": "CONTENT_EXPANSION",
+      "primaryURL": "https://halloween-the-game-guide.vercel.app/characters/",
+      "triggerType": "site_expansion",
+      "triggerQueries": [],
+      "triggerSummary": "Characters pillar hub added for survivor/killer discovery.",
+      "sourceRefs": ["site-spec.yaml"],
+      "reason": "Characters pillar hub for launch-window roster discovery."
+    },
+    {
+      "path": "/michael-myers/",
+      "action": "CONTENT_EXPANSION",
+      "primaryURL": "https://halloween-the-game-guide.vercel.app/michael-myers/",
+      "triggerType": "site_expansion",
+      "triggerQueries": [],
+      "triggerSummary": "Michael Myers pillar hub added for killer intent.",
+      "sourceRefs": ["site-spec.yaml"],
+      "reason": "Michael Myers pillar hub for killer-focused launch queries."
+    },
+    {
+      "path": "/michael-myers/abilities/",
+      "action": "CONTENT_EXPANSION",
+      "primaryURL": "https://halloween-the-game-guide.vercel.app/michael-myers/abilities/",
+      "triggerType": "site_expansion",
+      "triggerQueries": [],
+      "triggerSummary": "Michael Myers abilities guide added from official ability evidence.",
+      "sourceRefs": ["site-spec.yaml"],
+      "reason": "Abilities guide for Michael Myers based on official ability disclosures."
+    },
+    {
+      "path": "/multiplayer/",
+      "action": "CONTENT_EXPANSION",
+      "primaryURL": "https://halloween-the-game-guide.vercel.app/multiplayer/",
+      "triggerType": "site_expansion",
+      "triggerQueries": [],
+      "triggerSummary": "Multiplayer pillar hub added for mode discovery.",
+      "sourceRefs": ["site-spec.yaml"],
+      "reason": "Multiplayer pillar hub for launch-window mode intent."
+    },
+    {
+      "path": "/multiplayer/how-multiplayer-works/",
+      "action": "CONTENT_EXPANSION",
+      "primaryURL": "https://halloween-the-game-guide.vercel.app/multiplayer/how-multiplayer-works/",
+      "triggerType": "site_expansion",
+      "triggerQueries": [],
+      "triggerSummary": "How multiplayer works guide added from official mode evidence.",
+      "sourceRefs": ["site-spec.yaml"],
+      "reason": "How multiplayer works guide based on official multiplayer disclosures."
+    },
+    {
+      "path": "/multiplayer/crossplay/",
+      "action": "CONTENT_EXPANSION",
+      "primaryURL": "https://halloween-the-game-guide.vercel.app/multiplayer/crossplay/",
+      "triggerType": "site_expansion",
+      "triggerQueries": [],
+      "triggerSummary": "Crossplay status guide added from official platform evidence.",
+      "sourceRefs": ["site-spec.yaml"],
+      "reason": "Crossplay status guide based on official platform disclosures."
+    },
+    {
+      "path": "/single-player/",
+      "action": "CONTENT_EXPANSION",
+      "primaryURL": "https://halloween-the-game-guide.vercel.app/single-player/",
+      "triggerType": "site_expansion",
+      "triggerQueries": [],
+      "triggerSummary": "Single-player pillar hub added for story-mode intent.",
+      "sourceRefs": ["site-spec.yaml"],
+      "reason": "Single-player pillar hub for launch-window story-mode intent."
+    },
+    {
+      "path": "/pc/",
+      "action": "CONTENT_EXPANSION",
+      "primaryURL": "https://halloween-the-game-guide.vercel.app/pc/",
+      "triggerType": "site_expansion",
+      "triggerQueries": [],
+      "triggerSummary": "PC pillar hub added for platform intent.",
+      "sourceRefs": ["site-spec.yaml"],
+      "reason": "PC pillar hub for platform and requirements discovery."
+    },
+    {
+      "path": "/pc/system-requirements/",
+      "action": "CONTENT_EXPANSION",
+      "primaryURL": "https://halloween-the-game-guide.vercel.app/pc/system-requirements/",
+      "triggerType": "site_expansion",
+      "triggerQueries": [],
+      "triggerSummary": "PC system requirements guide added from official store evidence.",
+      "sourceRefs": ["site-spec.yaml"],
+      "reason": "System requirements guide based on official Steam/store disclosures."
+    },
+    {
+      "path": "/early-access-release-time/",
+      "action": "ADD_INTERNAL_LINK",
+      "primaryURL": "https://halloween-the-game-guide.vercel.app/early-access-release-time/",
+      "triggerType": "internal_link",
+      "triggerQueries": [],
+      "triggerSummary": "Internal links refreshed toward new gameplay pillars; page body unchanged.",
+      "sourceRefs": ["site-spec.yaml"],
+      "reason": "Internal-link refresh only; not counted as a primary content rewrite."
+    }
+  ]
+}

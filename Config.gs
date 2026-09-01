@@ -29,24 +29,46 @@ var SHEET_NAMES = {
   OPPORTUNITIES: '内容机会',
   DEMAND_RADAR: '需求雷达',
   FRESH_QUERY_MONITOR: '实时Query监控',
+  INTENT_OPPORTUNITIES: 'Intent机会',
   RESEARCH_JOBS: '研究任务',
   RESEARCH_REVIEW: '研究审核',
   DEVELOPMENT_TASKS: '开发任务',
   CONTENT_UPDATES: '内容更新记录',
   INTERVENTION_OBSERVATIONS: '干预观察',
+  INTERVENTION_TIMELINE: '干预时间线',
+  EARLY_FOLLOWUP_STATE: 'EARLY_FOLLOWUP_STATE',
   /** 旧/实验层：仅用于识别与隐藏，setup 不会创建 */
   PAGE_OPPORTUNITIES: 'PAGE_OPPORTUNITIES'
 };
 
-var GSC_MONITORING_HISTORY = {
-  spreadsheetName: 'GSC_监控回测历史库',
-  propertyKey: 'GSC_MONITORING_HISTORY_SPREADSHEET_ID_V1',
-  tables: {
-    siteDaily: 'gsc_site_daily', queryDaily: 'gsc_query_daily', pageDaily: 'gsc_page_daily',
-    queryPageDaily: 'gsc_query_page_daily', urlIndex: 'gsc_url_index_history',
-    decision: 'gsc_decision_history', intervention: 'gsc_intervention_history', runManifest: 'gsc_run_manifest'
-  }
-};
+/**
+ * Recurring runtime only verifies that setup() has already created the
+ * business sheets it can read or write. It must not create or migrate them.
+ */
+var RUNTIME_REQUIRED_SHEET_NAMES = [
+  SHEET_NAMES.SITES,
+  SHEET_NAMES.SNAPSHOT,
+  SHEET_NAMES.DAILY,
+  SHEET_NAMES.QUERIES,
+  SHEET_NAMES.PAGES,
+  SHEET_NAMES.QUERY_PAGES,
+  SHEET_NAMES.URL_INDEX,
+  SHEET_NAMES.LOG,
+  SHEET_NAMES.RULES,
+  SHEET_NAMES.SITE_STATUS,
+  SHEET_NAMES.PORTFOLIO,
+  SHEET_NAMES.DECISION_HISTORY,
+  SHEET_NAMES.DECISION_OUTCOMES,
+  SHEET_NAMES.TODAY_ACTIONS,
+  SHEET_NAMES.OPPORTUNITIES,
+  SHEET_NAMES.DEMAND_RADAR,
+  SHEET_NAMES.RESEARCH_JOBS,
+  SHEET_NAMES.RESEARCH_REVIEW,
+  SHEET_NAMES.DEVELOPMENT_TASKS,
+  SHEET_NAMES.CONTENT_UPDATES,
+  SHEET_NAMES.INTERVENTION_OBSERVATIONS,
+  SHEET_NAMES.INTERVENTION_TIMELINE
+];
 
 /**
  * Decision Engine 规则版本。规则逻辑实质变化时人工升级；普通数据变化不升级。
@@ -66,6 +88,7 @@ var SHEET_UI_ORDER = [
   SHEET_NAMES.OPPORTUNITIES,
   SHEET_NAMES.DEMAND_RADAR,
   SHEET_NAMES.FRESH_QUERY_MONITOR,
+  SHEET_NAMES.INTENT_OPPORTUNITIES,
   SHEET_NAMES.RESEARCH_JOBS,
   SHEET_NAMES.RESEARCH_REVIEW,
   SHEET_NAMES.SITE_STATUS,
@@ -78,6 +101,8 @@ var SHEET_UI_ORDER = [
   SHEET_NAMES.EVALUATION_ELIGIBILITY,
   SHEET_NAMES.OUTCOME_DELTA,
   SHEET_NAMES.EFFECT_EVALUATION,
+  SHEET_NAMES.INTERVENTION_OBSERVATIONS,
+  SHEET_NAMES.INTERVENTION_TIMELINE,
   SHEET_NAMES.RULES,
   SHEET_NAMES.DAILY,
   SHEET_NAMES.QUERIES,
@@ -111,15 +136,17 @@ var SHEET_UI_TRAILING_ORDER = [
 ];
 
 /** 旧/实验 Tab：只隐藏，不删除数据、不删除代码依赖 */
-var SHEET_UI_HIDDEN = [SHEET_NAMES.PAGE_OPPORTUNITIES];
+var SHEET_UI_HIDDEN = [SHEET_NAMES.PAGE_OPPORTUNITIES, SHEET_NAMES.EARLY_FOLLOWUP_STATE];
 
-var SITE_HEADERS = ['站点名称', 'Property URL', 'Sitemap URL', 'Day0', 'Enabled'];
+// site_id is an additive cross-system reference. Keep legacy columns first so
+// existing 5-column 站点配置 rows remain readable without migration.
+var SITE_HEADERS = ['站点名称', 'Property URL', 'Sitemap URL', 'Day0', 'Enabled', 'site_id'];
 var SNAPSHOT_HEADERS = [
   'RunDate', 'LatestGSCDataDate', 'Site', 'PropertyURL', 'Day',
   'SitemapURLCount', 'IndexedURLCount', 'IndexRate',
   'Impressions', 'Clicks', 'CTR', 'AveragePosition',
   'ReturnedQueryCount', 'FirstImpressionDate',
-  'TopQueries', 'TopPages', 'NewQueries', 'Status', 'Error'
+  'TopQueries', 'TopPages', 'NewQueries', 'Status', 'Error', 'site_id'
 ];
 var DAILY_HEADERS = [
   'DataDate', 'Site', 'Clicks', 'Impressions', 'CTR',
@@ -161,6 +188,120 @@ var FRESH_QUERY_MONITOR_HEADERS = [
   '数据是否未完全',
   '数据截止小时'
 ];
+
+/** Query Cluster → Page Hotspot → Action 的 M0 聚合输出。 */
+var INTENT_OPPORTUNITY_HEADERS = [
+  'Site', 'ClusterKey', 'ClusterLabel', 'ClusterQueries', 'QueryCount',
+  'ClusterClicks', 'ClusterImpressions', 'ClusterCTR', 'ClusterPosition',
+  'ClusterPreviousImpressions', 'ClusterGrowthRate', 'TopQuery',
+  'TopPage', 'TopPageImpressions', 'TopPageShare',
+  'PageClicks', 'PageImpressions', 'PageCTR', 'PagePosition',
+  'PageClusterCount', 'PageTopCluster', 'PageTopClusterShare',
+  'HotspotLevel', 'SignalConfidence', 'HasDominantPage',
+  'PossibleCannibalization', 'HasExistingPage', 'Action', 'ActionReason',
+  'ResearchJobID', 'ResearchJobStatus', 'DataCutoff', 'DataIncomplete',
+  'ClusterAction', 'ClusterActionReason', 'PageAction', 'PageActionReason',
+  'PageActionOwner',
+  'PreviousClusterImpressions', 'CurrentClusterImpressions', 'FollowupGrowthRate',
+  'PreviousClusterClicks', 'CurrentClusterClicks',
+  'PreviousClusterPosition', 'CurrentClusterPosition',
+  'PreviousTopPage', 'ExpectedPage', 'CurrentTopPage',
+  'PreviousTopPageShare', 'CurrentTopPageShare',
+  'FollowupSignals', 'FollowupConfidence', 'FollowupReason',
+  'FollowupFirstSeenAt', 'FollowupLastObservedAt',
+  'IntentType', 'IntentFamily', 'OpportunityStage', 'AbsoluteSignal',
+  'AbsoluteSignalReason', 'RoutingDecision',
+  'AdjacentCaptureCandidates', 'AdjacentCaptureReason'
+];
+
+/** Hidden additive state for Goal 2 previous/current observations. */
+var EARLY_FOLLOWUP_STATE_HEADERS = [
+  'Site', 'ClusterKey', 'ClusterLabel',
+  'PreviousImpressions', 'CurrentImpressions',
+  'PreviousClicks', 'CurrentClicks',
+  'PreviousPosition', 'CurrentPosition',
+  'PreviousTopPage', 'CurrentTopPage',
+  'PreviousTopPageShare', 'CurrentTopPageShare',
+  'FirstSeenAt', 'LastObservedAt', 'ExpectedPage',
+  'FollowupSignals', 'FollowupConfidence', 'FollowupReason',
+  'ObservationCount', 'MismatchConfirmRuns', 'SignalEventAt',
+  'IntentType', 'IntentFamily', 'OpportunityStage', 'AbsoluteSignal',
+  'AbsoluteSignalReason'
+];
+
+/** Small, deterministic intent families used as research context only. */
+var INTENT_FAMILY_ALIASES = [
+  { family: 'FUSE', aliases: ['fuse', 'fuses', 'fuse box'] }
+];
+
+/** 已知实体/多语言 alias：只做 deterministic 归一，不调用 LLM。 */
+var INTENT_CLUSTER_ENTITY_ALIASES = [
+  {
+    siteId: 'mortal-shell-ii',
+    key: 'SKIP_PROLOGUE',
+    label: 'Skip Prologue',
+    aliases: ['skip prologue', 'skip prologue or not', 'skip intro', 'skip tutorial'],
+    multilingual: false
+  },
+  {
+    siteId: 'mortal-shell-ii',
+    key: 'GLOOMBOUND_FLAME',
+    label: 'Gloombound Flame',
+    aliases: [
+      'gloombound flame',
+      'düstergebundene flamme',
+      'dustergebundene flamme',
+      'light extinguished lantern',
+      'lantern'
+    ],
+    multilingual: true
+  },
+  {
+    siteId: 'mortal-shell-ii',
+    key: 'CRASHING',
+    label: 'Crashing',
+    aliases: ['crash', 'crash pc', 'crash on load', 'keep crash'],
+    multilingual: false
+  },
+  {
+    siteId: 'mortal-shell-ii',
+    key: 'GREAT_MARTYRS_BLADE',
+    label: "Great Martyr's Blade",
+    aliases: ['great martyr blade', 'martyr blade'],
+    multilingual: false
+  }
+];
+
+var INTENT_CLUSTER_ACTIONS = {
+  RESEARCH_NEW_INTENT: 'RESEARCH_NEW_INTENT',
+  OPTIMIZE_EXISTING: 'OPTIMIZE_EXISTING',
+  EXISTING_GROWTH: 'EXISTING_GROWTH',
+  CANNIBALIZATION: 'CANNIBALIZATION',
+  MULTILINGUAL_ALIAS: 'MULTILINGUAL_ALIAS',
+  OBSERVE: 'OBSERVE',
+  NO_ACTION: 'NO_ACTION'
+};
+
+var INTENT_PAGE_ACTIONS = {
+  OPTIMIZE_EXISTING: 'OPTIMIZE_EXISTING',
+  EXISTING_GROWTH: 'EXISTING_GROWTH',
+  OBSERVE: 'OBSERVE',
+  NO_ACTION: 'NO_ACTION'
+};
+
+var INTENT_CLUSTER_THRESHOLDS = {
+  HIGH_IMPRESSIONS: 100,
+  HIGH_CLICKS: 3,
+  MEDIUM_IMPRESSIONS: 50,
+  NEW_INTENT_IMPRESSIONS: 20,
+  OPTIMIZE_POSITION_MAX: 10,
+  OPTIMIZE_CTR_MAX: 0.02,
+  DOMINANT_PAGE_SHARE: 0.60,
+  CANNIBAL_PAGE1_SHARE: 0.25,
+  CANNIBAL_PAGE2_SHARE: 0.20,
+  CANNIBAL_PAGE_MIN_IMPRESSIONS: 5,
+  CANNIBAL_CLUSTER_MIN_IMPRESSIONS: 10
+};
 var URL_INDEX_HEADERS = [
   'RunDate', 'Site', 'URL', 'Verdict', 'CoverageState', 'RobotsTxtState',
   'IndexingState', 'LastCrawlTime', 'PageFetchState',
@@ -177,7 +318,12 @@ var SITE_STATUS_HEADERS = [
   'Clicks7D',
   'TractionScore', 'QueryScore', 'MomentumScore', 'ExpansionScore', 'RiskScore',
   'DomainScore',
-  'LifecycleStage', 'RecommendedAction', 'Priority', 'Reason'
+  'LifecycleStage', 'RecommendedAction', 'Priority', 'Reason',
+  'EarlySignalStatus', 'EarlySignalConfidence',
+  'RealtimeImpressions24H', 'RealtimeClicks24H',
+  'RealtimeGuideQueries', 'RealtimeTop10Queries', 'RealtimeTop20Queries',
+  'RealtimeIntentClusters', 'EarlySignalUpdatedAt', 'EarlySignalReason',
+  'EarlySignalDowngradeRuns', 'EarlySignalEventAt'
 ];
 
 /**
@@ -364,7 +510,9 @@ var DECISION_HISTORY_HEADERS = [
   'BaselineGuideQueryCount',
   'BaselineTop50QueryCount',
   'BaselineTop20QueryCount',
-  'BaselineBestPosition'
+  'BaselineBestPosition',
+  // Phase 7C-1: only future explicitly-linked Decisions populate this field.
+  'OpportunityID'
 ];
 
 /**
@@ -404,20 +552,6 @@ var OBSERVATION_STATUS = {
   PENDING: 'PENDING',
   OBSERVED: 'OBSERVED',
   DATA_MISSING: 'DATA_MISSING'
-};
-
-/** 干预观察唯一状态；旧 Decision Outcome 的 PENDING 仍保持兼容。 */
-var INTERVENTION_OBSERVATION_STATUS = {
-  WAITING_HORIZON: 'WAITING_HORIZON',
-  WAITING_DATA: 'WAITING_DATA',
-  OBSERVED: 'OBSERVED'
-};
-
-/** Intervention observation baseline resolution (existing BaselineMode column values). */
-var BASELINE_MODE = {
-  NO_PREDEPLOY_DATA: 'NO_PREDEPLOY_DATA',
-  WAITING_FOR_GSC: 'WAITING_FOR_GSC',
-  GSC_ALIGNED: 'GSC_ALIGNED'
 };
 
 /**
@@ -637,7 +771,10 @@ var EFFECT_EVIDENCE_V1 = {
 
 var TODAY_ACTION_HEADERS = [
   'Date', 'Priority', 'Site', 'LifecycleStage', 'RecommendedAction',
-  'DomainScore', 'Reason', 'Status', '人工备注', 'DecisionID'
+  'DomainScore', 'Reason', 'Status', '人工备注', 'DecisionID',
+  // Phase 7D: additive fields for the derived cross-system action queue.
+  'SourceSystem', 'OpportunityID', 'Game', 'OpportunityType',
+  'CurrentState', 'SourceReference'
 ];
 var TODAY_ACTION_STATUSES = ['TODO', 'DONE', 'SKIP'];
 /** 可同步回决策历史的终态 */
@@ -651,51 +788,10 @@ var TODAY_ACTION_EXCLUDED = {
 };
 
 /**
- * Publish receipt 可映射到「内容更新记录」已有 canonical 列的子集。
- * 禁止再追加一套平行 publish schema；写入时必须按 header name → column index。
- */
-var CONTENT_UPDATE_PUBLISH_FIELD_HEADERS = [
-  'InterventionID',
-  'SiteID',
-  'BatchID',
-  'Action',
-  'PrimaryURL',
-  'AffectedURLs',
-  'TriggerType',
-  'TriggerQueries',
-  'TriggerSummary',
-  'SourceRefs',
-  'Reason',
-  'LifecyclePhase',
-  'ReleaseDate',
-  'ReleaseOffsetDay',
-  'CommitSHA',
-  'DeploymentURL',
-  'ProductionURL',
-  'ProductionDeployedAt',
-  'DevelopmentTaskID',
-  'OpportunityID',
-  'RecordedMode',
-  'BaselineDataDate',
-  'BaselinePageClicks7D',
-  'BaselinePageImpressions7D',
-  'BaselinePageCTR',
-  'BaselinePagePosition',
-  'BaselinePageQueryCount7D',
-  'BaselineSiteClicks7D',
-  'BaselineSiteImpressions7D',
-  'ReceiptKey',
-  'PageReceiptKey',
-  'GoalID',
-  'RecordedAt'
-];
-
-/**
  * 内容更新记录 = Content Intervention 权威事实表。
  * 用于 CONTENT_OPTIMIZE / Research Job 观察期冷却；也可绑定 DecisionID。
  * 页面路径为空 = 整站更新。
- * 前 7 列（含 DecisionID）为人工可读 + cooldown 依赖列，不移动顺序。
- * Publish receipt 必须映射到已有 canonical 列；只有真正缺失的列才允许 append。
+ * DecisionID / 更新类型追加在末尾，不移动 cooldown 依赖的前 5 列。
  */
 var CONTENT_UPDATE_HEADERS = [
   '更新时间', '站点', '页面路径', '来源', '更新说明', '更新类型', 'DecisionID',
@@ -709,7 +805,7 @@ var CONTENT_UPDATE_HEADERS = [
   'ReceiptKey', 'PageReceiptKey', 'GoalID', 'RecordedAt'
 ];
 
-/** Automatic Experiment Ledger：GSC-owned intervention observations. */
+/** Automatic Experiment Ledger V1：GSC-owned intervention observations. */
 var INTERVENTION_OBSERVATION_HEADERS = [
   'ObservationID', 'InterventionID', 'DecisionID', 'SiteID', 'Site', 'PrimaryURL',
   'Horizon', 'TargetDate', 'ObservedDataDate', 'Status', 'BaselineDataDate',
@@ -717,16 +813,17 @@ var INTERVENTION_OBSERVATION_HEADERS = [
   'BaselineQueryCount7D', 'ObservedClicks7D', 'ObservedImpressions7D',
   'ObservedCTR', 'ObservedPosition', 'ObservedQueryCount7D', 'ClicksDelta',
   'ImpressionsDelta', 'CTRDelta', 'PositionImprovement', 'QueryCountDelta',
-  'BaselineSiteImpressions7D', 'ObservedSiteImpressions7D', 'AttributionMode',
-  'UpdatedAt', 'BaselineSiteClicks7D', 'ObservedSiteClicks7D', 'BaselineMode',
-  'Outcome', 'OutcomeConfidence', 'Confounders'
+  'BaselineSiteClicks7D', 'BaselineSiteImpressions7D',
+  'ObservedSiteClicks7D', 'ObservedSiteImpressions7D', 'BaselineMode',
+  'AttributionMode', 'Outcome', 'OutcomeConfidence', 'Confounders', 'UpdatedAt'
 ];
 
-var INTERVENTION_OBSERVATION_HORIZONS = [
-  { name: 'D1', days: 1 },
-  { name: 'D3', days: 3 },
-  { name: 'D7', days: 7 },
-  { name: 'D14', days: 14 }
+/** Materialized human-readable ledger; old retrospective rows remain untouched. */
+var INTERVENTION_TIMELINE_HEADERS = [
+  'InterventionID', '时间（UTC+8）', '相对发售日', '生命周期', '批次/阶段',
+  '动作类型', '目标页面/范围', '触发信号', '动作前证据', 'Git Commit',
+  '证据来源', '观察窗口', '观察到的数据变化', '归因判断', '置信度',
+  'DecisionID', '回溯状态', '混杂因素', '下次评估', '备注'
 ];
 
 /**
@@ -755,6 +852,41 @@ var OPPORTUNITY_HEADERS = [
   '研究状态', '备注',
   '研究任务ID', '研究请求时间'
 ];
+
+/** Phase 7C-3B M0：External Discovery + GSC + Existing Content Merge。 */
+var EXTERNAL_OPPORTUNITY_HEADERS = [
+  'OpportunityID', 'Game', 'OpportunityType', 'ExternalEvidence',
+  'GSCEvidence', 'ExistingAsset', 'Confidence', 'RecommendedAction',
+  'SourceReference', 'SignalState', 'ActionKey', 'LastObservedAt'
+];
+
+var EXTERNAL_OPPORTUNITY_TYPES = {
+  NEW_PAGE_CANDIDATE: 'NEW_PAGE_CANDIDATE',
+  RESEARCH_PROBE: 'RESEARCH_PROBE',
+  EXPAND_EXISTING: 'EXPAND_EXISTING',
+  WATCH: 'WATCH',
+  EARLY_SITE_WIN: 'EARLY_SITE_WIN',
+  OPTIMIZE_EXISTING_PAGE: 'OPTIMIZE_EXISTING_PAGE',
+  EXPAND_EXISTING_PAGE: 'EXPAND_EXISTING_PAGE',
+  TARGET_PAGE_TAKES_OVER: 'TARGET_PAGE_TAKES_OVER'
+};
+
+var EXTERNAL_OPPORTUNITY_CONFIDENCE = {
+  HIGH: 'HIGH',
+  MEDIUM: 'MEDIUM',
+  LOW: 'LOW'
+};
+
+var EARLY_ACTION_ROUTER_SIGNALS = {
+  EARLY_SITE_WIN: 'EARLY_SITE_WIN',
+  GROWING_INTENT: 'GROWING_INTENT',
+  NEW_INTENT: 'NEW_INTENT',
+  PROBE: 'PROBE',
+  CAPTURE: 'CAPTURE',
+  SCALE: 'SCALE',
+  TARGET_PAGE_TAKES_OVER: 'TARGET_PAGE_TAKES_OVER',
+  PAGE_INTENT_MISMATCH: 'PAGE_INTENT_MISMATCH'
+};
 
 /** Opportunity Engine 独立动作（勿与 Decision Engine RecommendedAction 混用） */
 var OPPORTUNITY_ACTIONS = {
@@ -786,7 +918,7 @@ var OPPORTUNITY_INTENT_RULES = [
   { intent: 'SAVE_PROGRESS', terms: ['carry over', 'carryover', 'save file', 'save', 'progress'] },
   { intent: 'REWARD', terms: ['rewards', 'reward', 'bonus'] },
   { intent: 'MISSION', terms: ['first mission', 'missions', 'mission', 'quests', 'quest'] },
-  { intent: 'GUIDE', terms: ['walkthrough', 'tutorial', 'guide', 'wiki', 'how to'] },
+  { intent: 'GUIDE', terms: ['walkthrough', 'tutorial', 'guide', 'wiki', 'tips', 'how to'] },
   { intent: 'GAMEPLAY', terms: ['gameplay'] },
   { intent: 'RELEASE', terms: ['release date', 'release', 'launch date', 'launch', 'coming out'] },
   { intent: 'DOWNLOAD', terms: ['download', 'downloads'] },
@@ -870,7 +1002,15 @@ var RESEARCH_JOB_HEADERS = [
   '研究类型',
   // DEMAND_DISCOVERY / SEARCH_DEMAND 元数据（按 research_type 解释；append-only）
   '雷达ID', '触发类型', '锚点页面', '发现范围', '种子词', '来源族请求', '信号摘要',
-  '发现周期日期'
+  '发现周期日期',
+  'OpportunityID',
+  // RESEARCH_RECOMMENDATION linkage（append-only；不复制 source evidence）
+  'Search任务ID', 'Social任务ID', 'Search结果路径', 'Social结果路径',
+  // Action → Research → Content Decision M1（append-only）
+  'SourceAction', 'ActionContext', 'DecisionID', 'PrimaryDecision',
+  'SecondaryActions', 'DecisionReason', 'EvidenceSummary', 'TargetQueries',
+  'RecommendedSections', 'RecommendedTitleChange', 'RecommendedInternalLinks',
+  'Confidence', 'DecisionCreatedAt'
 ];
 
 /** 研究任务来源类型（单元格写英文；旧行空值视为 CONTENT_RESEARCH） */
@@ -878,8 +1018,23 @@ var RESEARCH_TYPE = {
   CONTENT_RESEARCH: 'CONTENT_RESEARCH',
   ASSET_RESEARCH: 'ASSET_RESEARCH',
   DEMAND_DISCOVERY: 'DEMAND_DISCOVERY',
-  SEARCH_DEMAND: 'SEARCH_DEMAND'
+  SEARCH_DEMAND: 'SEARCH_DEMAND',
+  RESEARCH_RECOMMENDATION: 'RESEARCH_RECOMMENDATION',
+  NEW_INTENT_RESEARCH: 'NEW_INTENT_RESEARCH',
+  PAGE_OPTIMIZATION_RESEARCH: 'PAGE_OPTIMIZATION_RESEARCH',
+  CANNIBALIZATION_RESEARCH: 'CANNIBALIZATION_RESEARCH'
 };
+
+var ACTION_RESEARCH_TYPES = {
+  NEW_INTENT_RESEARCH: RESEARCH_TYPE.NEW_INTENT_RESEARCH,
+  PAGE_OPTIMIZATION_RESEARCH: RESEARCH_TYPE.PAGE_OPTIMIZATION_RESEARCH,
+  CANNIBALIZATION_RESEARCH: RESEARCH_TYPE.CANNIBALIZATION_RESEARCH
+};
+
+/** Phase 7C-3A：每日 GAME_WIDE Demand Discovery 调度合同。 */
+var DAILY_GAME_WIDE_TRIGGER = 'DAILY_GAME_WIDE';
+var DAILY_GAME_WIDE_LOOKBACK_HOURS = 24;
+var DAILY_GAME_WIDE_SOURCE_FAMILIES = ['COMMUNITY', 'VIDEO'];
 
 /**
  * Human Gate：Research 证据明细（运营在 Sheet 内审核，无需下载 JSON）。
@@ -903,6 +1058,7 @@ var RESEARCH_EVIDENCE_EXCERPT_MAX = 800;
 
 var RESEARCH_JOB_STATUS = {
   PENDING: 'PENDING',
+  RUNNING: 'RUNNING',
   REVIEW: 'REVIEW',
   WATCH: 'WATCH',
   READY_FOR_DISCOVERY_RUNNER: 'READY_FOR_DISCOVERY_RUNNER',
@@ -918,6 +1074,7 @@ var RESEARCH_JOB_STATUS = {
 
 var RESEARCH_JOB_STATUS_LABELS = {
   PENDING: '待处理',
+  RUNNING: '执行中',
   REVIEW: '待审核',
   WATCH: '继续观察',
   READY_FOR_DISCOVERY_RUNNER: '待需求发现执行',
@@ -938,20 +1095,23 @@ var RESEARCH_JOB_STATUS_LABELS = {
 var RESEARCH_REVIEW_DECISION = {
   APPROVE: 'APPROVE',
   WATCH: 'WATCH',
-  NO_ACTION: 'NO_ACTION'
+  NO_ACTION: 'NO_ACTION',
+  RESEARCH: 'RESEARCH'
 };
 
 var RESEARCH_REVIEW_DECISION_LABELS = {
   APPROVE: '批准开发',
   WATCH: '继续观察',
-  NO_ACTION: '无需处理'
+  NO_ACTION: '无需处理',
+  RESEARCH: '重新研究'
 };
 
 /** Sheet「审核决定」下拉选项（中文，顺序固定） */
 var RESEARCH_REVIEW_DECISION_OPTIONS = [
   RESEARCH_REVIEW_DECISION_LABELS.APPROVE,
   RESEARCH_REVIEW_DECISION_LABELS.WATCH,
-  RESEARCH_REVIEW_DECISION_LABELS.NO_ACTION
+  RESEARCH_REVIEW_DECISION_LABELS.NO_ACTION,
+  RESEARCH_REVIEW_DECISION_LABELS.RESEARCH
 ];
 
 /** hotword-engine 回写的研究结果建议（与内容机会「建议动作」不同） */
@@ -967,23 +1127,53 @@ var RESEARCH_RESULT_RECOMMENDATION_LABELS = {
   WATCH: '继续观察'
 };
 
+/** Structured ContentDecision primary actions written back to 研究任务. */
+var CONTENT_DECISION_PRIMARY_ACTIONS = {
+  CREATE_NEW_PAGE: 'CREATE_NEW_PAGE',
+  EXPAND_EXISTING: 'EXPAND_EXISTING',
+  MERGE_WITH_EXISTING: 'MERGE_WITH_EXISTING',
+  WATCH: 'WATCH',
+  REJECT_NOISE: 'REJECT_NOISE',
+  REWRITE_SECTION: 'REWRITE_SECTION',
+  IMPROVE_TITLE_SNIPPET: 'IMPROVE_TITLE_SNIPPET',
+  ADD_FAQ: 'ADD_FAQ',
+  ADD_ENTITY_SECTION: 'ADD_ENTITY_SECTION',
+  ADD_COMPARISON: 'ADD_COMPARISON',
+  ADD_STEPS: 'ADD_STEPS',
+  NO_CHANGE: 'NO_CHANGE',
+  KEEP_BOTH: 'KEEP_BOTH',
+  CONSOLIDATE: 'CONSOLIDATE',
+  REDIRECT_SECONDARY: 'REDIRECT_SECONDARY',
+  REFOCUS_SECONDARY: 'REFOCUS_SECONDARY',
+  FIX_INTERNAL_LINKING: 'FIX_INTERNAL_LINKING'
+};
+
 /**
  * M3：已批准研究任务 → 开发任务队列。
  * 不调用 Codex、不改网站；仅写「开发任务」Sheet。
  */
 var DEVELOPMENT_TASK_HEADERS = [
   '开发任务ID', '创建时间', '来源任务ID', '站点', '游戏', '页面路径',
-  '开发目标', 'Evidence链接', '优先级', '任务状态', '完成时间', '备注'
+  '开发目标', 'Evidence链接', '优先级', '任务状态', '完成时间', '备注',
+  // Phase 7E：只追加跨系统绑定与实施语义；不移动旧列、不回填历史任务。
+  'OpportunityID', 'DecisionID', 'SiteID', 'ActionType', 'TaskType',
+  'TaskReason', 'SourceReference', 'HandoffStatus', 'HandoffReference'
 ];
 
 var DEVELOPMENT_TASK_STATUS = {
   TODO: 'TODO',
+  READY_FOR_IMPLEMENTATION: 'READY_FOR_IMPLEMENTATION',
+  WAITING_SITE_CREATION: 'WAITING_SITE_CREATION',
+  IN_PROGRESS: 'IN_PROGRESS',
   DONE: 'DONE',
   SKIPPED: 'SKIPPED'
 };
 
 var DEVELOPMENT_TASK_STATUS_LABELS = {
   TODO: '待开发',
+  READY_FOR_IMPLEMENTATION: 'READY_FOR_IMPLEMENTATION',
+  WAITING_SITE_CREATION: 'WAITING_SITE_CREATION',
+  IN_PROGRESS: 'IN_PROGRESS',
   DONE: '已完成',
   SKIPPED: '已跳过'
 };
@@ -1075,7 +1265,44 @@ var DEFAULT_DECISION_RULES = [
   ['CONTENT_OPTIMIZE_MIN_GUIDE_QUERIES', 2, '进入 CONTENT_OPTIMIZE 所需攻略型 Query 数'],
   ['CONTENT_OPTIMIZE_MIN_CLICKS', 1, '进入 CONTENT_OPTIMIZE 所需最近7日最少 Click'],
   ['ACTION_COOLDOWN_DAYS', 3, '同站点同动作完成后多少天内不重复提醒'],
-  ['CONTENT_UPDATE_COOLDOWN_DAYS', 3, '内容更新后多少天内不再建议 CONTENT_OPTIMIZE / 不重复创建 Research Job']
+  ['CONTENT_UPDATE_COOLDOWN_DAYS', 3, '内容更新后多少天内不再建议 CONTENT_OPTIMIZE / 不重复创建 Research Job'],
+  ['EARLY_SIGNAL_MAX_DAY', 3, 'Early Site Signal 仅适用于 Day≤此值'],
+  ['EARLY_WINNER_MIN_24H_IMPRESSIONS', 100, 'Early Winner Rule A：近24小时最少展现'],
+  ['EARLY_WINNER_MIN_CLICKS', 1, 'Early Winner Rule A：近24小时最少点击'],
+  ['EARLY_WINNER_MIN_GUIDE_QUERIES', 2, 'Early Winner Rule A/B：近24小时最少攻略 Query'],
+  ['EARLY_WATCH_MIN_IMPRESSIONS', 20, 'Early Watch：近24小时最少展现'],
+  ['EARLY_TOP10_MIN_QUERIES', 2, 'Early Winner Rule C：近24小时 Top10 Query 数'],
+  ['EARLY_TOP20_MIN_QUERIES', 2, 'Early Winner Rule B：近24小时 Top20 Query 数'],
+  ['EARLY_MIN_INTENT_CLUSTERS', 2, 'Early Winner Rule C：近24小时 Intent Cluster 数'],
+  ['EARLY_SIGNAL_COOLDOWN_HOURS', 12, 'Early Signal 状态事件重复记录冷却时间'],
+  ['EARLY_DOWNGRADE_CONFIRM_RUNS', 2, 'Early Signal 降级需要连续确认运行次数'],
+  ['EARLY_FOLLOWUP_MAX_DAY', 6, 'Early Follow-up 主动观察最大 Day'],
+  ['EARLY_QUERY_GROWTH_RATE', 0.5, 'GROWING_INTENT 最低相对增长率'],
+  ['EARLY_QUERY_GROWTH_MIN_PREVIOUS_IMPRESSIONS', 10, 'GROWING_INTENT 前次最低展现'],
+  ['EARLY_QUERY_GROWTH_MIN_ABSOLUTE_DELTA', 5, 'GROWING_INTENT 最低绝对展现增量'],
+  ['EARLY_NEW_INTENT_MIN_IMPRESSIONS', 5, 'NEW_INTENT 最低展现'],
+  ['EARLY_NEW_INTENT_MAX_POSITION', 20, 'NEW_INTENT 最低排名上限'],
+  ['EARLY_PAGE_TAKEOVER_MIN_SHARE', 0.5, 'TARGET_PAGE_TAKES_OVER 最低页面占比'],
+  ['EARLY_PAGE_SIGNAL_MIN_IMPRESSIONS', 5, '页面正向信号最低展现'],
+  ['EARLY_PAGE_MISMATCH_MIN_IMPRESSIONS', 10, 'PAGE_INTENT_MISMATCH 最低展现'],
+  ['EARLY_PAGE_MISMATCH_DOMINANT_SHARE', 0.7, 'PAGE_INTENT_MISMATCH 主页面最低占比'],
+  ['EARLY_PAGE_MISMATCH_CONFIRM_RUNS', 2, 'PAGE_INTENT_MISMATCH 连续确认次数'],
+  ['EARLY_FOLLOWUP_SIGNAL_COOLDOWN_HOURS', 12, 'Follow-up 状态事件重复记录冷却时间'],
+  ['EARLY_RESEARCH_MIN_IMPRESSIONS', 10, 'Early NEW_INTENT 自动创建 Research Job 的最低展现'],
+  ['EARLY_ABSOLUTE_PROBE_MIN_IMPRESSIONS', 5, 'Specific Intent Absolute PROBE 最低展现'],
+  ['EARLY_ABSOLUTE_PROBE_MAX_POSITION', 20, 'Specific Intent Absolute PROBE 排名上限'],
+  ['EARLY_ABSOLUTE_PROBE_MIN_CLICKS', 1, 'Specific Intent Absolute PROBE 最低点击'],
+  ['EARLY_ABSOLUTE_CAPTURE_MIN_IMPRESSIONS', 10, 'Specific Intent Absolute CAPTURE 最低展现'],
+  ['EARLY_ABSOLUTE_CAPTURE_MAX_POSITION', 15, 'Specific Intent Absolute CAPTURE 排名上限'],
+  ['EARLY_ABSOLUTE_CAPTURE_MIN_CLICKS', 2, 'Specific Intent Absolute CAPTURE 最低点击'],
+  ['EARLY_ABSOLUTE_CAPTURE_STRONG_POSITION', 10, 'Specific Intent 强 Absolute CAPTURE 排名上限'],
+  ['EARLY_ABSOLUTE_CAPTURE_STRONG_MIN_IMPRESSIONS', 5, 'Specific Intent 强 Absolute CAPTURE 最低展现'],
+  ['EARLY_ABSOLUTE_CAPTURE_STRONG_MIN_CLICKS', 1, 'Specific Intent 强 Absolute CAPTURE 最低点击'],
+  ['EARLY_EXTERNAL_CAPTURE_MIN_IMPRESSIONS', 3, '已有外部需求确认时 Specific CAPTURE 最低展现'],
+  ['EARLY_EXTERNAL_CAPTURE_MAX_POSITION', 20, '已有外部需求确认时 Specific CAPTURE 排名上限'],
+  ['EARLY_GENERIC_CAPTURE_MIN_IMPRESSIONS', 20, 'Generic Intent CAPTURE 最低展现'],
+  ['EARLY_GENERIC_CAPTURE_MIN_CLICKS', 2, 'Generic Intent CAPTURE 最低点击'],
+  ['EARLY_SCALE_MIN_IMPRESSIONS', 15, 'CAPTURE 后 SCALE 最低当前展现']
 ];
 
 /** V1：这些人工动作在 DONE/SKIP 后进入短冷却；强动作不冷却 */
@@ -1138,35 +1365,43 @@ var GSC_TIMEZONE = 'America/Los_Angeles';
 var DEFAULT_SITES = [
   {
     name: 'Agefield High: Rock the School',
-    propertyUrl: 'https://agefield-high-rock-the-school.vercel.app/'
+    propertyUrl: 'https://agefield-high-rock-the-school.vercel.app/',
+    siteId: 'agefield-high-rock-the-school'
   },
   {
     name: 'Mortal Shell II',
-    propertyUrl: 'https://mortal-shell-ii.vercel.app/'
+    propertyUrl: 'https://mortal-shell-ii.vercel.app/',
+    siteId: 'mortal-shell-ii'
   },
   {
     name: 'BeastLink',
-    propertyUrl: 'https://beast-link.vercel.app/'
+    propertyUrl: 'https://beast-link.vercel.app/',
+    siteId: 'beastlink'
   },
   {
     name: 'Sovereign Tower',
-    propertyUrl: 'https://sovereign-tower.vercel.app/'
+    propertyUrl: 'https://sovereign-tower.vercel.app/',
+    siteId: 'sovereign-tower'
   },
   {
     name: 'Approximately Up',
-    propertyUrl: 'https://approximately-up.vercel.app/'
+    propertyUrl: 'https://approximately-up.vercel.app/',
+    siteId: 'approximately-up'
   },
   {
     name: 'Grain Rot',
-    propertyUrl: 'https://grainrot.vercel.app/'
+    propertyUrl: 'https://grainrot.vercel.app/',
+    siteId: 'grain-rot'
   },
   {
     name: 'Leafy Corner',
-    propertyUrl: 'https://leafy-corner.vercel.app/'
+    propertyUrl: 'https://leafy-corner.vercel.app/',
+    siteId: 'leafy-corner'
   },
   {
     name: 'Agent 64: Spies Never Die',
-    propertyUrl: 'https://agent-64.vercel.app/'
+    propertyUrl: 'https://agent-64.vercel.app/',
+    siteId: 'agent-64-spies-never-die'
   }
 ];
 
@@ -1278,7 +1513,9 @@ var DEMAND_RADAR_HEADERS = [
   '研究结果路径',
   // R3A search demand job binding (append-only, do not shift existing indices)
   '搜索需求任务ID',
-  '最近搜索需求时间'
+  '最近搜索需求时间',
+  // Phase 7C-1: stable GSC Opportunity identity (append-only)
+  'OpportunityID'
 ];
 
 var SOURCE_FAMILY = {
@@ -1901,7 +2138,7 @@ function getMetricGuideRows_() {
       '研究审核 / 研究任务审核决定',
       '人工判断',
       '产品经理 / 运营',
-      '人工确认来源真实、Evidence 相关、无跨游戏污染、是否支撑改内容；决定批准开发 / 继续观察 / 无需处理',
+      '人工确认来源真实、Evidence 相关、无跨游戏污染、是否支撑改内容；决定批准开发 / 继续观察 / 无需处理 / 重新研究',
       '防止错误研究直接驱动改站',
       '是（开发任务入口）',
       '无自动阈值可替代',

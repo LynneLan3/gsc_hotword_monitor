@@ -5,7 +5,7 @@
  */
 
 /**
- * 已有「内容更新记录」时补齐缺失 canonical 表头，不覆盖 legacy 前 7 列、不整行重写 header。
+ * 已有「内容更新记录」时补齐 更新类型 / DecisionID 表头，不碰旧行业务值。
  */
 function ensureContentUpdateHeader_() {
   var sheet = getSpreadsheet_().getSheetByName(SHEET_NAMES.CONTENT_UPDATES);
@@ -36,42 +36,19 @@ function ensureContentUpdateHeader_() {
 }
 
 /**
- * 纯函数：按 canonical header 顺序构造一行（header name → value）。
- * @param {Object} fields header -> value
- * @param {Array=} headerOrder defaults to CONTENT_UPDATE_HEADERS
+ * 纯函数：构造一行内容更新记录（含可选 更新类型 / DecisionID）。
  * @return {Array}
  */
-function buildContentUpdateRowFromFields_(fields, headerOrder) {
-  fields = fields || {};
-  var headers = headerOrder || CONTENT_UPDATE_HEADERS;
-  var row = [];
-  for (var i = 0; i < headers.length; i++) {
-    var key = headers[i];
-    row.push(fields[key] !== undefined && fields[key] !== null ? String(fields[key]).trim() : '');
-  }
-  return row;
-}
-
-/**
- * 纯函数：构造一行内容更新记录（含可选 publishFields，按 canonical 列名映射）。
- * @return {Array}
- */
-function buildContentUpdateRow_(updateDate, site, pagePath, source, note, updateType, decisionId, publishFields) {
-  var fields = {
-    '更新时间': updateDate,
-    '站点': site,
-    '页面路径': pagePath,
-    '来源': source,
-    '更新说明': note,
-    '更新类型': updateType,
-    DecisionID: decisionId
-  };
-  var extra = publishFields || {};
-  for (var i = 0; i < CONTENT_UPDATE_PUBLISH_FIELD_HEADERS.length; i++) {
-    var key = CONTENT_UPDATE_PUBLISH_FIELD_HEADERS[i];
-    if (extra[key] !== undefined && extra[key] !== null) fields[key] = extra[key];
-  }
-  return buildContentUpdateRowFromFields_(fields);
+function buildContentUpdateRow_(updateDate, site, pagePath, source, note, updateType, decisionId) {
+  return [
+    String(updateDate || '').trim(),
+    String(site || '').trim(),
+    String(pagePath || '').trim(),
+    String(source || '').trim(),
+    String(note || '').trim(),
+    String(updateType || '').trim(),
+    String(decisionId || '').trim()
+  ];
 }
 
 /**
@@ -132,8 +109,7 @@ function planContentInterventionWrite_(input, existingDecisionIdSet) {
     input.source,
     input.note,
     input.updateType,
-    storedId,
-    input.publishFields
+    storedId
   );
   return {
     row: row,
@@ -208,9 +184,7 @@ function recordContentInterventionAt_(
   }
 
   var sheet = getSpreadsheet_().getSheetByName(SHEET_NAMES.CONTENT_UPDATES);
-  var packed = loadLedgerSheetRows_(SHEET_NAMES.CONTENT_UPDATES);
-  var row = ledgerRowFromFields_(packed, planRowToFields_(plan.row));
-  sheet.appendRow(row);
+  sheet.appendRow(plan.row);
 
   var out = {
     recorded: true,
@@ -239,28 +213,6 @@ function recordContentInterventionAt_(
       out.decisionBound
   );
   return out;
-}
-
-/** Positional row → header fields map (full canonical width when available). */
-function planRowToFields_(row, headerOrder) {
-  row = row || [];
-  var headers = headerOrder || CONTENT_UPDATE_HEADERS;
-  if (row.length <= 7 && headers === CONTENT_UPDATE_HEADERS) {
-    return {
-      '更新时间': row[0],
-      '站点': row[1],
-      '页面路径': row[2],
-      '来源': row[3],
-      '更新说明': row[4],
-      '更新类型': row[5],
-      DecisionID: row[6]
-    };
-  }
-  var fields = {};
-  for (var i = 0; i < headers.length; i++) {
-    fields[headers[i]] = row[i];
-  }
-  return fields;
 }
 
 /**
