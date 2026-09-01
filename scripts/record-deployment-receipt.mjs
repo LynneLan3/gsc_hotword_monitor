@@ -53,7 +53,7 @@ export function submitDeploymentReceipt(receiptPath, options = {}) {
   } catch {
     return { ok: false, code: 1, output: `clasp returned non-JSON output: ${output}` };
   }
-  const accepted = value?.ok === true && ['ACCEPTED', 'DUPLICATE_ACCEPTED'].includes(value.result);
+  const accepted = value?.ok === true && ['ACCEPTED', 'DUPLICATE_ACCEPTED', 'ALREADY_RECORDED'].includes(value.result);
   return {
     ok: accepted,
     code: accepted ? 0 : 1,

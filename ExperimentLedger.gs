@@ -27,6 +27,12 @@ var DEPLOYMENT_OBSERVATION_HORIZONS = [
   { name: 'D7', days: 7 },
   { name: 'D14', days: 14 }
 ];
+/** Receipt page role for baseline resolution; not a second BaselineMode enum. */
+var DEPLOYMENT_RECEIPT_PAGE_ROLE = {
+  NEW_PAGE: 'NEW_PAGE',
+  EXISTING_PAGE_UPDATE: 'EXISTING_PAGE_UPDATE',
+  INTERNAL_LINK_ONLY: 'INTERNAL_LINK_ONLY'
+};
 var LEDGER_ACTIONS = {
   CREATE_PAGE: true,
   UPDATE_PAGE: true,
@@ -563,6 +569,22 @@ function ledgerBlank_(value) {
   return value === null || value === undefined || String(value).trim() === '';
 }
 
+/** Serialize by bound Sheet header order, never constant column offsets. */
+function ledgerRowFromFields_(packed, fields, current) {
+  return (packed.header || []).map(function (header, index) {
+    if (Object.prototype.hasOwnProperty.call(fields || {}, header)) return fields[header];
+    return current && index < current.length ? current[index] : '';
+  });
+}
+
+function ledgerDeployedAtDisplay_(deployedAtIso) {
+  var raw = String(deployedAtIso || '').trim();
+  if (!raw) return '';
+  var date = new Date(raw);
+  if (isNaN(date.getTime())) return raw;
+  return Utilities.formatDate(date, 'Asia/Shanghai', 'yyyy-MM-dd HH:mm:ss');
+}
+
 function writeLedgerObservationRows_(plan) {
   // Legacy receipts remain accepted and continue to populate their legacy
   // content/timeline facts, but the current canonical observation table has
@@ -899,13 +921,44 @@ function ingestDeploymentReceipt(receipt) {
   var normalized = normalizeDeploymentReceipt_(receipt);
   resolveDeploymentReceiptAttribution_(normalized);
   validateDeploymentReceipt_(normalized);
+  var early = peekDeploymentReceiptAlreadyRecorded_(normalized);
+  if (early) return early;
   var lock = LockService.getScriptLock();
-  if (!lock.tryLock(15000)) throw new Error('ingestDeploymentReceipt: write lock busy');
+  if (!lock.tryLock(30000)) throw new Error('ingestDeploymentReceipt: write lock busy');
   try {
+    early = peekDeploymentReceiptAlreadyRecorded_(normalized);
+    if (early) return early;
     return ingestDeploymentReceipt_(normalized);
   } finally {
     lock.releaseLock();
   }
+}
+
+function peekDeploymentReceiptAlreadyRecorded_(receipt) {
+  var interventionId = receipt.interventionId || ('receipt-' + receipt.receiptKey);
+  var plan = {
+    interventionId: interventionId,
+    pages: (receipt.affectedPages || []).map(function (p) {
+      return { path: ledgerNormalizePath_(p.path) };
+    })
+  };
+  var existingPageKeys = countDeploymentReceiptContentByPageKey_(receipt);
+  if (!deploymentReceiptPagesFullyRecorded_(receipt, existingPageKeys)) return null;
+  if (!deploymentTimelineExists_(interventionId)) return null;
+  var frozenObs = countDeploymentReceiptObservations_(interventionId);
+  var expectedObs = plan.pages.length * DEPLOYMENT_OBSERVATION_HORIZONS.length;
+  if (frozenObs.total !== expectedObs || frozenObs.duplicateObservationIds !== 0) return null;
+  return buildDeploymentReceiptResult_(receipt, plan, {
+    result: 'ALREADY_RECORDED',
+    inserted: 0,
+    updated: 0,
+    unchanged: plan.pages.length,
+    duplicateSkipped: plan.pages.length,
+    timelineInserted: 0,
+    timelineUnchanged: 1,
+    observationsInserted: 0,
+    observationsUnchanged: expectedObs
+  });
 }
 
 function normalizeDeploymentReceipt_(input) {
@@ -929,7 +982,8 @@ function normalizeDeploymentReceipt_(input) {
       triggerQueries: ledgerStringArray_(page.triggerQueries || page.trigger_queries),
       triggerSummary: String(page.triggerSummary || '').trim(),
       sourceRefs: ledgerStringArray_(page.sourceRefs || page.source_refs),
-      reason: String(page.reason || '').trim()
+      reason: String(page.reason || '').trim(),
+      pageRole: String(page.pageRole || page.page_role || '').trim().toUpperCase()
     });
   }
   var deployedAt = String(
@@ -1014,7 +1068,8 @@ function isDeploymentReceipt_(body) {
 function productionReceiptCompletionStatus_(productionPassed, receiptResult) {
   if (!productionPassed) return 'NOT_PRODUCTION_PASS';
   return receiptResult && (
-    receiptResult.result === 'ACCEPTED' || receiptResult.result === 'DUPLICATE_ACCEPTED'
+    receiptResult.result === 'ACCEPTED' || receiptResult.result === 'DUPLICATE_ACCEPTED' ||
+    receiptResult.result === 'ALREADY_RECORDED'
   ) ? 'PASS' : 'PRODUCTION_PASS_RECEIPT_PENDING';
 }
 
@@ -1047,33 +1102,326 @@ function ingestDeploymentReceipt_(receipt) {
     throw new Error('ingestDeploymentReceipt: DecisionID does not exist in 决策历史');
   }
 
-  var existing = findDeploymentReceiptIdentity_(receipt);
   var interventionId = receipt.interventionId ||
-    (existing && existing.interventionId) || ('receipt-' + receipt.receiptKey);
+    ('receipt-' + receipt.receiptKey);
   var plan = buildDeploymentReceiptPlan_(receipt, interventionId);
-  var contentRows = 0;
-  var duplicatePages = 0;
+  var existingPageKeys = countDeploymentReceiptContentByPageKey_(receipt);
+  if (deploymentReceiptPagesFullyRecorded_(receipt, existingPageKeys) &&
+      deploymentTimelineExists_(interventionId)) {
+    var frozenObs = countDeploymentReceiptObservations_(interventionId);
+    var expectedObs = plan.pages.length * DEPLOYMENT_OBSERVATION_HORIZONS.length;
+    if (frozenObs.total === expectedObs && frozenObs.duplicateObservationIds === 0) {
+      return buildDeploymentReceiptResult_(receipt, plan, {
+        result: 'ALREADY_RECORDED',
+        inserted: 0,
+        updated: 0,
+        unchanged: plan.pages.length,
+        duplicateSkipped: plan.pages.length,
+        timelineInserted: 0,
+        timelineUnchanged: 1,
+        observationsInserted: 0,
+        observationsUnchanged: expectedObs
+      });
+    }
+  }
+
+  var contentStats = { inserted: 0, updated: 0, unchanged: 0, duplicateSkipped: 0 };
   for (var i = 0; i < plan.pages.length; i++) {
-    var result = upsertDeploymentContentPage_(plan, plan.pages[i]);
-    if (result.duplicate) duplicatePages++;
-    contentRows++;
+    var pageResult = upsertDeploymentContentPage_(plan, plan.pages[i]);
+    if (pageResult.action === 'insert') contentStats.inserted++;
+    else if (pageResult.action === 'update') {
+      contentStats.updated++;
+      contentStats.duplicateSkipped++;
+    } else {
+      contentStats.unchanged++;
+      contentStats.duplicateSkipped++;
+    }
   }
   var timelineInserted = upsertDeploymentTimelineIfMissing_(plan);
   var observationRows = upsertDeploymentObservations_(plan);
-  var duplicate = !!existing && duplicatePages === plan.pages.length && !timelineInserted && !observationRows.inserted;
-  writeLog_('INFO', receipt.siteName, 'receipt=' + receipt.receiptKey + ' siteId=' + receipt.siteId + ' result=' +
-    (duplicate ? 'DUPLICATE_ACCEPTED' : 'ACCEPTED'));
+  var allUnchanged = contentStats.inserted === 0 && contentStats.updated === 0 &&
+    !timelineInserted && observationRows.inserted === 0;
+  var resultLabel = allUnchanged ? 'ALREADY_RECORDED' : 'ACCEPTED';
+  return buildDeploymentReceiptResult_(receipt, plan, {
+    result: resultLabel,
+    inserted: contentStats.inserted,
+    updated: contentStats.updated,
+    unchanged: contentStats.unchanged,
+    duplicateSkipped: contentStats.duplicateSkipped,
+    timelineInserted: timelineInserted ? 1 : 0,
+    timelineUnchanged: timelineInserted ? 0 : 1,
+    observationsInserted: observationRows.inserted,
+    observationsUnchanged: observationRows.count - observationRows.inserted
+  });
+}
+
+function buildDeploymentReceiptResult_(receipt, plan, stats) {
+  writeLog_('INFO', receipt.siteName, 'receipt=' + receipt.receiptKey + ' siteId=' + receipt.siteId +
+    ' result=' + stats.result + ' inserted=' + stats.inserted + ' updated=' + stats.updated +
+    ' unchanged=' + stats.unchanged + ' duplicateSkipped=' + stats.duplicateSkipped);
   return {
     ok: true,
-    result: duplicate ? 'DUPLICATE_ACCEPTED' : 'ACCEPTED',
+    result: stats.result,
     receiptKey: receipt.receiptKey,
-    interventionId: interventionId,
-    contentUpdates: contentRows,
-    observations: observationRows.count,
+    interventionId: plan.interventionId,
+    contentUpdates: stats.inserted + stats.updated + stats.unchanged,
+    inserted: stats.inserted,
+    updated: stats.updated,
+    unchanged: stats.unchanged,
+    duplicateSkipped: stats.duplicateSkipped,
+    timelineInserted: stats.timelineInserted,
+    timelineUnchanged: stats.timelineUnchanged,
+    observations: stats.observationsInserted + stats.observationsUnchanged,
+    observationsInserted: stats.observationsInserted,
+    observationsUnchanged: stats.observationsUnchanged,
     baselineDataDate: plan.pages.length && plan.pages[0].baseline
       ? (plan.pages[0].baseline.dataDate || '')
       : ''
   };
+}
+
+function deploymentReceiptPagesFullyRecorded_(receipt, existingPageKeys) {
+  existingPageKeys = existingPageKeys || countDeploymentReceiptContentByPageKey_(receipt);
+  if (!receipt.affectedPages || !receipt.affectedPages.length) return false;
+  for (var i = 0; i < receipt.affectedPages.length; i++) {
+    var path = ledgerNormalizePath_(receipt.affectedPages[i].path);
+    var expectedKey = receipt.receiptKey + '|' + path;
+    if (!existingPageKeys.paths[expectedKey]) return false;
+  }
+  return existingPageKeys.count >= receipt.affectedPages.length;
+}
+
+function countDeploymentReceiptContentByPageKey_(receipt) {
+  var packed = loadLedgerSheetRows_(SHEET_NAMES.CONTENT_UPDATES);
+  var pageKeyCol = packed.map.PageReceiptKey;
+  var prefix = String(receipt.receiptKey || '').trim() + '|';
+  var count = 0;
+  var paths = {};
+  if (pageKeyCol === undefined) return { count: 0, paths: paths };
+  for (var i = 0; i < packed.rows.length; i++) {
+    var key = String(packed.rows[i][pageKeyCol] || '').trim();
+    if (key.indexOf(prefix) !== 0) continue;
+    count++;
+    paths[key] = true;
+  }
+  return { count: count, paths: paths };
+}
+
+function deploymentTimelineExists_(interventionId) {
+  var packed = loadLedgerSheetRows_(SHEET_NAMES.INTERVENTION_TIMELINE);
+  var idCol = packed.map.InterventionID;
+  if (idCol === undefined) return false;
+  for (var i = 0; i < packed.rows.length; i++) {
+    if (String(packed.rows[i][idCol] || '').trim() === interventionId) return true;
+  }
+  return false;
+}
+
+function countDeploymentReceiptObservations_(interventionId) {
+  var packed = loadLedgerSheetRows_(SHEET_NAMES.INTERVENTION_OBSERVATIONS);
+  var idCol = packed.map.InterventionID;
+  var obsIdCol = packed.map.ObservationID;
+  var total = 0;
+  var seen = {};
+  var duplicateObservationIds = 0;
+  if (idCol === undefined) return { total: 0, duplicateObservationIds: 0 };
+  for (var i = 0; i < packed.rows.length; i++) {
+    if (String(packed.rows[i][idCol] || '').trim() !== interventionId) continue;
+    total++;
+    if (obsIdCol !== undefined) {
+      var obsId = String(packed.rows[i][obsIdCol] || '').trim();
+      if (!obsId) continue;
+      if (seen[obsId]) duplicateObservationIds++;
+      else seen[obsId] = true;
+    }
+  }
+  return { total: total, duplicateObservationIds: duplicateObservationIds };
+}
+
+function countDeploymentReceiptLedger_(receipt) {
+  receipt = receipt || {};
+  var interventionId = receipt.interventionId || ('receipt-' + receipt.receiptKey);
+  var contentByKey = countDeploymentReceiptContentByPageKey_(receipt);
+  var timeline = deploymentTimelineExists_(interventionId) ? 1 : 0;
+  var observations = countDeploymentReceiptObservations_(interventionId);
+  return {
+    receiptKey: receipt.receiptKey,
+    interventionId: interventionId,
+    contentUpdates: contentByKey.count,
+    contentUpdatesByPageReceiptKey: contentByKey.count,
+    timeline: timeline,
+    observations: observations.total,
+    duplicateObservationIds: observations.duplicateObservationIds
+  };
+}
+
+/** Public repair entry: rebuild canonical content rows for one deployment receipt. */
+function repairDeploymentReceiptContentRows(receipt) {
+  var normalized = normalizeDeploymentReceipt_(receipt);
+  resolveDeploymentReceiptAttribution_(normalized);
+  validateDeploymentReceipt_(normalized);
+  var lock = LockService.getScriptLock();
+  if (!lock.tryLock(15000)) throw new Error('repairDeploymentReceiptContentRows: write lock busy');
+  try {
+    return repairDeploymentReceiptContentRows_(normalized);
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+/** Repair BaselineMode on existing deployment-receipt observations without changing row identity. */
+function repairDeploymentReceiptObservationBaselineModes(receipt) {
+  var normalized = normalizeDeploymentReceipt_(receipt);
+  resolveDeploymentReceiptAttribution_(normalized);
+  validateDeploymentReceipt_(normalized);
+  var lock = LockService.getScriptLock();
+  if (!lock.tryLock(15000)) throw new Error('repairDeploymentReceiptObservationBaselineModes: write lock busy');
+  try {
+    return repairDeploymentReceiptObservationBaselineModes_(normalized);
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+function inspectDeploymentReceiptLedger(receiptKey) {
+  receiptKey = String(receiptKey || '').trim();
+  if (!receiptKey) throw new Error('inspectDeploymentReceiptLedger: receiptKey required');
+  var receipt = { receiptKey: receiptKey, interventionId: 'receipt-' + receiptKey };
+  var counts = countDeploymentReceiptLedger_(receipt);
+  var packed = loadLedgerSheetRows_(SHEET_NAMES.CONTENT_UPDATES);
+  var receiptKeyCol = packed.map.ReceiptKey;
+  var pageKeyCol = packed.map.PageReceiptKey;
+  var sample = { receiptKey: '', pageReceiptKey: '' };
+  var prefix = receiptKey + '|';
+  if (pageKeyCol !== undefined) {
+    for (var i = 0; i < packed.rows.length; i++) {
+      var pageKey = String(packed.rows[i][pageKeyCol] || '').trim();
+      if (pageKey.indexOf(prefix) !== 0) continue;
+      sample.pageReceiptKey = pageKey;
+      if (receiptKeyCol !== undefined) sample.receiptKey = String(packed.rows[i][receiptKeyCol] || '').trim();
+      break;
+    }
+  }
+  return {
+    receiptKey: receiptKey,
+    interventionId: receipt.interventionId,
+    contentUpdates: counts.contentUpdates,
+    contentUpdatesByPageReceiptKey: counts.contentUpdatesByPageReceiptKey,
+    timeline: counts.timeline,
+    observations: counts.observations,
+    duplicateObservationIds: counts.duplicateObservationIds,
+    columns: {
+      ReceiptKey: receiptKeyCol === undefined ? null : receiptKeyCol + 1,
+      PageReceiptKey: pageKeyCol === undefined ? null : pageKeyCol + 1
+    },
+    sample: sample
+  };
+}
+
+function rowBelongsToDeploymentReceipt_(row, map, receipt) {
+  var interventionId = String(receipt.interventionId || ('receipt-' + receipt.receiptKey)).trim();
+  var receiptKey = String(receipt.receiptKey || '').trim();
+  var batchId = String(receipt.batchId || '').trim();
+  var siteId = String(receipt.siteId || '').trim();
+  var pageKeyPrefix = receiptKey + '|';
+  if (ledgerCell_(row, map, 'InterventionID') === interventionId) return true;
+  if (ledgerCell_(row, map, 'ReceiptKey') === receiptKey) return true;
+  if (ledgerCell_(row, map, 'PageReceiptKey').indexOf(pageKeyPrefix) === 0) return true;
+  if (ledgerCell_(row, map, 'BatchID') === batchId &&
+      (ledgerCell_(row, map, 'SiteID') === siteId || ledgerCell_(row, map, 'SiteID') === interventionId)) {
+    return true;
+  }
+  if (ledgerCell_(row, map, 'SiteID') === interventionId) return true;
+  if (ledgerCell_(row, map, 'Action') === batchId) return true;
+  if (ledgerCell_(row, map, 'PrimaryURL') === String(receipt.action || '').trim()) return true;
+  return false;
+}
+
+function repairDeploymentReceiptContentRows_(receipt) {
+  var packed = loadLedgerSheetRows_(SHEET_NAMES.CONTENT_UPDATES);
+  var deleteRows = [];
+  for (var i = 0; i < packed.rows.length; i++) {
+    if (rowBelongsToDeploymentReceipt_(packed.rows[i], packed.map, receipt)) deleteRows.push(i + 2);
+  }
+  deleteRows.sort(function (a, b) { return b - a; });
+  for (var d = 0; d < deleteRows.length; d++) packed.sheet.deleteRow(deleteRows[d]);
+
+  var interventionId = receipt.interventionId || ('receipt-' + receipt.receiptKey);
+  var plan = buildDeploymentReceiptPlan_(receipt, interventionId);
+  var inserted = 0;
+  for (var p = 0; p < plan.pages.length; p++) {
+    if (upsertDeploymentContentPage_(plan, plan.pages[p]).action === 'insert') inserted++;
+  }
+  var timelineFixed = repairDeploymentTimelineTime_(plan);
+  var counts = countDeploymentReceiptLedger_(receipt);
+  return {
+    ok: true,
+    deleted: deleteRows.length,
+    inserted: inserted,
+    timelineFixed: timelineFixed,
+    counts: counts
+  };
+}
+
+function repairDeploymentReceiptObservationBaselineModes_(receipt) {
+  var interventionId = receipt.interventionId || ('receipt-' + receipt.receiptKey);
+  var plan = buildDeploymentReceiptPlan_(receipt, interventionId);
+  var packed = loadLedgerSheetRows_(SHEET_NAMES.INTERVENTION_OBSERVATIONS);
+  var modeCol = packed.map.BaselineMode;
+  var interventionCol = packed.map.InterventionID;
+  var primaryCol = packed.map.PrimaryURL;
+  if (modeCol === undefined || interventionCol === undefined) {
+    throw new Error('repairDeploymentReceiptObservationBaselineModes: observation columns missing');
+  }
+  var pagesByPath = {};
+  for (var p = 0; p < plan.pages.length; p++) pagesByPath[plan.pages[p].path] = plan.pages[p];
+  var touched = 0;
+  var repaired = 0;
+  var modeCounts = {};
+  for (var i = 0; i < packed.rows.length; i++) {
+    if (String(packed.rows[i][interventionCol] || '').trim() !== interventionId) continue;
+    touched++;
+    var path = ledgerNormalizePath_(primaryCol === undefined ? '' : packed.rows[i][primaryCol]);
+    var page = pagesByPath[path];
+    if (!page || !page.baseline) continue;
+    var expected = String(page.baseline.mode || '').trim();
+    if (!expected) continue;
+    modeCounts[expected] = (modeCounts[expected] || 0) + 1;
+    if (String(packed.rows[i][modeCol] || '').trim() === expected) continue;
+    packed.sheet.getRange(i + 2, modeCol + 1).setValue(expected);
+    packed.rows[i][modeCol] = expected;
+    repaired++;
+  }
+  var expectedObs = plan.pages.length * DEPLOYMENT_OBSERVATION_HORIZONS.length;
+  if (touched !== expectedObs) {
+    throw new Error(
+      'repairDeploymentReceiptObservationBaselineModes: expected ' + expectedObs +
+      ' observations, found ' + touched
+    );
+  }
+  return {
+    ok: true,
+    interventionId: interventionId,
+    observations: touched,
+    repaired: repaired,
+    baselineModes: modeCounts,
+    counts: countDeploymentReceiptLedger_(receipt)
+  };
+}
+
+function repairDeploymentTimelineTime_(plan) {
+  var packed = loadLedgerSheetRows_(SHEET_NAMES.INTERVENTION_TIMELINE);
+  var idCol = packed.map.InterventionID;
+  var timeCol = packed.map['时间（UTC+8）'];
+  if (idCol === undefined || timeCol === undefined) return false;
+  var display = ledgerDeployedAtDisplay_(plan.deployedAt);
+  for (var i = 0; i < packed.rows.length; i++) {
+    if (String(packed.rows[i][idCol] || '').trim() !== plan.interventionId) continue;
+    if (String(packed.rows[i][timeCol] || '').trim() === display) return false;
+    packed.sheet.getRange(i + 2, timeCol + 1).setValue(display);
+    return true;
+  }
+  return false;
 }
 
 function validateDeploymentReceiptSite_(receipt) {
@@ -1148,11 +1496,13 @@ function buildDeploymentReceiptPlan_(receipt, interventionId) {
   for (var i = 0; i < receipt.affectedPages.length; i++) {
     var page = receipt.affectedPages[i];
     var baseline = captureDeploymentBaseline_(
-      receipt.siteName, page.path, receipt.productionURL, deployedDate, '', page.action || receipt.action
+      receipt.siteName, page.path, receipt.productionURL, deployedDate, '', page.action || receipt.action,
+      page.pageRole
     );
     pages.push({
       path: page.path,
       action: page.action || receipt.action,
+      pageRole: baseline.pageRole,
       primaryURL: page.primaryURL,
       triggerType: page.triggerType,
       triggerQueries: page.triggerQueries,
@@ -1192,7 +1542,21 @@ function buildDeploymentReceiptPlan_(receipt, interventionId) {
   };
 }
 
-function captureDeploymentBaseline_(site, primaryUrl, productionUrl, deployedDate, baselineDataDate, action) {
+function resolveDeploymentReceiptPageRole_(action, hasAnyPageEvidence, explicitRole) {
+  var role = String(explicitRole || '').trim().toUpperCase();
+  if (role && DEPLOYMENT_RECEIPT_PAGE_ROLE[role]) return role;
+  action = String(action || '').trim().toUpperCase();
+  if (action === 'ADD_INTERNAL_LINK' || action === 'INTERNAL_LINK') {
+    return DEPLOYMENT_RECEIPT_PAGE_ROLE.INTERNAL_LINK_ONLY;
+  }
+  if (hasAnyPageEvidence) return DEPLOYMENT_RECEIPT_PAGE_ROLE.EXISTING_PAGE_UPDATE;
+  if (action === 'CREATE_PAGE' || action === 'CONTENT_EXPANSION' || action === 'CONTENT_EXPAND') {
+    return DEPLOYMENT_RECEIPT_PAGE_ROLE.NEW_PAGE;
+  }
+  return DEPLOYMENT_RECEIPT_PAGE_ROLE.EXISTING_PAGE_UPDATE;
+}
+
+function captureDeploymentBaseline_(site, primaryUrl, productionUrl, deployedDate, baselineDataDate, action, explicitPageRole) {
   var requestedEnd = normalizeKeyDate_(baselineDataDate);
   var baseline = captureLedgerBaseline_(site, primaryUrl, productionUrl, deployedDate);
   var end = requestedEnd && requestedEnd < deployedDate
@@ -1245,20 +1609,17 @@ function captureDeploymentBaseline_(site, primaryUrl, productionUrl, deployedDat
       }
     }
   }
-  if (!hasAnyPageEvidence && String(action || '').trim().toUpperCase() === 'CREATE_PAGE') {
+  var pageRole = resolveDeploymentReceiptPageRole_(action, hasAnyPageEvidence, explicitPageRole);
+  baseline.pageRole = pageRole;
+  if (!hasAnyPageEvidence) {
     baseline.clicks = 0;
     baseline.impressions = 0;
     baseline.ctr = '';
     baseline.position = '';
     baseline.queryCount = 0;
-    baseline.mode = 'NEW_URL_BASELINE';
-  } else if (!hasAnyPageEvidence) {
-    baseline.clicks = 0;
-    baseline.impressions = 0;
-    baseline.ctr = '';
-    baseline.position = '';
-    baseline.queryCount = 0;
-    baseline.mode = 'EXISTING_URL_NO_GSC_TRAFFIC';
+    baseline.mode = pageRole === DEPLOYMENT_RECEIPT_PAGE_ROLE.NEW_PAGE
+      ? 'NEW_URL_BASELINE'
+      : 'EXISTING_URL_NO_GSC_TRAFFIC';
   } else if (hasPageTraffic && deploymentHasSevenDayCoverage_(pages, site, target, end, false)) {
     baseline.mode = 'EXISTING_URL_BASELINE';
   } else {
@@ -1357,9 +1718,8 @@ function repairDeploymentContentBaselineRows_(packed, rows, plan) {
       changed = true;
     });
     if (changed) {
-      packed.sheet.getRange(rowIndex, 1, 1, CONTENT_UPDATE_HEADERS.length).setValues([
-        row.slice(0, CONTENT_UPDATE_HEADERS.length)
-      ]);
+      var repairedRow = ledgerRowFromFields_(packed, fields, row);
+      packed.sheet.getRange(rowIndex, 1, 1, packed.header.length).setValues([repairedRow]);
       repaired++;
     }
   }
@@ -1414,56 +1774,60 @@ function buildDeploymentContentFields_(plan, page) {
 function upsertDeploymentContentPage_(plan, page) {
   var packed = loadLedgerSheetRows_(SHEET_NAMES.CONTENT_UPDATES);
   var fields = buildDeploymentContentFields_(plan, page);
-  var row = CONTENT_UPDATE_HEADERS.map(function (header) {
-    return fields[header] === undefined ? '' : fields[header];
-  });
   var match = findDeploymentContentPage_(packed, plan, page);
   if (match) {
-    var current = packed.rows[match.rowIndex - 2].slice(0, CONTENT_UPDATE_HEADERS.length);
-    for (var i = 0; i < CONTENT_UPDATE_HEADERS.length; i++) {
-      if (ledgerBlank_(current[i]) && !ledgerBlank_(row[i])) current[i] = row[i];
+    var current = packed.rows[match.rowIndex - 2];
+    var nextRow = ledgerRowFromFields_(packed, fields, current);
+    var changed = false;
+    for (var hi = 0; hi < packed.header.length; hi++) {
+      var header = String(packed.header[hi] || '').trim();
+      if (!header || !Object.prototype.hasOwnProperty.call(fields, header)) continue;
+      if (!ledgerBlank_(nextRow[hi]) && String(current[hi] || '') !== String(nextRow[hi] || '')) {
+        changed = true;
+        break;
+      }
     }
-    packed.sheet.getRange(match.rowIndex, 1, 1, CONTENT_UPDATE_HEADERS.length).setValues([current]);
-    return { duplicate: true, rowIndex: match.rowIndex };
+    if (changed) {
+      packed.sheet.getRange(match.rowIndex, 1, 1, packed.header.length).setValues([nextRow]);
+      return { action: 'update', duplicate: true, rowIndex: match.rowIndex, unchanged: false };
+    }
+    return { action: 'unchanged', duplicate: true, rowIndex: match.rowIndex, unchanged: true };
   }
+  var row = ledgerRowFromFields_(packed, fields, null);
   packed.sheet.appendRow(row);
-  return { duplicate: false, rowIndex: packed.sheet.getLastRow() };
+  return { action: 'insert', duplicate: false, rowIndex: packed.sheet.getLastRow(), unchanged: false };
 }
 
 function findDeploymentContentPage_(packed, plan, page) {
   var pageKeyCol = packed.map.PageReceiptKey;
-  var receiptCol = packed.map.ReceiptKey;
-  var interventionCol = packed.map.InterventionID;
-  var pathCol = packed.map['页面路径'];
-  var primaryCol = packed.map.PrimaryURL;
+  if (pageKeyCol === undefined) return null;
   for (var i = 0; i < packed.rows.length; i++) {
-    var row = packed.rows[i];
-    if (pageKeyCol !== undefined && String(row[pageKeyCol] || '').trim() === page.pageReceiptKey) {
+    if (String(packed.rows[i][pageKeyCol] || '').trim() === page.pageReceiptKey) {
       return { rowIndex: i + 2 };
     }
-    var sameReceipt = receiptCol !== undefined && String(row[receiptCol] || '').trim() === plan.receiptKey;
-    var sameIntervention = interventionCol !== undefined && String(row[interventionCol] || '').trim() === plan.interventionId;
-    var samePath = (pathCol !== undefined && ledgerNormalizePath_(row[pathCol]) === page.path) ||
-      (primaryCol !== undefined && ledgerNormalizePath_(row[primaryCol]) === page.path);
-    if ((sameReceipt || sameIntervention) && samePath) return { rowIndex: i + 2 };
   }
   return null;
 }
 
 function upsertDeploymentTimelineIfMissing_(plan) {
   var packed = loadLedgerSheetRows_(SHEET_NAMES.INTERVENTION_TIMELINE);
+  var fields = buildDeploymentTimelineFields_(plan);
   var idCol = packed.map.InterventionID;
   if (idCol !== undefined) {
     for (var i = 0; i < packed.rows.length; i++) {
-      if (String(packed.rows[i][idCol] || '').trim() === plan.interventionId) return false;
+      if (String(packed.rows[i][idCol] || '').trim() !== plan.interventionId) continue;
+      var timeCol = packed.map['时间（UTC+8）'];
+      if (timeCol !== undefined && String(packed.rows[i][timeCol] || '').trim() !== fields['时间（UTC+8）']) {
+        packed.sheet.getRange(i + 2, timeCol + 1).setValue(fields['时间（UTC+8）']);
+      }
+      return false;
     }
   }
-  var row = buildDeploymentTimelineRow_(plan);
-  packed.sheet.appendRow(row);
+  packed.sheet.appendRow(ledgerRowFromFields_(packed, fields, null));
   return true;
 }
 
-function buildDeploymentTimelineRow_(plan) {
+function buildDeploymentTimelineFields_(plan) {
   var scope = plan.pages.map(function (p) { return p.path; });
   var trigger = plan.pages.map(function (p) {
     return { type: p.triggerType, queries: p.triggerQueries, summary: p.triggerSummary };
@@ -1473,14 +1837,34 @@ function buildDeploymentTimelineRow_(plan) {
       clicks7D: p.baseline.clicks, impressions7D: p.baseline.impressions };
   });
   var observationWindow = plan.pages.length + ' pages × D1/D3/D7/D14';
-  return [
-    plan.interventionId, plan.deployedAt,
-    plan.releaseOffsetDay === '' ? '' : 'D' + (Number(plan.releaseOffsetDay) >= 0 ? '+' : '') + Number(plan.releaseOffsetDay),
-    plan.lifecyclePhase, plan.batchId, plan.action, JSON.stringify(scope), JSON.stringify(trigger),
-    JSON.stringify(evidence), plan.commitSha, 'Deployment Receipt', observationWindow,
-    'PENDING', 'PENDING', 'PENDING', plan.decisionId, 'RECEIPT_AUTO', '',
-    addDaysStr_(plan.deployedDate, 1), plan.goalId || ''
-  ];
+  return {
+    'InterventionID': plan.interventionId,
+    '时间（UTC+8）': ledgerDeployedAtDisplay_(plan.deployedAt),
+    '相对发售日': plan.releaseOffsetDay === '' ? '' :
+      'D' + (Number(plan.releaseOffsetDay) >= 0 ? '+' : '') + Number(plan.releaseOffsetDay),
+    '生命周期': plan.lifecyclePhase,
+    '批次/阶段': plan.batchId,
+    '动作类型': plan.action,
+    '目标页面/范围': JSON.stringify(scope),
+    '触发信号': JSON.stringify(trigger),
+    '动作前证据': JSON.stringify(evidence),
+    'Git Commit': plan.commitSha,
+    '证据来源': 'Deployment Receipt',
+    '观察窗口': observationWindow,
+    '观察到的数据变化': 'PENDING',
+    '归因判断': 'PENDING',
+    '置信度': 'PENDING',
+    'DecisionID': plan.decisionId,
+    '回溯状态': 'RECEIPT_AUTO',
+    '混杂因素': '',
+    '下次评估': addDaysStr_(plan.deployedDate, 1),
+    '备注': plan.goalId || ''
+  };
+}
+
+function buildDeploymentTimelineRow_(plan) {
+  var packed = loadLedgerSheetRows_(SHEET_NAMES.INTERVENTION_TIMELINE);
+  return ledgerRowFromFields_(packed, buildDeploymentTimelineFields_(plan), null);
 }
 
 function deploymentObservationDataContext_() {
@@ -1755,7 +2139,8 @@ function reconcileInterventionPipeline() {
           plan.productionUrl,
           plan.deployedDate,
           baseline.dataDate,
-          plan.pages[p].action
+          plan.pages[p].action,
+          plan.pages[p].pageRole
         );
         plan.pages[p].baseline = mergeDeploymentBaselineMissingFields_(baseline, recovered);
       }
@@ -1906,4 +2291,102 @@ function refreshDeploymentTimelines_() {
     count++;
   });
   return { interventions: count, timelineRows: count };
+}
+
+var STEAM_PROJECT_POOL_SHEET_ID = '1WVg2p_Vero3MB2JN4yxmtHkLQRgkWO2mz95X4ms9nLE';
+
+/** Read-only helper: latest GSC snapshot sitemap inventory for one SiteID. */
+function inspectGscSitemapUrlCount(siteId) {
+  siteId = String(siteId || '').trim();
+  if (!siteId) throw new Error('inspectGscSitemapUrlCount: siteId required');
+  var detail = readLatestGscSnapshotForSite_(siteId);
+  return {
+    siteId: siteId,
+    sitemapUrlCount: detail.sitemapUrlCount,
+    runDate: detail.runDate,
+    site: detail.site,
+    propertyURL: detail.propertyURL
+  };
+}
+
+function readLatestGscSnapshotForSite_(siteId) {
+  var siteName = '';
+  var sitesPacked = loadLedgerSheetRows_(SHEET_NAMES.SITES);
+  var siteIdCol = sitesPacked.map.site_id;
+  var siteNameCol = sitesPacked.map['站点名称'];
+  if (siteIdCol !== undefined) {
+    for (var s = 0; s < sitesPacked.rows.length; s++) {
+      if (String(sitesPacked.rows[s][siteIdCol] || '').trim() !== siteId) continue;
+      if (siteNameCol !== undefined) siteName = String(sitesPacked.rows[s][siteNameCol] || '').trim();
+      break;
+    }
+  }
+  var packed = loadLedgerSheetRows_(SHEET_NAMES.SNAPSHOT);
+  var snapshotSiteIdCol = packed.map.site_id;
+  var siteCol = packed.map.Site;
+  var countCol = packed.map.SitemapURLCount;
+  var runCol = packed.map.RunDate;
+  var propertyCol = packed.map.PropertyURL;
+  var best = { date: '', count: 0, site: siteName, propertyURL: '' };
+  for (var i = 0; i < packed.rows.length; i++) {
+    var rowSiteId = snapshotSiteIdCol === undefined ? '' : String(packed.rows[i][snapshotSiteIdCol] || '').trim();
+    var rowSiteName = siteCol === undefined ? '' : String(packed.rows[i][siteCol] || '').trim();
+    var matches = rowSiteId === siteId || (siteName && rowSiteName === siteName);
+    if (!matches) continue;
+    var runDate = runCol === undefined ? '' : String(packed.rows[i][runCol] || '').trim();
+    var count = countCol === undefined ? 0 : (Number(packed.rows[i][countCol] || 0) || 0);
+    if (!best.date || runDate >= best.date) {
+      best.date = runDate;
+      best.count = count;
+      best.site = rowSiteName || siteName;
+      best.propertyURL = propertyCol === undefined ? '' : String(packed.rows[i][propertyCol] || '').trim();
+    }
+  }
+  return {
+    sitemapUrlCount: best.count,
+    runDate: best.date,
+    site: best.site,
+    propertyURL: best.propertyURL
+  };
+}
+
+function readGscSitemapUrlCountForSite_(siteId) {
+  return readLatestGscSnapshotForSite_(siteId).sitemapUrlCount;
+}
+
+/** Remote ops bridge: refresh one Steam site-pool LaunchPageCount from GSC snapshot inventory. */
+function syncSteamSitePoolLaunchPageCount(siteId) {
+  siteId = String(siteId || '').trim();
+  if (!siteId) throw new Error('syncSteamSitePoolLaunchPageCount: siteId required');
+  var sitemapUrlCount = readGscSitemapUrlCountForSite_(siteId);
+  var ss = SpreadsheetApp.openById(STEAM_PROJECT_POOL_SHEET_ID);
+  var poolSheet = ss.getSheetByName('站点项目池');
+  if (!poolSheet || poolSheet.getLastRow() < 2) {
+    throw new Error('syncSteamSitePoolLaunchPageCount: 站点项目池 missing');
+  }
+  var headers = poolSheet.getRange(1, 1, 1, poolSheet.getLastColumn()).getDisplayValues()[0];
+  var siteCol = headers.indexOf('Site ID');
+  var launchCol = headers.indexOf('LaunchPageCount');
+  if (siteCol < 0 || launchCol < 0) {
+    throw new Error('syncSteamSitePoolLaunchPageCount: required columns missing');
+  }
+  var rows = poolSheet.getRange(2, 1, poolSheet.getLastRow() - 1, headers.length).getValues();
+  for (var i = 0; i < rows.length; i++) {
+    if (String(rows[i][siteCol] || '').trim() !== siteId) continue;
+    var previous = Number(rows[i][launchCol] || 0) || 0;
+    var updated = false;
+    if (sitemapUrlCount > 0 && sitemapUrlCount !== previous) {
+      poolSheet.getRange(i + 2, launchCol + 1).setValue(sitemapUrlCount);
+      updated = true;
+    }
+    return {
+      ok: true,
+      siteId: siteId,
+      previousLaunchPageCount: previous,
+      launchPageCount: updated ? sitemapUrlCount : previous,
+      sitemapUrlCount: sitemapUrlCount,
+      updated: updated
+    };
+  }
+  throw new Error('syncSteamSitePoolLaunchPageCount: site not found: ' + siteId);
 }

@@ -7,10 +7,14 @@ const path = require('node:path');
 const vm = require('node:vm');
 
 const root = path.join(__dirname, '..');
+const readOptional = (name) => {
+  const file = path.join(root, name);
+  return fs.existsSync(file) ? fs.readFileSync(file, 'utf8') : '';
+};
 const config = fs.readFileSync(path.join(root, 'Config.gs'), 'utf8');
 const ledger = fs.readFileSync(path.join(root, 'ExperimentLedger.gs'), 'utf8');
-const intent = fs.readFileSync(path.join(root, 'IntentOpportunityEngine.gs'), 'utf8');
-const early = fs.readFileSync(path.join(root, 'EarlyFollowupEngine.gs'), 'utf8');
+const intent = readOptional('IntentOpportunityEngine.gs');
+const early = readOptional('EarlyFollowupEngine.gs');
 const developmentTaskHeaders = eval(`[${config.match(/var DEVELOPMENT_TASK_HEADERS\s*=\s*\[([\s\S]*?)\];/)[1]}]`);
 
 class FakeSheet {
@@ -113,29 +117,34 @@ function makeContext(today = '2026-08-24', existing = false) {
   return { context, ss, headers };
 }
 
-const intentContext = {};
-vm.createContext(intentContext);
-vm.runInContext(config + intent, intentContext);
-const pitt = { name: 'Project P.I.T.T.', siteId: 'project-p-i-t-t', propertyUrl: 'https://pitt.example/' };
-assert.equal(intentContext.classifyIntentCluster_('project pitt 200kg', pitt).key,
-  intentContext.classifyIntentCluster_('project pitt 200 kg', pitt).key);
-assert.equal(intentContext.classifyIntentCluster_('project pitt fuse', pitt).key,
-  intentContext.classifyIntentCluster_('project pitt fuses', pitt).key);
-assert.equal(intentContext.classifyIntentCluster_('project pitt fuse', pitt).intentFamily, 'FUSE');
+if (intent) {
+  const intentContext = {};
+  vm.createContext(intentContext);
+  vm.runInContext(config + intent, intentContext);
+  const pitt = { name: 'Project P.I.T.T.', siteId: 'project-p-i-t-t', propertyUrl: 'https://pitt.example/' };
+  assert.equal(intentContext.classifyIntentCluster_('project pitt 200kg', pitt).key,
+    intentContext.classifyIntentCluster_('project pitt 200 kg', pitt).key);
+  assert.equal(intentContext.classifyIntentCluster_('project pitt fuse', pitt).key,
+    intentContext.classifyIntentCluster_('project pitt fuses', pitt).key);
+  assert.equal(intentContext.classifyIntentCluster_('project pitt fuse', pitt).intentFamily, 'FUSE');
+}
 
-const earlyContext = {};
-vm.createContext(earlyContext);
-vm.runInContext(config + intent + early, earlyContext);
-const rules = Object.fromEntries(earlyContext.DEFAULT_DECISION_RULES.map((r) => [r[0], Number(r[1])]));
-const first = earlyContext.evaluateEarlyFollowupObservation_(
-  pitt, { key: 'PITT_200KG', label: '200kg', impressions: 10, clicks: 0, position: 15, topPage: '/', topPageShare: 1, intentType: 'SPECIFIC_INTENT' },
-  null, false, rules, new Date('2026-08-24T00:00:00Z'), {}
-);
-assert(first.signals.includes('ABSOLUTE_CAPTURE'), 'absolute signal must not require a previous baseline');
-assert.equal(first.opportunityStage, 'CAPTURE');
-assert.equal(earlyContext.buildAdjacentCaptureCandidates_({ label: 'Fuses' }, [
-  { intent: 'Percentage Pipe', sourceRefs: ['serp:test'] }, { intent: 'Secret Ending' }
-])[0].status, 'ADJACENT_CAPTURE_CANDIDATE');
+if (intent && early) {
+  const earlyContext = {};
+  vm.createContext(earlyContext);
+  vm.runInContext(config + intent + early, earlyContext);
+  const pitt = { name: 'Project P.I.T.T.', siteId: 'project-p-i-t-t', propertyUrl: 'https://pitt.example/' };
+  const rules = Object.fromEntries(earlyContext.DEFAULT_DECISION_RULES.map((r) => [r[0], Number(r[1])]));
+  const first = earlyContext.evaluateEarlyFollowupObservation_(
+    pitt, { key: 'PITT_200KG', label: '200kg', impressions: 10, clicks: 0, position: 15, topPage: '/', topPageShare: 1, intentType: 'SPECIFIC_INTENT' },
+    null, false, rules, new Date('2026-08-24T00:00:00Z'), {}
+  );
+  assert(first.signals.includes('ABSOLUTE_CAPTURE'), 'absolute signal must not require a previous baseline');
+  assert.equal(first.opportunityStage, 'CAPTURE');
+  assert.equal(earlyContext.buildAdjacentCaptureCandidates_({ label: 'Fuses' }, [
+    { intent: 'Percentage Pipe', sourceRefs: ['serp:test'] }, { intent: 'Secret Ending' }
+  ])[0].status, 'ADJACENT_CAPTURE_CANDIDATE');
+}
 
 const receipt = {
   schemaVersion: 'deployment-receipt-v1', receiptKey: 'PITT-LONGTAIL-RECEIPT-20260824',
@@ -197,7 +206,7 @@ const existingBaseline = updateRows.find((r) => r[contentHeaders['页面路径']
 assert.equal(newBaseline[contentHeaders.BaselinePageClicks7D], 0, 'new URL baseline clicks are zero');
 assert.equal(newBaseline[contentHeaders.BaselinePageImpressions7D], 0, 'new URL baseline impressions are zero');
 assert.equal(existingBaseline[contentHeaders.BaselinePageImpressions7D], 0, 'UPDATE_PAGE without page traffic is zero but not new');
-assert.equal(context.ingestDeploymentReceipt(receipt).result, 'DUPLICATE_ACCEPTED');
+assert.equal(context.ingestDeploymentReceipt(receipt).result, 'ALREADY_RECORDED');
 assert.equal(ss.getSheetByName('内容更新记录').getLastRow() - 1, 5);
 assert.equal(ss.getSheetByName('干预观察').getLastRow() - 1, 20);
 
@@ -465,5 +474,52 @@ const finalizerStart = codeSource.indexOf('function runDailyFinalizerUnlocked_')
 const finalizerEnd = codeSource.indexOf('\nfunction ', finalizerStart + 1);
 const finalizer = codeSource.slice(finalizerStart, finalizerEnd < 0 ? codeSource.length : finalizerEnd);
 assert.equal((finalizer.match(/runInterventionObservationsUnlocked_\(/g) || []).length, 1);
+
+// Post-deploy ingest: same-day Page rows must not downgrade CONTENT_EXPANSION new URLs
+// to EXISTING_URL_NO_GSC_TRAFFIC. Only strict pre-deploy GSC evidence marks a page existing.
+const postDeploy = makeContext('2026-09-01');
+postDeploy.ss.getSheetByName('Page明细').appendRow([
+  '2026-09-01', 'Project P.I.T.T.', 'https://pitt.example/maps/', '/maps/', 2, 20, 0.1, 5
+]);
+const postDeployReceipt = {
+  schemaVersion: 'deployment-receipt-v1',
+  receiptKey: 'PITT-POST-DEPLOY-CONTENT-EXPANSION',
+  interventionId: 'PITT-POST-DEPLOY-CONTENT-EXPANSION',
+  siteId: 'project-p-i-t-t',
+  siteName: 'Project P.I.T.T.',
+  batchId: 'PITT-POST-DEPLOY',
+  productionDeployedAt: '2026-09-01T00:00:00+08:00',
+  commitSHA: 'b'.repeat(40),
+  deploymentURL: 'https://pitt-preview.vercel.app',
+  productionURL: 'https://pitt.example/',
+  releaseDate: '2026-09-01',
+  action: 'CONTENT_EXPANSION',
+  affectedPages: [
+    {
+      path: '/maps/', action: 'CONTENT_EXPANSION', primaryURL: 'https://pitt.example/maps/',
+      triggerType: 'site_expansion', triggerQueries: [], triggerSummary: 'new pillar', reason: 'new maps hub'
+    },
+    {
+      path: '/early-access-release-time/', action: 'ADD_INTERNAL_LINK',
+      primaryURL: 'https://pitt.example/early-access-release-time/',
+      triggerType: 'internal_link', triggerQueries: [], triggerSummary: 'internal links', reason: 'link refresh'
+    }
+  ]
+};
+assert.equal(postDeploy.context.ingestDeploymentReceipt(postDeployReceipt).result, 'ACCEPTED');
+const postDeployObsHeaders = Object.fromEntries(postDeploy.context.INTERVENTION_OBSERVATION_HEADERS.map((x, i) => [x, i]));
+const postDeployObs = postDeploy.ss.getSheetByName('干预观察').rows.slice(1);
+const mapsObs = postDeployObs.find((r) => r[postDeployObsHeaders.PrimaryURL].includes('/maps/'));
+const linkObs = postDeployObs.find((r) => r[postDeployObsHeaders.PrimaryURL].includes('/early-access-release-time/'));
+assert.equal(mapsObs[postDeployObsHeaders.BaselineMode], 'NEW_URL_BASELINE');
+assert.equal(linkObs[postDeployObsHeaders.BaselineMode], 'EXISTING_URL_NO_GSC_TRAFFIC');
+assert.equal(
+  postDeploy.context.resolveDeploymentReceiptPageRole_('CONTENT_EXPANSION', false),
+  postDeploy.context.DEPLOYMENT_RECEIPT_PAGE_ROLE.NEW_PAGE
+);
+assert.equal(
+  postDeploy.context.resolveDeploymentReceiptPageRole_('ADD_INTERNAL_LINK', false),
+  postDeploy.context.DEPLOYMENT_RECEIPT_PAGE_ROLE.INTERNAL_LINK_ONLY
+);
 
 console.log('PASS scripts/test-deployment-receipt-v1.js');

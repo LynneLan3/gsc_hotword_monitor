@@ -107,7 +107,7 @@ export function buildDeploymentReceiptFromPublishReceipt(receipt) {
 }
 
 function buildDeploymentLedgerResult(value, receipt) {
-	const duplicate = value?.result === 'DUPLICATE_ACCEPTED';
+	const duplicate = value?.result === 'DUPLICATE_ACCEPTED' || value?.result === 'ALREADY_RECORDED';
 	return {
 		status: DEPLOYED_LEDGER_STATUS.RECORDED,
 		ok: true,
@@ -166,7 +166,7 @@ function invokeIngestDeploymentReceiptViaClaspCli(receipt, options = {}) {
 		};
 	}
 	const value = response && (response.response || response.result) ? (response.response || response.result) : response;
-	if (!value || value.ok !== true || !['ACCEPTED', 'DUPLICATE_ACCEPTED'].includes(value.result)) {
+	if (!value || value.ok !== true || !['ACCEPTED', 'DUPLICATE_ACCEPTED', 'ALREADY_RECORDED'].includes(value.result)) {
 		return {
 			status: isRecoverableLedgerError(stdout) ? DEPLOYED_LEDGER_STATUS.PENDING : DEPLOYED_LEDGER_STATUS.FAILED,
 			ok: false,
@@ -221,7 +221,7 @@ async function invokeIngestDeploymentReceiptViaApi(receipt, options = {}) {
 			};
 		}
 		const value = body.response?.result;
-		if (!value || value.ok !== true || !['ACCEPTED', 'DUPLICATE_ACCEPTED'].includes(value.result)) {
+		if (!value || value.ok !== true || !['ACCEPTED', 'DUPLICATE_ACCEPTED', 'ALREADY_RECORDED'].includes(value.result)) {
 			const errorText = JSON.stringify(value || body);
 			return {
 				status: isRecoverableLedgerError(errorText) ? DEPLOYED_LEDGER_STATUS.PENDING : DEPLOYED_LEDGER_STATUS.FAILED,
@@ -273,7 +273,7 @@ export async function invokeIngestDeploymentReceipt(receipt, options = {}) {
 
 export function resolvePublishCompletionStatus({ productionPassed, receiptResult }) {
 	if (!productionPassed) return PUBLISH_COMPLETION_STATUS.PRODUCTION_FAILED;
-	if (receiptResult?.ok && ['ACCEPTED', 'DUPLICATE_ACCEPTED'].includes(receiptResult.result || receiptResult.response?.result)) {
+	if (receiptResult?.ok && ['ACCEPTED', 'DUPLICATE_ACCEPTED', 'ALREADY_RECORDED'].includes(receiptResult.result || receiptResult.response?.result)) {
 		return PUBLISH_COMPLETION_STATUS.COMPLETE;
 	}
 	if (receiptResult?.status === DEPLOYED_LEDGER_STATUS.PENDING || isRecoverableLedgerError(receiptResult?.error || receiptResult?.output)) {
