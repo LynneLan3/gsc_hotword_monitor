@@ -1556,6 +1556,7 @@ function resolveDeploymentReceiptPageRole_(action, hasAnyPageEvidence, explicitR
   return DEPLOYMENT_RECEIPT_PAGE_ROLE.EXISTING_PAGE_UPDATE;
 }
 
+/** BaselineMode follows receipt pageRole plus strict pre-deploy GSC evidence only. */
 function captureDeploymentBaseline_(site, primaryUrl, productionUrl, deployedDate, baselineDataDate, action, explicitPageRole) {
   var requestedEnd = normalizeKeyDate_(baselineDataDate);
   var baseline = captureLedgerBaseline_(site, primaryUrl, productionUrl, deployedDate);
@@ -1611,24 +1612,28 @@ function captureDeploymentBaseline_(site, primaryUrl, productionUrl, deployedDat
   }
   var pageRole = resolveDeploymentReceiptPageRole_(action, hasAnyPageEvidence, explicitPageRole);
   baseline.pageRole = pageRole;
-  if (!hasAnyPageEvidence) {
+  var reliableExistingBaseline = hasAnyPageEvidence && hasPageTraffic &&
+    deploymentHasSevenDayCoverage_(pages, site, target, end, false);
+  if (pageRole === DEPLOYMENT_RECEIPT_PAGE_ROLE.NEW_PAGE) {
+    if (!hasAnyPageEvidence || !reliableExistingBaseline) {
+      baseline.clicks = 0;
+      baseline.impressions = 0;
+      baseline.ctr = '';
+      baseline.position = '';
+      baseline.queryCount = 0;
+      baseline.mode = 'NEW_URL_BASELINE';
+    } else {
+      baseline.mode = 'EXISTING_URL_BASELINE';
+    }
+  } else if (reliableExistingBaseline) {
+    baseline.mode = 'EXISTING_URL_BASELINE';
+  } else {
     baseline.clicks = 0;
     baseline.impressions = 0;
     baseline.ctr = '';
     baseline.position = '';
     baseline.queryCount = 0;
-    baseline.mode = pageRole === DEPLOYMENT_RECEIPT_PAGE_ROLE.NEW_PAGE
-      ? 'NEW_URL_BASELINE'
-      : 'EXISTING_URL_NO_GSC_TRAFFIC';
-  } else if (hasPageTraffic && deploymentHasSevenDayCoverage_(pages, site, target, end, false)) {
-    baseline.mode = 'EXISTING_URL_BASELINE';
-  } else {
-    baseline.clicks = '';
-    baseline.impressions = '';
-    baseline.ctr = '';
-    baseline.position = '';
-    baseline.queryCount = '';
-    baseline.mode = 'BASELINE_UNKNOWN';
+    baseline.mode = 'EXISTING_URL_NO_GSC_TRAFFIC';
   }
   if (end && !deploymentSiteHasSevenDayCoverage_(dailyRows, site, end)) {
     baseline.siteClicks = '';

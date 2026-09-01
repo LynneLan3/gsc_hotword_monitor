@@ -20,6 +20,7 @@
   "affectedPages": [
     {
       "path": "/",
+      "pageRole": "EXISTING_PAGE_UPDATE",
       "action": "CONTENT_EXPANSION",
       "primaryURL": "https://halloween-the-game-guide.vercel.app/",
       "triggerType": "site_expansion",
@@ -30,6 +31,7 @@
     },
     {
       "path": "/maps/",
+      "pageRole": "NEW_PAGE",
       "action": "CONTENT_EXPANSION",
       "primaryURL": "https://halloween-the-game-guide.vercel.app/maps/",
       "triggerType": "site_expansion",
@@ -40,6 +42,7 @@
     },
     {
       "path": "/maps/haddonfield-heights/",
+      "pageRole": "NEW_PAGE",
       "action": "CONTENT_EXPANSION",
       "primaryURL": "https://halloween-the-game-guide.vercel.app/maps/haddonfield-heights/",
       "triggerType": "site_expansion",
@@ -50,6 +53,7 @@
     },
     {
       "path": "/maps/haddonfield-town-center/",
+      "pageRole": "NEW_PAGE",
       "action": "CONTENT_EXPANSION",
       "primaryURL": "https://halloween-the-game-guide.vercel.app/maps/haddonfield-town-center/",
       "triggerType": "site_expansion",
@@ -60,6 +64,7 @@
     },
     {
       "path": "/maps/orange-grove-estates/",
+      "pageRole": "NEW_PAGE",
       "action": "CONTENT_EXPANSION",
       "primaryURL": "https://halloween-the-game-guide.vercel.app/maps/orange-grove-estates/",
       "triggerType": "site_expansion",
@@ -70,6 +75,7 @@
     },
     {
       "path": "/characters/",
+      "pageRole": "NEW_PAGE",
       "action": "CONTENT_EXPANSION",
       "primaryURL": "https://halloween-the-game-guide.vercel.app/characters/",
       "triggerType": "site_expansion",
@@ -80,6 +86,7 @@
     },
     {
       "path": "/michael-myers/",
+      "pageRole": "NEW_PAGE",
       "action": "CONTENT_EXPANSION",
       "primaryURL": "https://halloween-the-game-guide.vercel.app/michael-myers/",
       "triggerType": "site_expansion",
@@ -90,6 +97,7 @@
     },
     {
       "path": "/michael-myers/abilities/",
+      "pageRole": "NEW_PAGE",
       "action": "CONTENT_EXPANSION",
       "primaryURL": "https://halloween-the-game-guide.vercel.app/michael-myers/abilities/",
       "triggerType": "site_expansion",
@@ -100,6 +108,7 @@
     },
     {
       "path": "/multiplayer/",
+      "pageRole": "NEW_PAGE",
       "action": "CONTENT_EXPANSION",
       "primaryURL": "https://halloween-the-game-guide.vercel.app/multiplayer/",
       "triggerType": "site_expansion",
@@ -110,6 +119,7 @@
     },
     {
       "path": "/multiplayer/how-multiplayer-works/",
+      "pageRole": "NEW_PAGE",
       "action": "CONTENT_EXPANSION",
       "primaryURL": "https://halloween-the-game-guide.vercel.app/multiplayer/how-multiplayer-works/",
       "triggerType": "site_expansion",
@@ -120,6 +130,7 @@
     },
     {
       "path": "/multiplayer/crossplay/",
+      "pageRole": "NEW_PAGE",
       "action": "CONTENT_EXPANSION",
       "primaryURL": "https://halloween-the-game-guide.vercel.app/multiplayer/crossplay/",
       "triggerType": "site_expansion",
@@ -130,6 +141,7 @@
     },
     {
       "path": "/single-player/",
+      "pageRole": "NEW_PAGE",
       "action": "CONTENT_EXPANSION",
       "primaryURL": "https://halloween-the-game-guide.vercel.app/single-player/",
       "triggerType": "site_expansion",
@@ -140,6 +152,7 @@
     },
     {
       "path": "/pc/",
+      "pageRole": "NEW_PAGE",
       "action": "CONTENT_EXPANSION",
       "primaryURL": "https://halloween-the-game-guide.vercel.app/pc/",
       "triggerType": "site_expansion",
@@ -150,6 +163,7 @@
     },
     {
       "path": "/pc/system-requirements/",
+      "pageRole": "NEW_PAGE",
       "action": "CONTENT_EXPANSION",
       "primaryURL": "https://halloween-the-game-guide.vercel.app/pc/system-requirements/",
       "triggerType": "site_expansion",
@@ -160,6 +174,7 @@
     },
     {
       "path": "/early-access-release-time/",
+      "pageRole": "INTERNAL_LINK_ONLY",
       "action": "ADD_INTERNAL_LINK",
       "primaryURL": "https://halloween-the-game-guide.vercel.app/early-access-release-time/",
       "triggerType": "internal_link",

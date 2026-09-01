@@ -521,5 +521,44 @@ assert.equal(
   postDeploy.context.resolveDeploymentReceiptPageRole_('ADD_INTERNAL_LINK', false),
   postDeploy.context.DEPLOYMENT_RECEIPT_PAGE_ROLE.INTERNAL_LINK_ONLY
 );
+assert.equal(
+  postDeploy.context.resolveDeploymentReceiptPageRole_('CONTENT_EXPANSION', false, 'EXISTING_PAGE_UPDATE'),
+  postDeploy.context.DEPLOYMENT_RECEIPT_PAGE_ROLE.EXISTING_PAGE_UPDATE
+);
+
+// Receipt manifest pageRole must override post-deploy Page rows for the homepage.
+const homeRole = makeContext('2026-09-01');
+homeRole.ss.getSheetByName('Page明细').appendRow([
+  '2026-09-01', 'Project P.I.T.T.', 'https://pitt.example/', '/', 5, 50, 0.1, 5
+]);
+const homeRoleReceipt = {
+  schemaVersion: 'deployment-receipt-v1',
+  receiptKey: 'PITT-HOME-ROLE-FIXTURE',
+  interventionId: 'PITT-HOME-ROLE-FIXTURE',
+  siteId: 'project-p-i-t-t',
+  siteName: 'Project P.I.T.T.',
+  batchId: 'PITT-HOME-ROLE',
+  productionDeployedAt: '2026-09-01T00:00:00+08:00',
+  commitSHA: 'c'.repeat(40),
+  deploymentURL: 'https://pitt-preview.vercel.app',
+  productionURL: 'https://pitt.example/',
+  releaseDate: '2026-09-01',
+  action: 'CONTENT_EXPANSION',
+  affectedPages: [{
+    path: '/',
+    pageRole: 'EXISTING_PAGE_UPDATE',
+    action: 'CONTENT_EXPANSION',
+    primaryURL: 'https://pitt.example/',
+    triggerType: 'site_expansion',
+    triggerQueries: [],
+    triggerSummary: 'home hub refresh',
+    reason: 'existing launch page expanded'
+  }]
+};
+assert.equal(homeRole.context.ingestDeploymentReceipt(homeRoleReceipt).result, 'ACCEPTED');
+const homeRoleObsHeaders = Object.fromEntries(homeRole.context.INTERVENTION_OBSERVATION_HEADERS.map((x, i) => [x, i]));
+const homeRoleObs = homeRole.ss.getSheetByName('干预观察').rows.slice(1);
+assert.equal(homeRoleObs.length, 4);
+assert(homeRoleObs.every((r) => r[homeRoleObsHeaders.BaselineMode] === 'EXISTING_URL_NO_GSC_TRAFFIC'));
 
 console.log('PASS scripts/test-deployment-receipt-v1.js');
