@@ -384,6 +384,59 @@ function normalizeHourlyQueryPageRows_(rows) {
   return out;
 }
 
+function normalizeHourlySiteTotalsRows_(rows) {
+  return normalizeHourlyRowsByDimensions_(rows, 1, function (keys) {
+    return { hour: String(keys[0] || '') };
+  });
+}
+
+function normalizeHourlyPageRows_(rows) {
+  return normalizeHourlyRowsByDimensions_(rows, 2, function (keys) {
+    return { hour: String(keys[0] || ''), page: String(keys[1] || '') };
+  });
+}
+
+function normalizeHourlyRowsByDimensions_(rows, minimumKeys, keyBuilder) {
+  var out = [];
+  for (var i = 0; i < (rows || []).length; i++) {
+    var row = rows[i] || {};
+    var keys = row.keys || [];
+    if (keys.length < minimumKeys || !keys[0]) continue;
+    var hourMs = parseGscHourMs_(keys[0]);
+    if (hourMs === null) continue;
+    var item = keyBuilder(keys);
+    if (!item || (minimumKeys > 1 && !item.page)) continue;
+    item.hourMs = hourMs;
+    item.clicks = Number(row.clicks || 0) || 0;
+    item.impressions = Number(row.impressions || 0) || 0;
+    item.position = Number(row.position || 0) || 0;
+    out.push(item);
+  }
+  return out;
+}
+
+function fetchHourlySiteTotalsResult_(siteUrl, startDate, endDate, rowLimit) {
+  var packed = searchAnalyticsQueryAllRows_(siteUrl, {
+    startDate: startDate,
+    endDate: endDate,
+    dimensions: ['hour'],
+    dataState: 'hourly_all',
+    rowLimit: rowLimit || FRESH_HOURLY_ROW_LIMIT
+  });
+  return { rows: normalizeHourlySiteTotalsRows_(packed.rows), metadata: packed.metadata, result: packed.result || {} };
+}
+
+function fetchHourlyPagesResult_(siteUrl, startDate, endDate, rowLimit) {
+  var packed = searchAnalyticsQueryAllRows_(siteUrl, {
+    startDate: startDate,
+    endDate: endDate,
+    dimensions: ['hour', 'page'],
+    dataState: 'hourly_all',
+    rowLimit: rowLimit || FRESH_HOURLY_ROW_LIMIT
+  });
+  return { rows: normalizeHourlyPageRows_(packed.rows), metadata: packed.metadata, result: packed.result || {} };
+}
+
 /**
  * Fresh hourly Query × Page（dataState=hourly_all）。
  * 只供实时 Query 监控旁路使用，不要写入 GSC日数据 / Query明细 / Decision。

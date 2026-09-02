@@ -1,0 +1,124 @@
+{
+  "schemaVersion": "hotword-pending-receipt-v1",
+  "status": "recorded",
+  "ledgerStatus": "DEPLOYED_LEDGER_RECORDED",
+  "batchId": "project-p-i-t-t-site-opt-20260901",
+  "siteId": "project-p-i-t-t",
+  "sourceReceiptPath": ".publish-receipts/project-p-i-t-t-site-opt-20260901.json",
+  "pendingSince": "2026-09-01T00:50:11.775Z",
+  "lastAttemptAt": "2026-09-01T00:50:34.357Z",
+  "lastAttemptError": "",
+  "recordedAt": "2026-09-01T00:50:34.357Z",
+  "interventionIds": [
+    "iv-5ea1a2f317a690c0",
+    "iv-e5dd1a7ea13c636e",
+    "iv-ff63bd7a760def8f",
+    "iv-8c6c73246c60a8c5",
+    "iv-f144779d2ddeeec9"
+  ],
+  "baselineDataDates": [
+    "2026-08-29",
+    "2026-08-29",
+    "2026-08-29",
+    "2026-08-29",
+    "2026-08-29"
+  ],
+  "interventionKeys": [
+    "project-p-i-t-t-site-opt-20260901|project-p-i-t-t|/200kg-plate/|CONTENT_OPTIMIZE|project pitt weight",
+    "project-p-i-t-t-site-opt-20260901|project-p-i-t-t|/secret-ending/|CONTENT_OPTIMIZE|project pitt secret ending",
+    "project-p-i-t-t-site-opt-20260901|project-p-i-t-t|/shift-scheduler/|CONTENT_OPTIMIZE|project pitt scheduler",
+    "project-p-i-t-t-site-opt-20260901|project-p-i-t-t|/routes/hidden-progression/|UPDATE_PAGE|project pitt hidden progression",
+    "project-p-i-t-t-site-opt-20260901|project-p-i-t-t|/up-achievement-fuses/|CONTENT_OPTIMIZE|project pitt fuses"
+  ],
+  "receipt": {
+    "schemaVersion": "hotword-publish-receipt-v1",
+    "common": {
+      "site": "Project P.I.T.T.",
+      "siteId": "project-p-i-t-t",
+      "game": "Project P.I.T.T.",
+      "releaseDate": "2026-08-19",
+      "lifecyclePhase": "growth",
+      "batchId": "project-p-i-t-t-site-opt-20260901",
+      "commitSha": "b9bef5211dd47849eaca30c71ca6081ac2a61275",
+      "deploymentUrl": "https://project-p-i-t-8xdzfolj2-lynnelan3s-projects.vercel.app",
+      "productionUrl": "https://project-p-i-t-t.vercel.app",
+      "deployedAt": "2026-09-01T00:50:05.116Z"
+    },
+    "interventions": [
+      {
+        "action": "CONTENT_OPTIMIZE",
+        "primaryUrl": "/200kg-plate/",
+        "affectedUrls": [
+          "/200kg-plate/"
+        ],
+        "triggerType": "gsc_query",
+        "triggerQueries": [
+          "project pitt weight",
+          "project pitt 200kg",
+          "project pitt 200 kg"
+        ],
+        "triggerSummary": "GSC 24h: 41 impressions, 1 click, avg position 5.3 — low CTR on weight/200kg queries.",
+        "changeSummary": "APIMart refresh: mass-not-count above fold, reliable 200kg methods (bumpers, gambling crates, loaded containers), HEAVY? FAQ, Percentage Pipe handoff; title tuned for 200kg/weight intent.",
+        "reason": "Capture project pitt weight / 200kg search intent with clearer SERP presentation and answer-first weight guidance."
+      },
+      {
+        "action": "CONTENT_OPTIMIZE",
+        "primaryUrl": "/secret-ending/",
+        "affectedUrls": [
+          "/secret-ending/"
+        ],
+        "triggerType": "gsc_query",
+        "triggerQueries": [
+          "project pitt secret ending"
+        ],
+        "triggerSummary": "GSC 24h: 33 impressions, 0 clicks.",
+        "changeSummary": "APIMart refresh: full route strip, Where do I find my elevator code H2, save-specific code vs 2640, END?/END! boundary preserved.",
+        "reason": "Improve CTR on secret ending queries with complete route checklist and differentiated save-specific code messaging."
+      },
+      {
+        "action": "CONTENT_OPTIMIZE",
+        "primaryUrl": "/shift-scheduler/",
+        "affectedUrls": [
+          "/shift-scheduler/"
+        ],
+        "triggerType": "gsc_query",
+        "triggerQueries": [
+          "project pitt scheduler",
+          "project pitt how to use shift scheduler",
+          "shift scheduler project pitt"
+        ],
+        "triggerSummary": "GSC 24h: 34 impressions, 2 clicks.",
+        "changeSummary": "APIMart refresh: title/meta without Duck Crank block, how-to-use intent, compatibility table, 1.0.6 fix on 1.0.7 build.",
+        "reason": "Align SERP copy with scheduler how-to queries and supported-tool intent."
+      },
+      {
+        "action": "UPDATE_PAGE",
+        "primaryUrl": "/routes/hidden-progression/",
+        "affectedUrls": [
+          "/routes/hidden-progression/"
+        ],
+        "triggerType": "gsc_query",
+        "triggerQueries": [
+          "project pitt hidden progression"
+        ],
+        "triggerSummary": "GSC 24h: 19 impressions, 0 clicks — page too thin.",
+        "changeSummary": "Route hub strengthened: search-oriented title/description, stuck-at handoffs (fuses, pipe 0%, elevator code) via fastAnswers; timeline preserves canonical child guides.",
+        "reason": "Turn hidden progression route into a search-oriented hub without duplicating child walkthroughs."
+      },
+      {
+        "action": "CONTENT_OPTIMIZE",
+        "primaryUrl": "/up-achievement-fuses/",
+        "affectedUrls": [
+          "/up-achievement-fuses/"
+        ],
+        "triggerType": "gsc_query",
+        "triggerQueries": [
+          "project pitt fuses"
+        ],
+        "triggerSummary": "GSC 24h: 18 impressions, 1 click.",
+        "changeSummary": "APIMart refresh: landmark-based fuse locations (teal upper structure, grated platform, center-right beams), UP?, 1.0.6 spawn recovery, 200kg handoff.",
+        "reason": "Tighten fuse-location SERP copy toward project pitt fuses query cluster."
+      }
+    ]
+  }
+}

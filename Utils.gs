@@ -377,12 +377,12 @@ function ensureTrailingSlash_(url) {
 function pagePathFromUrl_(pageUrl) {
   var raw = String(pageUrl || '').trim();
   if (!raw) return '';
-  try {
-    var u = new URL(raw);
-    return u.pathname || '/';
-  } catch (e) {
-    return raw;
-  }
+  // Apps Script V8 does not consistently expose the browser's global URL
+  // constructor. Parse the URL path directly so Sheet snapshots never fall
+  // back to values such as "/https://example.com/page".
+  var match = raw.match(/^https?:\/\/[^\/?#]+(\/[^?#]*)?(?:[?#].*)?$/i);
+  if (match) return match[1] || '/';
+  return raw;
 }
 
 function defaultSitemapUrl_(propertyUrl) {
@@ -402,4 +402,3 @@ function alertUi_(message) {
     Logger.log(text);
   }
 }
-

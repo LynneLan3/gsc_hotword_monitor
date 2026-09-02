@@ -41,6 +41,8 @@ assert(/ensureSheet_\(SHEET_NAMES\.FRESH_QUERY_MONITOR/.test(sheetSrc), 'setup c
 assert(/实时Query监控：用 GSC hourly/.test(sheetSrc), 'usage mentions bypass');
 assert(/dataState:\s*'hourly_all'/.test(searchSrc), 'hourly_all request');
 assert(/dimensions:\s*\['hour', 'query', 'page'\]/.test(searchSrc), 'hour+query+page');
+assert(/dimensions:\s*\['hour'\]/.test(searchSrc), 'hour-only site total request');
+assert(/dimensions:\s*\['hour', 'page'\]/.test(searchSrc), 'hour+page request');
 assert(/function searchAnalyticsQueryAllRows_/.test(searchSrc), 'pagination helper');
 assert(!/startRow/.test(extractFn(searchSrc, 'fetchFreshQueryPages')), 'existing fetch stays unpaged');
 assert(!/hourly_all/.test(extractFn(searchSrc, 'fetchFreshQueriesResult_')), 'daily fresh stays dataState=all');
@@ -57,9 +59,12 @@ assert(!/runDecisionEngine|rebuildEffectEvaluation|createResearchJobs/.test(fres
 assert(!/runFreshQueryMonitor/.test(decisionSrc), 'decision engine unchanged');
 
 var FRESH_QUERY_MONITOR_HEADERS = extractAssign(configSrc, 'FRESH_QUERY_MONITOR_HEADERS');
-assert(FRESH_QUERY_MONITOR_HEADERS.length === 17, '17 columns');
+assert(FRESH_QUERY_MONITOR_HEADERS.length === 20, '20 columns');
 assert(FRESH_QUERY_MONITOR_HEADERS[0] === '生成时间', 'col 生成时间');
-assert(FRESH_QUERY_MONITOR_HEADERS[16] === '数据截止小时', 'col 数据截止小时');
+assert(FRESH_QUERY_MONITOR_HEADERS[18] === '数据截止小时', 'col 数据截止小时');
+assert(FRESH_QUERY_MONITOR_HEADERS.indexOf('前24小时点击') >= 0, 'previous clicks');
+assert(FRESH_QUERY_MONITOR_HEADERS.indexOf('点击增长率') >= 0, 'click growth');
+assert(FRESH_QUERY_MONITOR_HEADERS.indexOf('Property来源') >= 0, 'property source');
 assert(FRESH_QUERY_MONITOR_HEADERS.indexOf('是否触发') >= 0, '是否触发');
 assert(FRESH_QUERY_MONITOR_HEADERS.indexOf('页面承接状态') >= 0, '页面承接状态');
 
@@ -242,16 +247,16 @@ assert(burstRow[4] === 11, 'clicks 11');
 assert(burstRow[5] === 85, 'impressions 85');
 assert(Math.abs(burstRow[6] - 11 / 85) < 1e-10, 'CTR recomputed');
 assert(Math.abs(burstRow[7] - (3.2 * 50 + 4.4 * 35) / 85) < 1e-10, 'position weighted');
-assert(burstRow[8] === 0, 'no previous window');
-assert(burstRow[10] === '是', 'new query');
-assert(burstRow[11] === '是', 'triggered');
-assert(burstRow[12].indexOf('展现≥30') >= 0, 'reason impressions');
-assert(burstRow[12].indexOf('点击≥3') >= 0, 'reason clicks');
-assert(burstRow[12].indexOf('新Query进入Top10') >= 0, 'reason new top10');
-assert(burstRow[13] === '旧页承接，观察新页切换', 'ms2 old page landing');
-assert(burstRow[14] === '继续观察', 'do not auto-create page');
-assert(burstRow[15] === '是', 'incomplete flag');
-assert(burstRow[16] === '2026-08-18T14:00:00-07:00', 'cutoff hour');
+assert(burstRow[8] === 0 && burstRow[9] === 0, 'no previous window');
+assert(burstRow[12] === '是', 'new query');
+assert(burstRow[13] === '是', 'triggered');
+assert(burstRow[14].indexOf('展现≥30') >= 0, 'reason impressions');
+assert(burstRow[14].indexOf('点击≥3') >= 0, 'reason clicks');
+assert(burstRow[14].indexOf('新Query进入Top10') >= 0, 'reason new top10');
+assert(burstRow[15] === '旧页承接，观察新页切换', 'ms2 old page landing');
+assert(burstRow[16] === '继续观察', 'do not auto-create page');
+assert(burstRow[17] === '是', 'incomplete flag');
+assert(burstRow[18] === '2026-08-18T14:00:00-07:00', 'cutoff hour');
 
 // 4) +100% growth
 var growthRows = sandbox.normalizeHourlyQueryPageRows_([
@@ -261,10 +266,10 @@ var growthRows = sandbox.normalizeHourlyQueryPageRows_([
 var growthBuilt = sandbox.buildFreshQueryMonitorRows_(growthRows, { site: mortal });
 assert(growthBuilt.triggered.length === 1, 'growth triggered');
 assert(growthBuilt.triggered[0][5] === 80, 'recent 80');
-assert(growthBuilt.triggered[0][8] === 40, 'prev 40');
-assert(growthBuilt.triggered[0][9] === 1, 'growth ratio 100%');
-assert(growthBuilt.triggered[0][10] === '否', 'not new');
-assert(growthBuilt.triggered[0][12].indexOf('展现增长≥100%') >= 0, 'growth reason');
+assert(growthBuilt.triggered[0][9] === 40, 'prev 40');
+assert(growthBuilt.triggered[0][11] === 1, 'growth ratio 100%');
+assert(growthBuilt.triggered[0][12] === '否', 'not new');
+assert(growthBuilt.triggered[0][14].indexOf('展现增长≥100%') >= 0, 'growth reason');
 
 // 5) new query Top10
 var newTopRows = sandbox.normalizeHourlyQueryPageRows_([
@@ -272,7 +277,7 @@ var newTopRows = sandbox.normalizeHourlyQueryPageRows_([
 ]);
 var newTop = sandbox.buildFreshQueryMonitorRows_(newTopRows, { site: mortal });
 assert(newTop.triggered.length === 1, 'new top10 triggered');
-assert(newTop.triggered[0][12] === '新Query进入Top10', 'only new-top10 reason');
+assert(newTop.triggered[0][14] === '新Query进入Top10', 'only new-top10 reason');
 
 // 6) below threshold
 var quietRows = sandbox.normalizeHourlyQueryPageRows_([
@@ -283,7 +288,7 @@ var quiet = sandbox.buildFreshQueryMonitorRows_(quietRows, { site: mortal, metad
 assert(quiet.all.length === 1, 'quiet query still computed');
 assert(quiet.triggered.length === 0, 'below threshold not written as trigger');
 assert(quiet.incomplete === false, 'no fake incomplete');
-assert(quiet.all[0][11] === '否', 'not triggered');
+assert(quiet.all[0][13] === '否', 'not triggered');
 
 // 7) two-page competition
 var competeRows = sandbox.normalizeHourlyQueryPageRows_([
@@ -292,16 +297,16 @@ var competeRows = sandbox.normalizeHourlyQueryPageRows_([
 ]);
 var compete = sandbox.buildFreshQueryMonitorRows_(competeRows, { site: mortal });
 assert(compete.triggered.length === 1, 'competition still burst');
-assert(compete.triggered[0][13] === '可能页面竞争', 'ms2 both pages compete');
-assert(compete.triggered[0][14] === '检查页面意图与内链', 'competition action');
+assert(compete.triggered[0][15] === '可能页面竞争', 'ms2 both pages compete');
+assert(compete.triggered[0][16] === '检查页面意图与内链', 'competition action');
 
 // 8) new page already ranking
 var newPageRows = sandbox.normalizeHourlyQueryPageRows_([
   hourRow('2026-08-18T14:00:00-07:00', SKIP_Q, NEW_PAGE, 11, 85, 3.7)
 ]);
 var newPageBuilt = sandbox.buildFreshQueryMonitorRows_(newPageRows, { site: mortal });
-assert(newPageBuilt.triggered[0][13] === '新页已承接', 'new page landing');
-assert(newPageBuilt.triggered[0][14] === '继续观察', 'keep watching new page');
+assert(newPageBuilt.triggered[0][15] === '新页已承接', 'new page landing');
+assert(newPageBuilt.triggered[0][16] === '继续观察', 'keep watching new page');
 
 // 9) hub + specific intent → maybe new page, not because of threshold alone
 var hubIntent = sandbox.classifyFreshQueryLanding_(
@@ -380,6 +385,16 @@ assert(grow12.reasonText.indexOf('展现增长≥100%') >= 0, '6→12 growth rea
 assert(grow12.reasonText.indexOf('展现≥30') < 0, '6→12 not the 30-impr rule');
 assert(grow12.reasonText.indexOf('点击≥3') < 0, '6→12 not the clicks rule');
 
+// 11) Snapshot retains Top50 plus a triggered Query that ranks outside Top50.
+var manyRows = [];
+for (var many = 0; many < 55; many++) {
+  manyRows.push(hourRow('2026-08-18T14:00:00-07:00', 'query ' + many, OLD_PAGE, 0, 29 - many / 100, 20));
+}
+manyRows.push(hourRow('2026-08-18T14:00:00-07:00', 'outside top fifty', OLD_PAGE, 3, 1, 20));
+var manyBuilt = sandbox.buildFreshQueryMonitorRows_(sandbox.normalizeHourlyQueryPageRows_(manyRows), { site: mortal });
+assert(manyBuilt.saved.length === 51, 'Top50 plus one triggered outside query');
+assert(manyBuilt.saved.some(function (row) { return row[2] === 'outside top fifty' && row[13] === '是'; }), 'triggered outside Top50 is retained');
+
 // 10) pagination helper exists and existing daily fetch unchanged
 assert(/startRow/.test(extractFn(searchSrc, 'searchAnalyticsQueryAllRows_')), 'hourly paginates');
 assert(/rowLimit \|\| FRESH_HOURLY_ROW_LIMIT/.test(extractFn(searchSrc, 'fetchHourlyQueryPagesResult_')), 'large rowLimit');
@@ -388,11 +403,11 @@ console.log(
   JSON.stringify(
     {
       burstCtr: +(11 / 85).toFixed(4),
-      burstReasons: burstRow[12],
-      oldLanding: burstRow[13],
-      competeLanding: compete.triggered[0][13],
-      newLanding: newPageBuilt.triggered[0][13],
-      growth: growthBuilt.triggered[0][9],
+      burstReasons: burstRow[14],
+      oldLanding: burstRow[15],
+      competeLanding: compete.triggered[0][15],
+      newLanding: newPageBuilt.triggered[0][15],
+      growth: growthBuilt.triggered[0][11],
       quietTriggered: quiet.triggered.length
     },
     null,

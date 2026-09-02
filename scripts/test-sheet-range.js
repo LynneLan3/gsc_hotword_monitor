@@ -34,7 +34,7 @@ function headerCount(src, varName) {
 
 var siteStatusCols = headerCount(configSrc, 'SITE_STATUS_HEADERS');
 var historyCols = headerCount(configSrc, 'DECISION_HISTORY_HEADERS');
-assert(siteStatusCols === 27, '站点状态 27 列, got ' + siteStatusCols);
+assert(siteStatusCols === 39, '站点状态 39 列, got ' + siteStatusCols);
 assert(historyCols > 26, '决策历史超过默认 26 列网格, got ' + historyCols);
 
 var gridFn = extractFn(sheetSrc, 'ensureSheetGrid_');
@@ -55,7 +55,9 @@ assert(/ensureSheetGrid_/.test(replaceFn), 'replace expands');
 assert(/existingLast - 1/.test(replaceFn), 'clear uses lastRow-1');
 assert(/1 \+ writeRows/.test(replaceFn), 'write expands rows for payload');
 
-assert(/ensureSheetGrid_\(sheet, 1, SITE_STATUS_HEADERS.length\)/.test(decisionSrc), '站点状态 header expands');
+assert(/ensureSheetHeaders_\(sheet, SITE_STATUS_HEADERS\)/.test(decisionSrc), '站点状态 header migration is additive');
+assert(/function writeDecisionSiteStatusRows_/.test(decisionSrc), '站点状态 daily writer is header addressed');
+assert(/SITE_STATUS_HEADERS\.slice\(0, 27\)/.test(decisionSrc), 'daily writer owns only daily fields');
 assert(
   /ensureSheetGrid_\(sheet, 1, DECISION_HISTORY_HEADERS.length\)/.test(decisionSrc),
   '决策历史 header expands'

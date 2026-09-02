@@ -28,7 +28,9 @@ var SHEET_NAMES = {
   TODAY_ACTIONS: '今日行动',
   OPPORTUNITIES: '内容机会',
   DEMAND_RADAR: '需求雷达',
+  FRESH_SITE_MONITOR: '实时站点监控',
   FRESH_QUERY_MONITOR: '实时Query监控',
+  FRESH_PAGE_MONITOR: '实时Page监控',
   INTENT_OPPORTUNITIES: 'Intent机会',
   RESEARCH_JOBS: '研究任务',
   RESEARCH_REVIEW: '研究审核',
@@ -62,6 +64,9 @@ var RUNTIME_REQUIRED_SHEET_NAMES = [
   SHEET_NAMES.TODAY_ACTIONS,
   SHEET_NAMES.OPPORTUNITIES,
   SHEET_NAMES.DEMAND_RADAR,
+  SHEET_NAMES.FRESH_SITE_MONITOR,
+  SHEET_NAMES.FRESH_QUERY_MONITOR,
+  SHEET_NAMES.FRESH_PAGE_MONITOR,
   SHEET_NAMES.RESEARCH_JOBS,
   SHEET_NAMES.RESEARCH_REVIEW,
   SHEET_NAMES.DEVELOPMENT_TASKS,
@@ -87,7 +92,9 @@ var SHEET_UI_ORDER = [
   SHEET_NAMES.SNAPSHOT,
   SHEET_NAMES.OPPORTUNITIES,
   SHEET_NAMES.DEMAND_RADAR,
+  SHEET_NAMES.FRESH_SITE_MONITOR,
   SHEET_NAMES.FRESH_QUERY_MONITOR,
+  SHEET_NAMES.FRESH_PAGE_MONITOR,
   SHEET_NAMES.INTENT_OPPORTUNITIES,
   SHEET_NAMES.RESEARCH_JOBS,
   SHEET_NAMES.RESEARCH_REVIEW,
@@ -140,7 +147,10 @@ var SHEET_UI_HIDDEN = [SHEET_NAMES.PAGE_OPPORTUNITIES, SHEET_NAMES.EARLY_FOLLOWU
 
 // site_id is an additive cross-system reference. Keep legacy columns first so
 // existing 5-column 站点配置 rows remain readable without migration.
-var SITE_HEADERS = ['站点名称', 'Property URL', 'Sitemap URL', 'Day0', 'Enabled', 'site_id'];
+var SITE_HEADERS = [
+  '站点名称', 'Property URL', 'Sitemap URL', 'Day0', 'Enabled', 'site_id',
+  'Realtime Property URLs'
+];
 var SNAPSHOT_HEADERS = [
   'RunDate', 'LatestGSCDataDate', 'Site', 'PropertyURL', 'Day',
   'SitemapURLCount', 'IndexedURLCount', 'IndexRate',
@@ -178,7 +188,9 @@ var FRESH_QUERY_MONITOR_HEADERS = [
   '近24小时展现',
   '近24小时CTR',
   '近24小时平均排名',
+  '前24小时点击',
   '前24小时展现',
+  '点击增长率',
   '展现增长率',
   '是否新搜索词',
   '是否触发',
@@ -186,7 +198,23 @@ var FRESH_QUERY_MONITOR_HEADERS = [
   '页面承接状态',
   '建议动作',
   '数据是否未完全',
-  '数据截止小时'
+  '数据截止小时',
+  'Property来源'
+];
+
+/** rolling 24h Site 总量只来自 hourly 无维度请求，绝不由 Query 行求和。 */
+var FRESH_SITE_MONITOR_HEADERS = [
+  '生成时间', '站点',
+  '近24小时点击', '近24小时展现', '近24小时CTR', '近24小时平均排名',
+  '前24小时点击', '前24小时展现', '点击增长率', '展现增长率',
+  '数据截止小时', '数据是否未完全', 'Property来源'
+];
+
+var FRESH_PAGE_MONITOR_HEADERS = [
+  '生成时间', '站点', '页面URL', '页面路径',
+  '近24小时点击', '近24小时展现', '近24小时CTR', '近24小时平均排名',
+  '前24小时点击', '前24小时展现', '展现增长率',
+  '数据截止小时', '数据是否未完全', 'Property来源'
 ];
 
 /** Query Cluster → Page Hotspot → Action 的 M0 聚合输出。 */
@@ -1446,6 +1474,10 @@ var FRESH_QUERY_MONITOR_V1 = {
   COMPETING_PAGE_MIN_IMPRESSIONS: 10,
   COMPETING_PAGE_MIN_SHARE: 0.2
 };
+
+/** Explicit migration observation pair; other Sites fall back to Property URL. */
+var HALLOWEEN_REALTIME_PROPERTY_URLS =
+  'https://www.halloweengameguide.wiki/|https://halloween-the-game-guide.vercel.app/';
 
 /**
  * Mortal Shell II skip-prologue 承接观察：按 intent + URL path，不写死曝光/点击。

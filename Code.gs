@@ -26,7 +26,6 @@ function onOpen() {
     .addItem('刷新需求雷达', 'refreshDemandRadar')
     .addItem('运行实时Query监控', 'runFreshQueryMonitor')
     .addItem('创建需求发现任务', 'createDemandDiscoveryJobs')
-    .addItem('创建每日 GAME_WIDE 发现任务', 'enqueueDailyGameWideDiscovery')
     .addItem('创建搜索需求任务', 'createSearchDemandJobs')
     .addItem('创建研究任务', 'createResearchJobs')
     .addItem('重置并创建研究任务', 'resetAndCreateResearchJobs')
@@ -49,6 +48,17 @@ function onOpen() {
 function setup() {
   setupSheets();
   SpreadsheetApp.getUi().alert('初始化完成。请在「站点配置」填写各站 Day0（可选），然后运行 testGscAccess / runDaily。');
+}
+
+/**
+ * Shared guard for manual daily/finalizer/index entry points.
+ * The project is container-bound, so an active Spreadsheet is the only
+ * prerequisite these flows require before their own sheet setup/reads.
+ */
+function assertRuntimePrerequisites_() {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  if (!ss) throw new Error('No active spreadsheet');
+  return ss;
 }
 
 /**
@@ -228,7 +238,6 @@ function runDailyFinalizerUnlocked_(sites, runDate) {
     runDecisionEngine();
     runContentOpportunityEngine();
     refreshDemandRadar_(sites, runDate);
-    enqueueDailyGameWideDiscovery_(sites, runDate);
     refreshUnifiedActionQueue_(runDate);
     syncDevelopmentTasksFromApprovedDecisions();
     refreshImplementationHandoffs_();

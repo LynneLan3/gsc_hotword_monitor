@@ -1,0 +1,50 @@
+{
+  "schemaVersion": "hotword-pending-receipt-v1",
+  "status": "recorded",
+  "ledgerStatus": "DEPLOYED_LEDGER_RECORDED",
+  "batchId": "sucker-for-love-crush-landing|g024-formal-content|afbca75",
+  "siteId": "sucker-for-love-crush-landing",
+  "sourceReceiptPath": "/tmp/crushlanding-publish-receipt.json",
+  "pendingSince": "2026-09-02T00:36:33.924Z",
+  "lastAttemptAt": "2026-09-02T00:43:41.205Z",
+  "lastAttemptError": "",
+  "recordedAt": "2026-09-02T00:43:41.205Z",
+  "interventionIds": [
+    "2026-09-02-sucker-for-love-crush-landing-content-expand-001"
+  ],
+  "baselineDataDates": [],
+  "interventionKeys": [
+    "sucker-for-love-crush-landing|g024-formal-content|afbca75|sucker-for-love-crush-landing|/|CONTENT_EXPAND|"
+  ],
+  "receipt": {
+    "schemaVersion": "hotword-publish-receipt-v1",
+    "common": {
+      "site": "Sucker for Love: Crush Landing Guide",
+      "siteId": "sucker-for-love-crush-landing",
+      "game": "Sucker for Love: Crush Landing",
+      "batchId": "sucker-for-love-crush-landing|g024-formal-content|afbca75",
+      "productionUrl": "https://crushlanding.wiki/",
+      "commitSha": "afbca75e99bb357840db5034637c55171058b413",
+      "deploymentUrl": "https://sucker-for-love-crush-landing-m9a8bzrg1-lynnelan3s-projects.vercel.app",
+      "deployedAt": "2026-09-02T08:35:40.000Z",
+      "attributionMode": "OBSERVATIONAL_ONLY"
+    },
+    "interventions": [
+      {
+        "action": "CONTENT_EXPAND",
+        "primaryUrl": "https://crushlanding.wiki/",
+        "affectedUrls": [
+          "https://crushlanding.wiki/",
+          "https://crushlanding.wiki/guides/",
+          "https://crushlanding.wiki/guides/puzzles-progression/",
+          "https://crushlanding.wiki/guides/keep-hheily-alive/",
+          "https://crushlanding.wiki/guides/puzzles-progression/how-to-feed-hheily/",
+          "https://crushlanding.wiki/achievements/",
+          "https://crushlanding.wiki/guides/achievements/"
+        ],
+        "reason": "Publish G024 full-release content, official game information, controlled media, and standard search/runtime fixes.",
+        "triggerType": "manual"
+      }
+    ]
+  }
+}
