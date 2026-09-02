@@ -1,0 +1,74 @@
+{
+  "schemaVersion": "deployment-receipt-v1",
+  "receiptKey": "mortal-shell-ii|hotfix-3-week1-platform-crash|8820274",
+  "interventionId": "receipt-mortal-shell-ii|hotfix-3-week1-platform-crash|8820274",
+  "siteId": "mortal-shell-ii",
+  "siteName": "Mortal Shell II",
+  "batchId": "mortal-shell-ii|hotfix-3-week1-platform-crash|8820274",
+  "commitSHA": "a8a6216",
+  "deploymentURL": "https://mortal-shell-a3bmhqgce-lynnelan3s-projects.vercel.app",
+  "productionURL": "https://mortalshell2guide.com",
+  "productionDeployedAt": "2026-09-02T06:42:25.000Z",
+  "lifecyclePhase": "PUBLISHED",
+  "action": "CONTENT_EXPANSION",
+  "reason": "Hotfix 3 PC status on Updates hub, Week 1 console rollout refresh, and append-only crash/performance intent capture on crashing-pc.",
+  "sourceRefs": [
+    "content-jobs/hotfix-3-crash-status/research.md",
+    "content-jobs/week-1-platform-hotfix3/research.md",
+    "src/config/updates.ts",
+    "commit:a8a6216",
+    "deploy:https://mortal-shell-a3bmhqgce-lynnelan3s-projects.vercel.app"
+  ],
+  "affectedPages": [
+    {
+      "path": "/mortal-shell-ii/updates/",
+      "pageRole": "EXISTING_PAGE_UPDATE",
+      "action": "UPDATE_PAGE",
+      "primaryURL": "https://mortalshell2guide.com/mortal-shell-ii/updates/",
+      "triggerType": "patch_status",
+      "triggerQueries": ["mortal shell 2 hot fix"],
+      "triggerSummary": "Updates hub lists Hotfix 3 (Sept 1 PC) with link to crash guide.",
+      "sourceRefs": ["src/config/updates.ts"],
+      "reason": "Hotfix 3 card added to Updates hub; Week 1 platform status refreshed."
+    },
+    {
+      "path": "/mortal-shell-ii/updates/week-1-update/",
+      "pageRole": "EXISTING_PAGE_UPDATE",
+      "action": "UPDATE_PAGE",
+      "primaryURL": "https://mortalshell2guide.com/mortal-shell-ii/updates/week-1-update/",
+      "triggerType": "platform_rollout",
+      "triggerQueries": [],
+      "triggerSummary": "Platform availability block: PC live, PS5 live Sept 1, Xbox delayed.",
+      "sourceRefs": ["content-jobs/week-1-platform-hotfix3/research.md"],
+      "reason": "Week 1 console rollout status updated; Hotfix 3 cross-link in performance section."
+    },
+    {
+      "path": "/mortal-shell-ii/crashing-pc/",
+      "pageRole": "EXISTING_PAGE_UPDATE",
+      "action": "UPDATE_PAGE",
+      "primaryURL": "https://mortalshell2guide.com/mortal-shell-ii/crashing-pc/",
+      "triggerType": "gsc_crash_intent",
+      "triggerQueries": [
+        "mortal shell 2 keep crashing",
+        "mortal shell 2 freezing",
+        "mortal shell 2 crashing on loading",
+        "mortal shell 2 couldn't start",
+        "mortal shell 2 pc crashes"
+      ],
+      "triggerSummary": "After Hotfix 3 section captures post-patch crash, freeze, loading, and performance queries.",
+      "sourceRefs": ["content-jobs/hotfix-3-crash-status/research.md"],
+      "reason": "Append-only Hotfix 3 status, official vs unconfirmed fixes, and post-patch troubleshooting order."
+    },
+    {
+      "path": "/mortal-shell-ii/faded-citadel/",
+      "pageRole": "EXISTING_PAGE_UPDATE",
+      "action": "UPDATE_PAGE",
+      "primaryURL": "https://mortalshell2guide.com/mortal-shell-ii/faded-citadel/",
+      "triggerType": "gsc_location_intent",
+      "triggerQueries": ["citadel annex"],
+      "triggerSummary": "Citadel Annex section notes Hotfix 3 giant-spider traversal fix on PC.",
+      "sourceRefs": ["content-jobs/hotfix-3-crash-status/research.md"],
+      "reason": "One-line current version note for Citadel Annex traversal fix."
+    }
+  ]
+}
