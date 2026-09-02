@@ -1617,6 +1617,60 @@ function updateAgent64CanonicalDomainConfig() {
 }
 
 /**
+ * 一次性：注册 Sucker for Love: Crush Landing 到「站点配置」并回读核对。
+ * 以 site_id 为稳定键，重复执行只更新同一行，不追加重复站点。
+ */
+function registerSuckerForLoveCrushLandingSite() {
+  var SITE_ID = 'sucker-for-love-crush-landing';
+  var SITE_NAME = 'Sucker for Love: Crush Landing Guide';
+  var PROPERTY_URL = 'https://crushlanding.wiki/';
+  var SITEMAP_URL = 'https://crushlanding.wiki/sitemap-index.xml';
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  if (!ss) throw new Error('No active spreadsheet. Open the bound Sheet and run from editor/webapp.');
+  var sheet = ss.getSheetByName(SHEET_NAMES.SITES);
+  if (!sheet) throw new Error('找不到工作表：' + SHEET_NAMES.SITES);
+
+  var lastRow = sheet.getLastRow();
+  var values = lastRow >= 2
+    ? sheet.getRange(2, 1, lastRow - 1, SITE_HEADERS.length).getValues()
+    : [];
+  var rowIndex = -1;
+  for (var i = 0; i < values.length; i++) {
+    var existingId = String(values[i][5] || '').trim();
+    var existingName = String(values[i][0] || '').trim();
+    var existingProperty = String(values[i][1] || '').trim().replace(/\/+$/, '');
+    if (existingId === SITE_ID || existingName === SITE_NAME || existingProperty === PROPERTY_URL.replace(/\/+$/, '')) {
+      rowIndex = i + 2;
+      break;
+    }
+  }
+
+  var row = [SITE_NAME, PROPERTY_URL, SITEMAP_URL, '', true, SITE_ID];
+  if (rowIndex < 0) {
+    rowIndex = Math.max(lastRow + 1, 2);
+    sheet.getRange(rowIndex, 1, 1, SITE_HEADERS.length).setValues([row]);
+    sheet.getRange(rowIndex, 5).insertCheckboxes();
+  } else {
+    sheet.getRange(rowIndex, 1, 1, SITE_HEADERS.length).setValues([row]);
+    sheet.getRange(rowIndex, 5).insertCheckboxes();
+  }
+  SpreadsheetApp.flush();
+  var readBack = sheet.getRange(rowIndex, 1, 1, SITE_HEADERS.length).getValues()[0];
+  var result = {
+    action: values.length && rowIndex <= lastRow ? 'UPDATE_OR_REPAIR' : 'APPEND',
+    row: rowIndex,
+    siteName: String(readBack[0] || ''),
+    propertyUrl: String(readBack[1] || ''),
+    sitemapUrl: String(readBack[2] || ''),
+    day0: toDateStr_(readBack[3]),
+    enabled: readBack[4],
+    siteId: String(readBack[5] || '')
+  };
+  Logger.log(JSON.stringify(result));
+  return result;
+}
+
+/**
  * 回读 Agent 64 短域名配置、近期日志，以及今日 Query 行数（用于幂等核对）。
  * 只读：不改「站点配置」、不改写 2026-08-14 长域名历史快照。
  */
