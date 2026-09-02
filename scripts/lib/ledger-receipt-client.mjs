@@ -303,11 +303,34 @@ export async function persistAndSubmitDeploymentReceipt(receipt, options = {}) {
 }
 
 export async function finalizeProductionReceiptWriteback(receipt, options = {}) {
-	const deploymentReceipt = receipt?.schemaVersion === DEPLOYMENT_RECEIPT_SCHEMA
-		? receipt
-		: buildDeploymentReceiptFromPublishReceipt(receipt);
+	const publishReceipt = receipt?.schemaVersion === DEPLOYMENT_RECEIPT_SCHEMA ? null : receipt;
+	const deploymentReceipt = publishReceipt
+		? buildDeploymentReceiptFromPublishReceipt(publishReceipt)
+		: receipt;
+	let pending = null;
+	if (publishReceipt) {
+		pending = savePendingReceipt(publishReceipt, {
+			rootDir: options.rootDir,
+			sourceReceiptPath: options.sourceReceiptPath,
+			ledgerStatus: DEPLOYED_LEDGER_STATUS.PENDING,
+		});
+	}
 	const current = await persistAndSubmitDeploymentReceipt(deploymentReceipt, options);
-	return { current, deploymentReceipt };
+	if (pending) {
+		if (current.ok) {
+			markPendingRecorded(pending.path, {
+				recordedAt: new Date().toISOString(),
+				interventionIds: [current.summary?.interventionId || current.response?.interventionId].filter(Boolean),
+				baselineDataDates: current.summary?.baselineDataDate ? [current.summary.baselineDataDate] : [],
+			});
+		} else {
+			markPendingAttempt(pending.path, {
+				ledgerStatus: current.status || DEPLOYED_LEDGER_STATUS.PENDING,
+				error: current.error || current.output,
+			});
+		}
+	}
+	return { current, deploymentReceipt, pendingPath: pending?.path || '' };
 }
 
 /** @deprecated legacy publish-receipt writer; canonical path is ingestDeploymentReceipt */

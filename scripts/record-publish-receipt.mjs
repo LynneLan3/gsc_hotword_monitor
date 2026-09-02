@@ -29,8 +29,21 @@ try {
 
 const preflight = await preflightClaspCredentials();
 if (!preflight.ok) {
+	if (receipt?.schemaVersion !== 'deployment-receipt-v1') {
+		try {
+			const { savePendingReceipt } = await import('./lib/ledger-receipt-store.mjs');
+			const saved = savePendingReceipt(receipt, {
+				sourceReceiptPath: path.resolve(receiptPath),
+				ledgerStatus: 'DEPLOYED_LEDGER_PENDING',
+				lastAttemptError: `${preflight.reason}: ${preflight.message}`,
+			});
+			console.error(`pending receipt saved: ${saved.path}`);
+		} catch (saveError) {
+			console.error(`could not save pending receipt: ${saveError.message}`);
+		}
+	}
 	console.error(`${preflight.action} ${preflight.reason}: ${preflight.message}`);
-	console.error('retry with: node scripts/record-deployment-receipt.mjs <receipt.json>');
+	console.error('retry with: node scripts/record-publish-receipt.mjs <receipt.json>');
 	process.exit(EXIT.WRITEBACK_PENDING);
 }
 
