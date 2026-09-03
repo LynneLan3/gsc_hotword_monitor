@@ -1637,7 +1637,7 @@ function getMetricGuideRows_() {
       'percent_(IndexedURLCount, SitemapURLCount)；sitemap=0 时为空',
       '粗略观察已检查 URL 的收录比例',
       '是（CHECK_INDEX；INDEX_RATE_WARNING）',
-      'INDEX_RATE_WARNING 默认 0.5（50%）：低于则可能优先 CHECK_INDEX',
+      'INDEX_RATE_WARNING 默认 0.5（50%）：仅在 IndexedURLCount 与 sitemap 分母均已知、能计算 IndexRate 时比较；null/无历史不得参与 < 50% 判断',
       '热词站项目当前实验参数（非 Google 官方异常线）',
       '实验中',
       '50% 不是 Google 官方异常标准，只是本项目实验阈值。'
@@ -1842,7 +1842,7 @@ function getMetricGuideRows_() {
       '今日行动 / 站点状态',
       '实验规则',
       'Decision Engine',
-      'CHECK_INDEX：Day≥7 且索引未知/不足/IndexRate 低于警告，且未达 ARCHIVE。ARCHIVE：Day≥14 且 7d曝光≤10 且 Guide=0。WAIT：证据不足时的默认动作（通常不进今日行动）',
+      'CHECK_INDEX：Day≥7 且 IndexedURLCount 与 sitemap 分母已知、能计算 IndexRate、且 IndexRate 低于警告；或索引审计完全缺失且 formal+realtime 搜索可见性均为 0。null/无历史不得当作 IndexRate < 50%。未达 ARCHIVE。ARCHIVE：Day≥14 且 7d曝光≤10 且 Guide=0。WAIT：证据不足时的默认动作（通常不进今日行动）',
       '索引排查 / 归档候选 / 继续观察',
       '是',
       '见 INDEX_* / ARCHIVE_* 规则配置',

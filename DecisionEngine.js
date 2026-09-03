@@ -26,6 +26,7 @@ function runDecisionEngine() {
   var snapshotBySite = loadLatestSnapshotBySite_();
   var actionHistory = loadTodayActionHistory_();
   var contentUpdateRows = loadContentUpdateRows_();
+  var realtimeBySite = loadSiteStatusRealtimeBySite_();
 
   var statusRows = [];
   var actionRows = [];
@@ -43,6 +44,7 @@ function runDecisionEngine() {
       queryPageBySite[site.name] || [],
       snapshotBySite[site.name] || null
     );
+    applyRealtimeSignalsToMetrics_(metrics, realtimeBySite[site.name]);
     var scores = computeDomainScores_(metrics, rules);
     var decision = decideRecommendedAction_(metrics, scores, rules);
     var reason = appendDataThrough_(
@@ -728,15 +730,66 @@ function passesContentOptimizeGate_(metrics, rules) {
   return guideOk || clickOk;
 }
 
+function numericMetric_(value) {
+  var n = Number(value);
+  return isNaN(n) ? 0 : n;
+}
+
+function isIndexAuditKnown_(metrics) {
+  if (!metrics) return false;
+  var indexed = metrics.indexedCount;
+  return indexed !== '' && indexed !== null && indexed !== undefined;
+}
+
+function isIndexRateComputable_(metrics) {
+  if (!isIndexAuditKnown_(metrics)) return false;
+  var sitemap = Number(metrics.sitemapCount);
+  if (!isFinite(sitemap) || sitemap <= 0) return false;
+  var rate = metrics.indexRate;
+  if (rate === '' || rate === null || rate === undefined) return false;
+  if (typeof rate === 'number' && isNaN(rate)) return false;
+  return true;
+}
+
+function hasFormalSearchVisibility_(metrics) {
+  return numericMetric_(metrics.impressions7d) > 0
+    || numericMetric_(metrics.clicks7d) > 0
+    || numericMetric_(metrics.impressions24h) > 0
+    || numericMetric_(metrics.queryCount7d) > 0
+    || numericMetric_(metrics.guideQueryCount7d) > 0
+    || numericMetric_(metrics.top50QueryCount) > 0
+    || numericMetric_(metrics.top30QueryCount) > 0
+    || numericMetric_(metrics.top20QueryCount) > 0;
+}
+
+function hasRealtimeSearchVisibility_(metrics) {
+  return numericMetric_(metrics.realtimeImpressions24h) > 0
+    || numericMetric_(metrics.realtimeClicks24h) > 0
+    || numericMetric_(metrics.realtimeGuideQueries) > 0
+    || numericMetric_(metrics.realtimeTop10Queries) > 0
+    || numericMetric_(metrics.realtimeTop20Queries) > 0
+    || numericMetric_(metrics.realtimeIntentClusters) > 0;
+}
+
+/**
+ * Rate-based CHECK_INDEX only when Day>=INDEX_CHECK_DAY, IndexedURLCount is known,
+ * sitemap denominator is known, IndexRate is computable, and IndexRate < warning.
+ * null / missing / no-history index data must not be treated as IndexRate < 50%.
+ * Fallback: Day>=7, index audit completely unavailable, and both formal and
+ * realtime search visibility are 0.
+ */
 function shouldCheckIndex_(dayNum, metrics, rules) {
   if (dayNum === null || dayNum < rules.INDEX_CHECK_DAY) return false;
-  var indexUnknown = metrics.indexedCount === '' || metrics.indexedCount === null;
-  if (indexUnknown) return true;
-  if (metrics.indexedCount < rules.DOMAIN_MIN_INDEXED_URLS) return true;
+  if (isIndexRateComputable_(metrics) && metrics.indexRate < rules.INDEX_RATE_WARNING) {
+    return true;
+  }
+  if (isIndexAuditKnown_(metrics) && metrics.indexedCount < rules.DOMAIN_MIN_INDEXED_URLS) {
+    return true;
+  }
   if (
-    metrics.sitemapCount > 0 &&
-    metrics.indexRate !== '' &&
-    metrics.indexRate < rules.INDEX_RATE_WARNING
+    !isIndexAuditKnown_(metrics)
+    && !hasFormalSearchVisibility_(metrics)
+    && !hasRealtimeSearchVisibility_(metrics)
   ) {
     return true;
   }
@@ -767,44 +820,52 @@ function countDomainGate_(metrics, rules) {
 }
 
 function buildDecisionReason_(metrics, scores, decision, rules) {
+  var reason = '';
   if (decision.fastTrack) {
-    return (
+    reason = (
       'Fast Track：24h impressions ' + metrics.impressions24h +
       '；Guide Queries ' + metrics.guideQueryCount7d +
       '；Domain Score ' + scores.domainScore
     );
-  }
-
-  if (decision.action === 'CHECK_INDEX') {
-    var indexedLabel = metrics.indexedCount === '' ? '无历史' : String(metrics.indexedCount);
-    var sitemapLabel = metrics.sitemapCount || 0;
-    var rateLabel = metrics.indexRate === ''
-      ? 'n/a'
-      : Math.round(metrics.indexRate * 100) + '%';
-    return (
-      'Day ' + (metrics.day === '' || metrics.day === null ? '?' : metrics.day) +
-      '；Indexed ' + indexedLabel + '/' + sitemapLabel +
-      '；Index Rate ' + rateLabel +
-      '，低于 ' + Math.round(rules.INDEX_RATE_WARNING * 100) + '%'
-    );
-  }
-
-  if (decision.action === 'ARCHIVE') {
-    return (
+  } else if (decision.action === 'CHECK_INDEX') {
+    if (!isIndexAuditKnown_(metrics)) {
+      reason = 'Index audit unavailable + no observed search visibility';
+    } else {
+      var indexedLabel = String(metrics.indexedCount);
+      var sitemapLabel = metrics.sitemapCount || 0;
+      var rateLabel = isIndexRateComputable_(metrics)
+        ? Math.round(metrics.indexRate * 100) + '%'
+        : 'n/a';
+      reason = (
+        'Day ' + (metrics.day === '' || metrics.day === null ? '?' : metrics.day) +
+        '；Indexed ' + indexedLabel + '/' + sitemapLabel +
+        '；Index Rate ' + rateLabel
+      );
+      if (isIndexRateComputable_(metrics) && metrics.indexRate < rules.INDEX_RATE_WARNING) {
+        reason += '，低于 ' + Math.round(rules.INDEX_RATE_WARNING * 100) + '%';
+      }
+    }
+  } else if (decision.action === 'ARCHIVE') {
+    reason = (
       'Day ' + metrics.day +
       '；7d impressions ' + metrics.impressions7d +
       '；Guide Queries 0；Domain Score ' + scores.domainScore
     );
+  } else {
+    var growthText = metrics.hasGrowth ? (formatGrowth_(metrics.growth3d) + 'x') : 'n/a（数据不足）';
+    reason = (
+      '7d impressions ' + metrics.impressions7d +
+      '；3d growth ' + growthText +
+      '；Guide Queries ' + metrics.guideQueryCount7d +
+      '；Top20 Queries ' + metrics.top20QueryCount +
+      '；Domain Score ' + scores.domainScore
+    );
   }
 
-  var growthText = metrics.hasGrowth ? (formatGrowth_(metrics.growth3d) + 'x') : 'n/a（数据不足）';
-  return (
-    '7d impressions ' + metrics.impressions7d +
-    '；3d growth ' + growthText +
-    '；Guide Queries ' + metrics.guideQueryCount7d +
-    '；Top20 Queries ' + metrics.top20QueryCount +
-    '；Domain Score ' + scores.domainScore
-  );
+  if (!isIndexAuditKnown_(metrics) && decision.action !== 'CHECK_INDEX') {
+    reason += '；Index audit unavailable';
+  }
+  return reason;
 }
 
 function appendDataThrough_(reason, decisionDataDate) {
@@ -843,6 +904,68 @@ function siteStatusRow_(runDate, siteName, metrics, scores, decision, reason) {
     decision.priority,
     reason
   ];
+}
+
+function loadSiteStatusRealtimeBySite_() {
+  var out = {};
+  try {
+    var sheet = getSpreadsheet_().getSheetByName(SHEET_NAMES.SITE_STATUS);
+    if (!sheet) return out;
+    var header = ensureSheetHeaders_(sheet, SITE_STATUS_HEADERS);
+    var col = sheetHeaderIndexMap_(header);
+    if (sheet.getLastRow() < 2) return out;
+    var values = sheet.getRange(2, 1, sheet.getLastRow() - 1, header.length).getValues();
+    for (var i = 0; i < values.length; i++) {
+      var name = String(values[i][col.Site] || '').trim();
+      if (!name) continue;
+      out[name] = {
+        realtimeImpressions24h: numericMetric_(values[i][col.RealtimeImpressions24H]),
+        realtimeClicks24h: numericMetric_(values[i][col.RealtimeClicks24H]),
+        realtimeGuideQueries: numericMetric_(values[i][col.RealtimeGuideQueries]),
+        realtimeTop10Queries: numericMetric_(values[i][col.RealtimeTop10Queries]),
+        realtimeTop20Queries: numericMetric_(values[i][col.RealtimeTop20Queries]),
+        realtimeIntentClusters: numericMetric_(values[i][col.RealtimeIntentClusters])
+      };
+    }
+  } catch (e) {
+    return out;
+  }
+  return out;
+}
+
+function applyRealtimeSignalsToMetrics_(metrics, realtime) {
+  realtime = realtime || {};
+  metrics.realtimeImpressions24h = numericMetric_(
+    realtime.realtimeImpressions24h !== undefined
+      ? realtime.realtimeImpressions24h
+      : metrics.realtimeImpressions24h
+  );
+  metrics.realtimeClicks24h = numericMetric_(
+    realtime.realtimeClicks24h !== undefined
+      ? realtime.realtimeClicks24h
+      : metrics.realtimeClicks24h
+  );
+  metrics.realtimeGuideQueries = numericMetric_(
+    realtime.realtimeGuideQueries !== undefined
+      ? realtime.realtimeGuideQueries
+      : metrics.realtimeGuideQueries
+  );
+  metrics.realtimeTop10Queries = numericMetric_(
+    realtime.realtimeTop10Queries !== undefined
+      ? realtime.realtimeTop10Queries
+      : metrics.realtimeTop10Queries
+  );
+  metrics.realtimeTop20Queries = numericMetric_(
+    realtime.realtimeTop20Queries !== undefined
+      ? realtime.realtimeTop20Queries
+      : metrics.realtimeTop20Queries
+  );
+  metrics.realtimeIntentClusters = numericMetric_(
+    realtime.realtimeIntentClusters !== undefined
+      ? realtime.realtimeIntentClusters
+      : metrics.realtimeIntentClusters
+  );
+  return metrics;
 }
 
 function loadTodayActionHistory_() {
@@ -1668,6 +1791,113 @@ function debugDecisionEngineSelfCheck() {
   };
   var indexDecision = decideRecommendedAction_(indexMetrics, computeDomainScores_(indexMetrics, rules), rules);
   assert(indexDecision.action === 'CHECK_INDEX', 'Day8 低索引率应为 CHECK_INDEX');
+
+  function indexCheckMetrics_(over) {
+    var m = {
+      day: 7,
+      indexedCount: '',
+      indexRate: '',
+      sitemapCount: 0,
+      impressions24h: 0,
+      impressions7d: 0,
+      guideQueryCount7d: 0,
+      queryCount7d: 0,
+      top50QueryCount: 0,
+      top30QueryCount: 0,
+      top20QueryCount: 0,
+      clicks7d: 0,
+      hasGrowth: false,
+      growth3d: 0,
+      canExpandContent: false,
+      intentCategoryCount: 0,
+      realtimeImpressions24h: 0,
+      realtimeClicks24h: 0,
+      realtimeGuideQueries: 0,
+      realtimeTop10Queries: 0,
+      realtimeTop20Queries: 0,
+      realtimeIntentClusters: 0
+    };
+    var keys = Object.keys(over || {});
+    for (var k = 0; k < keys.length; k++) m[keys[k]] = over[keys[k]];
+    return m;
+  }
+
+  var brigandineMetrics = indexCheckMetrics_({
+    day: 7,
+    indexedCount: null,
+    indexRate: '',
+    sitemapCount: 0,
+    realtimeImpressions24h: 236,
+    realtimeClicks24h: 51,
+    realtimeGuideQueries: 7,
+    realtimeTop10Queries: 9,
+    realtimeTop20Queries: 10,
+    realtimeIntentClusters: 3
+  });
+  var brigandineScores = computeDomainScores_(brigandineMetrics, rules);
+  var brigandineDecision = decideRecommendedAction_(brigandineMetrics, brigandineScores, rules);
+  var brigandineReason = buildDecisionReason_(brigandineMetrics, brigandineScores, brigandineDecision, rules);
+  assert(brigandineDecision.action !== 'CHECK_INDEX', 'Brigandine index-null + realtime visibility 不得 CHECK_INDEX');
+  assert(brigandineDecision.stage !== 'INDEX_CHECK', 'Brigandine 不得 INDEX_CHECK');
+  assert(brigandineReason.indexOf('Index Rate n/a，低于') < 0, 'Brigandine 不得把 n/a 当成低于 50%');
+  assert(brigandineReason.indexOf('Index audit unavailable') >= 0, 'Brigandine Reason 应附加 Index audit unavailable');
+
+  var pittMetrics = indexCheckMetrics_({
+    day: 9,
+    indexedCount: '',
+    indexRate: '',
+    sitemapCount: 0,
+    impressions7d: 728,
+    clicks7d: 34,
+    realtimeImpressions24h: 198,
+    realtimeClicks24h: 12,
+    top20QueryCount: 17,
+    top50QueryCount: 17,
+    guideQueryCount7d: 5
+  });
+  var pittScores = computeDomainScores_(pittMetrics, rules);
+  var pittDecision = decideRecommendedAction_(pittMetrics, pittScores, rules);
+  var pittReason = buildDecisionReason_(pittMetrics, pittScores, pittDecision, rules);
+  assert(pittDecision.action !== 'CHECK_INDEX', 'PITT index-null + formal/realtime visibility 不得 CHECK_INDEX');
+  assert(pittDecision.stage !== 'INDEX_CHECK', 'PITT 不得 INDEX_CHECK');
+  assert(pittReason.indexOf('Index Rate n/a，低于') < 0, 'PITT 不得把 n/a 当成低于 50%');
+
+  var agefieldMetrics = indexCheckMetrics_({
+    day: 8,
+    indexedCount: 6,
+    sitemapCount: 13,
+    indexRate: 6 / 13,
+    impressions7d: 80,
+    clicks7d: 4,
+    guideQueryCount7d: 3,
+    top20QueryCount: 3,
+    top50QueryCount: 3
+  });
+  var agefieldScores = computeDomainScores_(agefieldMetrics, rules);
+  var agefieldDecision = decideRecommendedAction_(agefieldMetrics, agefieldScores, rules);
+  var agefieldReason = buildDecisionReason_(agefieldMetrics, agefieldScores, agefieldDecision, rules);
+  assert(agefieldDecision.action === 'CHECK_INDEX', '真实低 IndexRate 仍应为 CHECK_INDEX');
+  assert(agefieldDecision.stage === 'INDEX_CHECK', '真实低 IndexRate 应为 INDEX_CHECK');
+  assert(agefieldDecision.priority === 'P0', '真实低 IndexRate 应为 P0');
+  assert(agefieldReason.indexOf('低于') >= 0, '真实低 IndexRate Reason 应含低于阈值');
+  assert(agefieldReason.indexOf('Index audit unavailable') < 0, '已知 IndexRate 不得写 Index audit unavailable');
+
+  var noVisMetrics = indexCheckMetrics_({
+    day: 7,
+    indexedCount: '',
+    indexRate: '',
+    sitemapCount: 0
+  });
+  var noVisScores = computeDomainScores_(noVisMetrics, rules);
+  var noVisDecision = decideRecommendedAction_(noVisMetrics, noVisScores, rules);
+  var noVisReason = buildDecisionReason_(noVisMetrics, noVisScores, noVisDecision, rules);
+  assert(noVisDecision.action === 'CHECK_INDEX', '无索引审计且无搜索可见性仍允许 CHECK_INDEX');
+  assert(noVisDecision.stage === 'INDEX_CHECK', '无可见性兜底应为 INDEX_CHECK');
+  assert(
+    noVisReason.indexOf('Index audit unavailable + no observed search visibility') >= 0,
+    '无可见性兜底 Reason 必须写 Index audit unavailable + no observed search visibility'
+  );
+  assert(noVisReason.indexOf('Index Rate n/a，低于') < 0, '无可见性兜底不得写 Index Rate n/a，低于 50%');
 
   var archiveMetrics = {
     day: 16,
