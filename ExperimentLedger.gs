@@ -2472,6 +2472,22 @@ function repairContaminatedDeploymentBaselinesSince20260831Force() {
   return repairContaminatedDeploymentBaselinesSinceUnlocked_('2026-08-31');
 }
 
+/** Fire-and-forget: schedule unlocked repair 10s later so clasp does not wait on a long run. */
+function scheduleRepairContaminatedDeploymentBaselinesSince20260831() {
+  var triggers = ScriptApp.getProjectTriggers();
+  for (var i = 0; i < triggers.length; i++) {
+    if (triggers[i].getHandlerFunction() === 'repairContaminatedDeploymentBaselinesSince20260831Force') {
+      ScriptApp.deleteTrigger(triggers[i]);
+    }
+  }
+  ScriptApp.newTrigger('repairContaminatedDeploymentBaselinesSince20260831Force')
+    .timeBased()
+    .after(10 * 1000)
+    .create();
+  writeLog_('INFO', '', 'Scheduled repairContaminatedDeploymentBaselinesSince20260831Force in 10s');
+  return { ok: true, scheduled: true, handler: 'repairContaminatedDeploymentBaselinesSince20260831Force' };
+}
+
 function repairContaminatedDeploymentBaselinesSince_(sinceDate) {
   sinceDate = normalizeKeyDate_(sinceDate) || '2026-08-31';
   var lock = LockService.getScriptLock();
