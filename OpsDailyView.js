@@ -2,7 +2,8 @@
  * G028 P2 — 站点经营日报（展示层）
  *
  * Reads latest 经营日报历史 rows and overwrites 站点经营日报.
- * Does not recompute P1 trend / ops status. Does not wire auto-run.
+ * Does not recompute P1 trend / ops status.
+ * Auto-run: invoked via runOpsDailyPipelineSafe_ from daily/finalizer (G028 P3).
  */
 
 /**

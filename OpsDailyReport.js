@@ -11,6 +11,69 @@ function ensureOpsDailyHistorySheet_() {
 }
 
 /**
+ * G028 P3 — safe pipeline for daily/finalizer hooks.
+ * Runs P1 history then P2 view. Failures are logged and never rethrown so
+ * core GSC collection / engines remain intact.
+ * @param {string=} runDate YYYY-MM-DD
+ * @return {{ok:boolean, history:Object|null, report:Object|null, errors:Array}}
+ */
+function runOpsDailyPipelineSafe_(runDate) {
+  var dateStr = normalizeKeyDate_(runDate) || todayStr_();
+  var out = { ok: true, history: null, report: null, errors: [] };
+
+  try {
+    out.history = runOpsDailyReportHistory_(dateStr, {});
+  } catch (histErr) {
+    out.ok = false;
+    var histDetail =
+      typeof formatErrorWithStack_ === 'function'
+        ? formatErrorWithStack_(histErr)
+        : String(histErr && histErr.message ? histErr.message : histErr);
+    out.errors.push('HISTORY:' + histDetail);
+    writeLog_('WARN', '', 'OPS_DAILY_HISTORY_FAILED | ' + histDetail);
+    Logger.log('OPS_DAILY_HISTORY_FAILED | ' + histDetail);
+  }
+
+  try {
+    out.report = runOpsDailyReport_({});
+  } catch (viewErr) {
+    out.ok = false;
+    var viewDetail =
+      typeof formatErrorWithStack_ === 'function'
+        ? formatErrorWithStack_(viewErr)
+        : String(viewErr && viewErr.message ? viewErr.message : viewErr);
+    out.errors.push('REPORT:' + viewDetail);
+    writeLog_('WARN', '', 'OPS_DAILY_REPORT_FAILED | ' + viewDetail);
+    Logger.log('OPS_DAILY_REPORT_FAILED | ' + viewDetail);
+  }
+
+  if (out.ok) {
+    var actionCount =
+      out.report && out.report.overview && out.report.overview.actionCount != null
+        ? out.report.overview.actionCount
+        : out.report && out.report.actions
+          ? out.report.actions.length
+          : '';
+    var doneMsg =
+      'OPS_DAILY_PIPELINE_DONE date=' +
+      dateStr +
+      ' historyWritten=' +
+      (out.history && out.history.written != null ? out.history.written : '') +
+      ' actionCount=' +
+      actionCount;
+    writeLog_('INFO', '', doneMsg);
+    Logger.log(doneMsg);
+  } else {
+    writeLog_(
+      'WARN',
+      '',
+      'OPS_DAILY_PIPELINE_PARTIAL date=' + dateStr + ' errors=' + out.errors.length
+    );
+  }
+  return out;
+}
+
+/**
  * Menu / clasp entrypoint. Writes one history row per Enabled site for today.
  * @return {{date:string, written:number, inserted:number, updated:number, skipped:number, byStatus:Object, samples:Array}}
  */

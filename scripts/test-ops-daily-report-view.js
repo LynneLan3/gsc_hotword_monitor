@@ -31,10 +31,19 @@ assert(configSrc.indexOf('OPS_DAILY_ACTION_LIMIT') >= 0, 'action limit');
 assert(configSrc.indexOf("EXECUTE: '建议执行'") >= 0, 'judgment enum');
 assert(sheetSrc.indexOf('SHEET_NAMES.OPS_DAILY_REPORT') >= 0, 'setup ensures report sheet');
 assert(codeSrc.indexOf('runOpsDailyReport') >= 0, 'menu entry');
-assert(!/runOpsDailyReport\b/.test(extractFn(codeSrc, 'runDailyFinalizerUnlocked_')),
-  'P2 not wired into finalizer');
+assert(/runOpsDailyPipelineSafe_/.test(extractFn(codeSrc, 'runDailyFinalizerUnlocked_')),
+  'P2 reached via ops pipeline in finalizer');
 assert(viewSrc.indexOf('selectOpsDailyActions_') >= 0, 'selector present');
 assert(opsSrc.indexOf('computeOpsSiteTrendFromDaily_') >= 0, 'P1 trend helper untouched');
+assert(opsSrc.indexOf('runOpsDailyReportHistory_') >= 0 && opsSrc.indexOf('runOpsDailyReport_') >= 0,
+  'pipeline invokes P1 then P2');
+var pipelineSrc = extractFn(opsSrc, 'runOpsDailyPipelineSafe_');
+assert(pipelineSrc.indexOf('runOpsDailyReportHistory_') < pipelineSrc.indexOf('runOpsDailyReport_'),
+  'P1 before P2 in pipeline');
+assert(/OPS_DAILY_HISTORY_FAILED|OPS_DAILY_REPORT_FAILED/.test(pipelineSrc),
+  'pipeline logs step failures');
+assert(!/throw /.test(pipelineSrc.replace(/\/\*[\s\S]*?\*\//g, '')),
+  'pipeline does not rethrow');
 
 var sandbox = {
   OPS_STATUS: { GROWTH: '增长', STABLE: '稳定', DECLINE: '衰退', PAUSE: '暂停投入' },

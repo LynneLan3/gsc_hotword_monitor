@@ -126,7 +126,8 @@ function runDailyLeanUnlocked_(isContinuation) {
       appendSnapshotRow_([
         runDate, '', site.name, site.propertyUrl, '',
         '', '', '', '', '', '', '', '', '',
-        '', '', '', '🔴 需要检查', errMsg
+        '', '', '', '🔴 需要检查', errMsg,
+        site.siteId || ''
       ]);
     }
 
@@ -145,6 +146,18 @@ function runDailyLeanUnlocked_(isContinuation) {
     refreshDemandRadar_(sites, runDate);
   } catch (e) {
     writeLog_('ERROR', '', 'LEAN_DAILY_FINALIZER_FAILED | ' + String(e && e.message ? e.message : e));
+  }
+
+  try {
+    // G028 P3 — same ops pipeline as runDailyFinalizer; must not break GSC facts.
+    runOpsDailyPipelineSafe_(runDate);
+  } catch (opsError) {
+    var opsDetail =
+      typeof formatErrorWithStack_ === 'function'
+        ? formatErrorWithStack_(opsError)
+        : String(opsError && opsError.message ? opsError.message : opsError);
+    writeLog_('WARN', '', 'OPS_DAILY_PIPELINE_FAILED | ' + opsDetail);
+    Logger.log('OPS_DAILY_PIPELINE_FAILED | ' + opsDetail);
   }
 
   try {
@@ -289,7 +302,8 @@ function processSiteDailyLean_(site, runDate) {
     topPages,
     newQueriesText,
     status,
-    errors.join(' | ')
+    errors.join(' | '),
+    site.siteId || ''
   ]);
 
   writeLog_(

@@ -32,8 +32,16 @@ assert(configSrc.indexOf('OPS_TREND_MIN_WINDOW_IMPRESSIONS') >= 0, 'min window i
 assert(!/OPS_TREND_GROWTH_MIN\s*=\s*1\.2/.test(configSrc), 'old multiplier thresholds removed');
 assert(sheetSrc.indexOf('SHEET_NAMES.OPS_DAILY_HISTORY') >= 0, 'setup creates ops history');
 assert(codeSrc.indexOf('runOpsDailyReportHistory') >= 0, 'menu entry');
-assert(!/runOpsDailyReportHistory/.test(extractFn(codeSrc, 'runDailyFinalizerUnlocked_')),
-  'finalizer does not call ops daily yet');
+assert(/runOpsDailyPipelineSafe_/.test(extractFn(codeSrc, 'runDailyFinalizerUnlocked_')),
+  'finalizer calls ops daily pipeline');
+assert(
+  extractFn(codeSrc, 'runDailyFinalizerUnlocked_').indexOf('runOpsDailyPipelineSafe_') >
+    extractFn(codeSrc, 'runDailyFinalizerUnlocked_').indexOf('runGa4CentralSync_'),
+  'ops pipeline after GA4'
+);
+assert(/OPS_DAILY_PIPELINE_FAILED/.test(extractFn(codeSrc, 'runDailyFinalizerUnlocked_')),
+  'ops failure logged without rethrow into core catch');
+assert(opsSrc.indexOf('function runOpsDailyPipelineSafe_') >= 0, 'safe pipeline helper');
 assert(opsSrc.indexOf('computeOpsSiteTrendFromDaily_') >= 0, 'daily trend helper');
 assert(opsSrc.indexOf('Growth3D') < 0 || opsSrc.indexOf('never stale Growth3D') >= 0,
   'must not rely on stale Growth3D for classification');

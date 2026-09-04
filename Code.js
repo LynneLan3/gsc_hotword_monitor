@@ -268,6 +268,14 @@ function runDailyFinalizerUnlocked_(sites, runDate) {
       writeLog_('WARN', '', 'GA4_CENTRAL_SYNC_BATCH_FAILED | ' + ga4Detail);
       Logger.log('GA4_CENTRAL_SYNC_BATCH_FAILED | ' + ga4Detail);
     }
+    try {
+      // G028 P3 — P1 history then P2 view; failures logged, never block GSC.
+      runOpsDailyPipelineSafe_(runDate);
+    } catch (opsError) {
+      var opsDetail = formatErrorWithStack_(opsError);
+      writeLog_('WARN', '', 'OPS_DAILY_PIPELINE_FAILED | ' + opsDetail);
+      Logger.log('OPS_DAILY_PIPELINE_FAILED | ' + opsDetail);
+    }
     sortSheetsNewestFirst_([SHEET_NAMES.LOG]);
     setDailyRunPhase_('done');
     deleteDailyContinuationTriggers_();
@@ -1252,6 +1260,19 @@ function backfillPageDetailsForSite_(site, startDate, endDate) {
       ' | dataState=all | rowLimit=' +
       QUERY_ROW_LIMIT
   );
+}
+
+/**
+ * 只读：列出当前项目 trigger handler（生产验证用；不创建任何 trigger）。
+ * @return {string[]}
+ */
+function listProjectTriggerHandlers() {
+  var triggers = ScriptApp.getProjectTriggers();
+  var out = [];
+  for (var i = 0; i < triggers.length; i++) {
+    out.push(triggers[i].getHandlerFunction());
+  }
+  return out;
 }
 
 /**
