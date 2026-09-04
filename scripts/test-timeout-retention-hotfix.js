@@ -25,6 +25,12 @@ assert(/runDecisionEngine\(\)/.test(hotfix) && /runContentOpportunityEngine\(\)/
 ['syncFreshQueryDetails_', 'syncFreshQueryPageDetails_', 'syncFreshPageDetails_'].forEach(name => {
   assert(!new RegExp('\\b' + name + '\\s*\\(').test(lean), 'lean collector does not call ' + name);
 });
+assert(/syncLeanPageDetailsForLatestDay_/.test(lean), 'lean catches up Page明细 for latest day');
+assert(/syncLeanQueryPageDetailsForLatestDay_/.test(lean), 'lean catches up Query页面明细 for latest day');
+assert(/upsertPageDetailsForDate_/.test(hotfix), 'lean reuses page upsert helper');
+assert(/upsertQueryPageDetailsForDate_/.test(hotfix), 'lean reuses query×page upsert helper');
+assert(!/getFreshQueryDateRange_/.test(lean), 'lean does not reintroduce multi-day fresh range loop');
+assert(!/listDatesInclusive_/.test(lean), 'lean does not iterate inclusive date lists');
 assert(/handler === 'runDaily'/.test(installer), 'installer removes legacy daily trigger');
 assert(/handler === HOTFIX_DAILY_HANDLER/.test(installer), 'installer removes duplicate lean trigger');
 assert(/handler === HOTFIX_CONTINUE_HANDLER/.test(installer), 'installer removes stale continuation');

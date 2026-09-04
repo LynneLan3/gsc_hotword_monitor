@@ -45,6 +45,19 @@ function dateAdd(date, delta) {
   return d.toISOString().slice(0, 10);
 }
 
+/** Seed site-level Page / Query×Page rows for every daily date in [end-6, end]. */
+function seedDetailCoverage(ss, site, endDate, hubPath = '/') {
+  const start = dateAdd(endDate, -6);
+  for (let cursor = start; cursor <= endDate; cursor = dateAdd(cursor, 1)) {
+    ss.getSheetByName('Page明细').appendRow([
+      cursor, site, `https://pitt.example${hubPath}`, hubPath, 1, 10, 0.1, 8
+    ]);
+    ss.getSheetByName('Query页面明细').appendRow([
+      cursor, site, 'project pitt hub', `https://pitt.example${hubPath}`, hubPath, 1, 10, 0.1, 8
+    ]);
+  }
+}
+
 function makeContext(today = '2026-08-24', existing = false) {
   const headers = (name) => {
     const match = config.match(new RegExp(`var ${name}\\s*=\\s*\\[([\\s\\S]*?)\\];`));
@@ -216,6 +229,9 @@ const existing = makeContext('2026-08-24', true);
 existing.ss.getSheetByName('Page明细').appendRow(['2026-08-23', 'Project P.I.T.T.', 'https://pitt.example/', '/', 4, 38, 4 / 38, 7.03]);
 existing.ss.getSheetByName('Query页面明细').appendRow(['2026-08-23', 'Project P.I.T.T.', 'project pitt 200kg', 'https://pitt.example/', '/', 1, 7, 1 / 7, 4.9]);
 existing.ss.getSheetByName('Query页面明细').appendRow(['2026-08-23', 'Project P.I.T.T.', 'project pitt fuses', 'https://pitt.example/', '/', 1, 8, 1 / 8, 10.6]);
+// Site-level detail coverage for the baseline window is required before a real
+// zero can be recorded as EXISTING_URL_NO_GSC_TRAFFIC.
+seedDetailCoverage(existing.ss, 'Project P.I.T.T.', '2026-08-23');
 const seededContentHeaders = Object.fromEntries(existing.context.CONTENT_UPDATE_HEADERS.map((x, i) => [x, i]));
 for (const row of existing.ss.getSheetByName('内容更新记录').rows.slice(1)) {
   if (row[seededContentHeaders['页面路径']] === '/up-achievement-fuses/' || row[seededContentHeaders['页面路径']] === '/200kg-plate/') {
@@ -334,6 +350,7 @@ assert.equal(existing.ss.getSheetByName('内容更新记录').getLastRow(), befo
 // order. Values must be written by actual header name, then read back by that
 // same header map rather than by the canonical constant position.
 const persistence = makeContext('2026-08-24', true);
+seedDetailCoverage(persistence.ss, 'Project P.I.T.T.', '2026-08-23');
 const canonicalObservationHeaders = persistence.context.INTERVENTION_OBSERVATION_HEADERS.slice();
 const shuffledObservationHeaders = canonicalObservationHeaders.slice().reverse().concat('LegacyNote');
 persistence.ss.sheets['干预观察'] = new FakeSheet(shuffledObservationHeaders);
@@ -478,6 +495,7 @@ assert.equal((finalizer.match(/runInterventionObservationsUnlocked_\(/g) || []).
 // Post-deploy ingest: same-day Page rows must not downgrade CONTENT_EXPANSION new URLs
 // to EXISTING_URL_NO_GSC_TRAFFIC. Only strict pre-deploy GSC evidence marks a page existing.
 const postDeploy = makeContext('2026-09-01');
+seedDetailCoverage(postDeploy.ss, 'Project P.I.T.T.', '2026-08-23');
 postDeploy.ss.getSheetByName('Page明细').appendRow([
   '2026-09-01', 'Project P.I.T.T.', 'https://pitt.example/maps/', '/maps/', 2, 20, 0.1, 5
 ]);
@@ -528,6 +546,9 @@ assert.equal(
 
 // Receipt manifest pageRole must override post-deploy Page rows for the homepage.
 const homeRole = makeContext('2026-09-01');
+// Coverage rows must not land on the homepage under test, or the page would gain
+// window traffic and become EXISTING_URL_BASELINE instead of a proven real zero.
+seedDetailCoverage(homeRole.ss, 'Project P.I.T.T.', '2026-08-23', '/coverage-hub/');
 homeRole.ss.getSheetByName('Page明细').appendRow([
   '2026-09-01', 'Project P.I.T.T.', 'https://pitt.example/', '/', 5, 50, 0.1, 5
 ]);
@@ -560,5 +581,51 @@ const homeRoleObsHeaders = Object.fromEntries(homeRole.context.INTERVENTION_OBSE
 const homeRoleObs = homeRole.ss.getSheetByName('干预观察').rows.slice(1);
 assert.equal(homeRoleObs.length, 4);
 assert(homeRoleObs.every((r) => r[homeRoleObsHeaders.BaselineMode] === 'EXISTING_URL_NO_GSC_TRAFFIC'));
+
+// Stale/missing detail sources must never become fake zero baselines.
+const stale = makeContext('2026-09-04');
+// Daily remains current through 08-23, but Page / Query×Page stay empty → stale.
+const staleReceipt = {
+  schemaVersion: 'deployment-receipt-v1',
+  receiptKey: 'PITT-STALE-DETAIL-FIXTURE',
+  interventionId: 'PITT-STALE-DETAIL-FIXTURE',
+  siteId: 'project-p-i-t-t',
+  siteName: 'Project P.I.T.T.',
+  batchId: 'PITT-STALE',
+  productionDeployedAt: '2026-09-04T00:00:00+08:00',
+  commitSHA: 'd'.repeat(40),
+  deploymentURL: 'https://pitt-preview.vercel.app',
+  productionURL: 'https://pitt.example/',
+  releaseDate: '2026-09-04',
+  action: 'CONTENT_REFRESH',
+  affectedPages: [{
+    path: '/early-access-release-time/',
+    pageRole: 'EXISTING_PAGE_UPDATE',
+    action: 'CONTENT_REFRESH',
+    primaryURL: 'https://pitt.example/early-access-release-time/',
+    triggerType: 'gsc_ctr_intent',
+    triggerQueries: ['project pitt'],
+    triggerSummary: 'stale detail guard',
+    reason: 'must not fake zero'
+  }]
+};
+const staleLogs = [];
+stale.context.writeLog_ = (level, site, message) => {
+  staleLogs.push({ level, site, message: String(message || '') });
+};
+assert.equal(stale.context.ingestDeploymentReceipt(staleReceipt).result, 'ACCEPTED');
+const staleObsHeaders = Object.fromEntries(stale.context.INTERVENTION_OBSERVATION_HEADERS.map((x, i) => [x, i]));
+const staleObs = stale.ss.getSheetByName('干预观察').rows.slice(1);
+assert(staleObs.every((r) => r[staleObsHeaders.BaselineMode] === 'BASELINE_UNKNOWN'));
+assert(staleObs.every((r) => r[staleObsHeaders.BaselineClicks7D] === '' || r[staleObsHeaders.BaselineClicks7D] === undefined));
+assert(staleObs.every((r) => r[staleObsHeaders.BaselineImpressions7D] === '' || r[staleObsHeaders.BaselineImpressions7D] === undefined));
+assert(
+  staleLogs.some((entry) => entry.message.indexOf('BASELINE_DETAIL_SOURCE_STALE') >= 0),
+  'stale detail source must log BASELINE_DETAIL_SOURCE_STALE'
+);
+assert(/function deploymentDetailSourceReady_/.test(ledger), 'coverage guard helper exists');
+assert(/BASELINE_DETAIL_SOURCE_STALE/.test(ledger), 'stale log marker present');
+assert(/function repairContaminatedDeploymentBaselinesSince20260831/.test(ledger), 'contaminated repair entry exists');
+assert(/function repairHalloweenCtrIntentOwnershipBaseline/.test(ledger), 'Halloween repair entry exists');
 
 console.log('PASS scripts/test-deployment-receipt-v1.js');

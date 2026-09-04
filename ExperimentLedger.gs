@@ -504,6 +504,38 @@ function deploymentSiteHasSevenDayCoverage_(rows, site, endDate) {
   return Object.keys(dates).length === 7;
 }
 
+/** Distinct DataDates for a site inside the 7D window ending at endDate. */
+function deploymentSiteDatesInWindow_(rows, site, endDate) {
+  var dates = {};
+  var startDate = endDate ? addDaysStr_(endDate, -6) : '';
+  for (var i = 0; i < (rows || []).length; i++) {
+    var date = normalizeKeyDate_(rows[i][0]);
+    if (String(rows[i][1] || '').trim() !== String(site || '').trim()) continue;
+    if (!ledgerInWindow_(date, startDate, endDate)) continue;
+    dates[date] = true;
+  }
+  return dates;
+}
+
+/**
+ * Detail sources are ready for EXISTING_URL_NO_GSC_TRAFFIC only when the site's
+ * GSC日数据 window is complete AND Page明细 / Query页面明细 each have at least
+ * one row on every daily date in that same window.
+ */
+function deploymentDetailSourceReady_(dailyRows, pageRows, queryPageRows, site, endDate) {
+  if (!endDate) return false;
+  if (!deploymentSiteHasSevenDayCoverage_(dailyRows, site, endDate)) return false;
+  var dailyDates = deploymentSiteDatesInWindow_(dailyRows, site, endDate);
+  var pageDates = deploymentSiteDatesInWindow_(pageRows, site, endDate);
+  var queryDates = deploymentSiteDatesInWindow_(queryPageRows, site, endDate);
+  var keys = Object.keys(dailyDates);
+  if (keys.length < 7) return false;
+  for (var i = 0; i < keys.length; i++) {
+    if (!pageDates[keys[i]] || !queryDates[keys[i]]) return false;
+  }
+  return true;
+}
+
 function buildLedgerContentRow_(plan) {
   var fields = {
     '更新时间': plan.deployedDate,
@@ -1613,8 +1645,10 @@ function captureDeploymentBaseline_(site, primaryUrl, productionUrl, deployedDat
   }
   var pageRole = resolveDeploymentReceiptPageRole_(action, hasAnyPageEvidence, explicitPageRole);
   baseline.pageRole = pageRole;
+  var detailReady = deploymentDetailSourceReady_(dailyRows, pages, queryPages, site, end);
   var reliableExistingBaseline = hasAnyPageEvidence && hasPageTraffic &&
     deploymentHasSevenDayCoverage_(pages, site, target, end, false);
+  var hasWindowTraffic = Number(baseline.impressions || 0) > 0 || Number(baseline.clicks || 0) > 0;
   if (pageRole === DEPLOYMENT_RECEIPT_PAGE_ROLE.NEW_PAGE) {
     if (!hasAnyPageEvidence || !reliableExistingBaseline) {
       baseline.clicks = 0;
@@ -1626,15 +1660,33 @@ function captureDeploymentBaseline_(site, primaryUrl, productionUrl, deployedDat
     } else {
       baseline.mode = 'EXISTING_URL_BASELINE';
     }
-  } else if (reliableExistingBaseline) {
+  } else if (reliableExistingBaseline || (detailReady && hasWindowTraffic)) {
     baseline.mode = 'EXISTING_URL_BASELINE';
-  } else {
+  } else if (detailReady) {
+    // Detail sources cover the baseline window; this page truly has no traffic.
     baseline.clicks = 0;
     baseline.impressions = 0;
     baseline.ctr = '';
     baseline.position = '';
     baseline.queryCount = 0;
     baseline.mode = 'EXISTING_URL_NO_GSC_TRAFFIC';
+  } else {
+    // Missing/stale Page or Query×Page detail must never become a fake zero.
+    baseline.clicks = '';
+    baseline.impressions = '';
+    baseline.ctr = '';
+    baseline.position = '';
+    baseline.queryCount = '';
+    baseline.mode = 'BASELINE_UNKNOWN';
+    if (typeof writeLog_ === 'function') {
+      writeLog_(
+        'WARN',
+        site,
+        'BASELINE_DETAIL_SOURCE_STALE | path=' + target +
+          ' | baselineDataDate=' + (end || '') +
+          ' | deployedDate=' + (deployedDate || '')
+      );
+    }
   }
   if (end && !deploymentSiteHasSevenDayCoverage_(dailyRows, site, end)) {
     baseline.siteClicks = '';
@@ -2242,6 +2294,699 @@ function repairPittInterventionObservations() {
     }
   });
   return { ok: true, interventionId: interventionId, observations: expected, repaired: repaired };
+}
+
+/**
+ * One-shot gap fill after the 2026-08-31 lean hotfix dropped Page / Query×Page.
+ * Reuses existing per-site backfill helpers; does not create a new collector.
+ * Processes a small batch per execution and schedules continuation when needed.
+ */
+var DETAIL_GAP_CURSOR_PROP = 'DETAIL_GAP_BACKFILL_CURSOR_V1';
+var DETAIL_GAP_START_PROP = 'DETAIL_GAP_BACKFILL_START_V1';
+var DETAIL_GAP_SITES_PER_RUN = 3;
+
+function backfillDetailGapSince20260831() {
+  return backfillDetailGapSince_('2026-08-31', false);
+}
+
+function backfillDetailGapSince20260831Continuation_() {
+  deleteDetailGapContinuationTriggers_();
+  return backfillDetailGapSince_('2026-08-31', true);
+}
+
+function backfillDetailGapSince_(startDate, isContinuation) {
+  startDate = normalizeKeyDate_(startDate) || '2026-08-31';
+  var endDate = typeof gscTodayStr_ === 'function' ? gscTodayStr_() : todayStr_();
+  setupSheets();
+  var sites = getEnabledSites();
+  var props = PropertiesService.getScriptProperties();
+  var cursor = parseInt(props.getProperty(DETAIL_GAP_CURSOR_PROP) || '0', 10);
+  if (isNaN(cursor) || cursor < 0) cursor = 0;
+  if (!isContinuation) {
+    cursor = 0;
+    props.setProperty(DETAIL_GAP_START_PROP, startDate);
+  } else {
+    var storedStart = props.getProperty(DETAIL_GAP_START_PROP);
+    if (storedStart) startDate = storedStart;
+  }
+
+  writeLog_(
+    'INFO',
+    '',
+    'backfillDetailGap 开始 ' + startDate + ' ~ ' + endDate +
+      ' cursor=' + cursor + '/' + sites.length +
+      ' continuation=' + (isContinuation ? 'yes' : 'no')
+  );
+
+  var pageSites = 0;
+  var querySites = 0;
+  var processed = 0;
+  while (cursor < sites.length && processed < DETAIL_GAP_SITES_PER_RUN) {
+    var site = sites[cursor];
+    try {
+      backfillPageDetailsForSite_(site, startDate, endDate);
+      pageSites++;
+    } catch (e) {
+      writeLog_('ERROR', site.name, 'Page明细 gap 回填失败: ' + e.message);
+    }
+    try {
+      backfillQueryPageDetailsForSite_(site, startDate, endDate);
+      querySites++;
+    } catch (e2) {
+      writeLog_('ERROR', site.name, 'Query页面明细 gap 回填失败: ' + e2.message);
+    }
+    cursor += 1;
+    processed += 1;
+    props.setProperty(DETAIL_GAP_CURSOR_PROP, String(cursor));
+  }
+
+  if (cursor < sites.length) {
+    scheduleDetailGapContinuation_();
+    writeLog_('INFO', '', 'backfillDetailGap 分批暂停 cursor=' + cursor + '/' + sites.length);
+    return {
+      ok: true,
+      paused: true,
+      startDate: startDate,
+      endDate: endDate,
+      cursor: cursor,
+      totalSites: sites.length,
+      pageSites: pageSites,
+      querySites: querySites
+    };
+  }
+
+  deleteDetailGapContinuationTriggers_();
+  props.deleteProperty(DETAIL_GAP_CURSOR_PROP);
+  props.deleteProperty(DETAIL_GAP_START_PROP);
+  sortMonitoringSheetsNewestFirst_();
+  writeLog_('INFO', '', 'backfillDetailGap 结束 pageSites=' + pageSites + ' querySites=' + querySites);
+  return {
+    ok: true,
+    paused: false,
+    startDate: startDate,
+    endDate: endDate,
+    cursor: cursor,
+    totalSites: sites.length,
+    pageSites: pageSites,
+    querySites: querySites
+  };
+}
+
+function scheduleDetailGapContinuation_() {
+  deleteDetailGapContinuationTriggers_();
+  ScriptApp.newTrigger('backfillDetailGapSince20260831Continuation_')
+    .timeBased()
+    .after(60 * 1000)
+    .create();
+}
+
+function deleteDetailGapContinuationTriggers_() {
+  var triggers = ScriptApp.getProjectTriggers();
+  for (var i = 0; i < triggers.length; i++) {
+    if (triggers[i].getHandlerFunction() === 'backfillDetailGapSince20260831Continuation_') {
+      ScriptApp.deleteTrigger(triggers[i]);
+    }
+  }
+}
+
+/** Prefer Halloween first so receipt repair is unblocked quickly. */
+function backfillHalloweenDetailGapSince20260831() {
+  var startDate = '2026-08-31';
+  var endDate = typeof gscTodayStr_ === 'function' ? gscTodayStr_() : todayStr_();
+  setupSheets();
+  var sites = getEnabledSites().filter(function (site) {
+    return String(site.siteId || '').trim() === 'halloween-the-game' ||
+      String(site.name || '').indexOf('Halloween') >= 0;
+  });
+  if (!sites.length) return { ok: false, error: 'Halloween site not found' };
+  var site = sites[0];
+  backfillPageDetailsForSite_(site, startDate, endDate);
+  backfillQueryPageDetailsForSite_(site, startDate, endDate);
+  sortMonitoringSheetsNewestFirst_();
+  writeLog_('INFO', site.name, 'Halloween detail gap backfill done ' + startDate + '~' + endDate);
+  return { ok: true, site: site.name, startDate: startDate, endDate: endDate };
+}
+
+/**
+ * Upsert one site × one dataDate for Page + Query×Page (timeout-safe production helper).
+ * @param {string} siteIdOrName
+ * @param {string} dataDate yyyy-MM-dd
+ */
+function upsertLeanDetailsForSiteDate(siteIdOrName, dataDate) {
+  dataDate = normalizeKeyDate_(dataDate);
+  if (!dataDate) throw new Error('upsertLeanDetailsForSiteDate: dataDate required');
+  var sites = getEnabledSites();
+  var site = null;
+  var needle = String(siteIdOrName || '').trim();
+  for (var i = 0; i < sites.length; i++) {
+    if (String(sites[i].siteId || '').trim() === needle || String(sites[i].name || '').trim() === needle) {
+      site = sites[i];
+      break;
+    }
+  }
+  if (!site) throw new Error('upsertLeanDetailsForSiteDate: site not found: ' + needle);
+  var resolved = resolveAccessibleGscProperty_(site.propertyUrl);
+  var propertyUrl = resolved.ok ? resolved.propertyUrl : site.propertyUrl;
+  var pageResult = upsertPageDetailsForDate_(site.name, propertyUrl, dataDate);
+  var queryResult = upsertQueryPageDetailsForDate_(site.name, propertyUrl, dataDate);
+  return {
+    ok: true,
+    site: site.name,
+    dataDate: dataDate,
+    page: pageResult,
+    queryPage: queryResult
+  };
+}
+
+/**
+ * Recompute existing-page baselines for RECEIPT_AUTO rows deployed on/after sinceDate.
+ * Overwrites fake zero baselines; preserves NEW_URL_BASELINE; uses BASELINE_UNKNOWN when
+ * strict pre-deploy detail coverage is still insufficient.
+ */
+function repairContaminatedDeploymentBaselinesSince20260831() {
+  return repairContaminatedDeploymentBaselinesSince_('2026-08-31');
+}
+
+/** Unlocked one-shot for clasp when ScriptLock is held by a stale daily/backfill run. */
+function repairContaminatedDeploymentBaselinesSince20260831Force() {
+  return repairContaminatedDeploymentBaselinesSinceUnlocked_('2026-08-31');
+}
+
+function repairContaminatedDeploymentBaselinesSince_(sinceDate) {
+  sinceDate = normalizeKeyDate_(sinceDate) || '2026-08-31';
+  var lock = LockService.getScriptLock();
+  if (!lock.tryLock(120000)) throw new Error('repairContaminatedDeploymentBaselinesSince_: write lock busy');
+  try {
+    return repairContaminatedDeploymentBaselinesSinceUnlocked_(sinceDate);
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+function repairContaminatedDeploymentBaselinesSinceUnlocked_(sinceDate) {
+  ensureSheet_(SHEET_NAMES.CONTENT_UPDATES, CONTENT_UPDATE_HEADERS);
+  ensureContentUpdateHeader_();
+  ensureSheet_(SHEET_NAMES.INTERVENTION_OBSERVATIONS, INTERVENTION_OBSERVATION_HEADERS);
+  ensureLedgerHeader_(SHEET_NAMES.INTERVENTION_OBSERVATIONS, INTERVENTION_OBSERVATION_HEADERS);
+  ensureSheet_(SHEET_NAMES.INTERVENTION_TIMELINE, INTERVENTION_TIMELINE_HEADERS);
+  ensureLedgerHeader_(SHEET_NAMES.INTERVENTION_TIMELINE, INTERVENTION_TIMELINE_HEADERS);
+
+  var packed = loadLedgerSheetRows_(SHEET_NAMES.CONTENT_UPDATES);
+  var groups = {};
+  var idCol = packed.map.InterventionID;
+  if (idCol === undefined) return { ok: false, error: 'InterventionID missing', repairedPages: 0 };
+
+  for (var i = 0; i < packed.rows.length; i++) {
+    var row = packed.rows[i];
+    var id = String(row[idCol] || '').trim();
+    var mode = ledgerCell_(row, packed.map, 'RecordedMode');
+    if (!id || (mode && mode !== DEPLOYMENT_RECEIPT_RECORDED_MODE)) continue;
+    if (!ledgerCell_(row, packed.map, 'ProductionURL') && !ledgerCell_(row, packed.map, 'ReceiptKey')) continue;
+    var deployedDate = normalizeKeyDate_(ledgerDateCell_(row, packed.map, '更新时间')) ||
+      ledgerProductionLocalDate_(ledgerRawCell_(row, packed.map, 'ProductionDeployedAt'));
+    if (!deployedDate || deployedDate < sinceDate) continue;
+    // Skip Halloween — repaired by dedicated fallback helper.
+    if (id === 'receipt-halloween-the-game-ctr-intent-ownership-20260904') continue;
+    if (!groups[id]) groups[id] = [];
+    groups[id].push(row);
+  }
+
+  // Cache detail sources once; avoid reloading huge sheets per page.
+  var dailyRows = loadLedgerSheetRows_(SHEET_NAMES.DAILY).rows;
+  var pageRows = loadLedgerSheetRows_(SHEET_NAMES.PAGES).rows;
+  var queryPageRows = loadLedgerSheetRows_(SHEET_NAMES.QUERY_PAGES).rows;
+
+  var repairedPages = 0;
+  var repairedInterventions = 0;
+  var unknownPages = 0;
+  var realZeroPages = 0;
+  var existingPages = 0;
+  var skippedNew = 0;
+  var ids = Object.keys(groups);
+  for (var g = 0; g < ids.length; g++) {
+    var plan = planFromDeploymentContentGroup_(groups[ids[g]], packed.map);
+    if (!plan.deployedDate || !plan.pages.length) continue;
+    inheritDeploymentFrozenSiteBaseline_(plan);
+    var interventionChanged = false;
+    for (var p = 0; p < plan.pages.length; p++) {
+      var page = plan.pages[p];
+      var previous = page.baseline || {};
+      var recovered = captureDeploymentBaselineFromRows_(
+        dailyRows, pageRows, queryPageRows,
+        plan.site,
+        page.path,
+        plan.productionUrl,
+        plan.deployedDate,
+        previous.dataDate,
+        page.action || plan.action,
+        page.pageRole
+      );
+      if (recovered.pageRole === DEPLOYMENT_RECEIPT_PAGE_ROLE.NEW_PAGE &&
+          recovered.mode === 'NEW_URL_BASELINE') {
+        skippedNew++;
+        page.baseline = recovered;
+        continue;
+      }
+      if (!deploymentBaselineChanged_(previous, recovered)) {
+        page.baseline = recovered;
+        if (recovered.mode === 'EXISTING_URL_NO_GSC_TRAFFIC') realZeroPages++;
+        if (recovered.mode === 'EXISTING_URL_BASELINE') existingPages++;
+        if (recovered.mode === 'BASELINE_UNKNOWN') unknownPages++;
+        continue;
+      }
+      page.baseline = recovered;
+      interventionChanged = true;
+      repairedPages++;
+      if (recovered.mode === 'EXISTING_URL_NO_GSC_TRAFFIC') realZeroPages++;
+      if (recovered.mode === 'EXISTING_URL_BASELINE') existingPages++;
+      if (recovered.mode === 'BASELINE_UNKNOWN') unknownPages++;
+    }
+    inheritDeploymentFrozenSiteBaseline_(plan);
+    if (interventionChanged) {
+      overwriteDeploymentContentBaselineRows_(packed, groups[ids[g]], plan);
+      overwriteDeploymentObservationBaselines_(plan);
+      overwriteDeploymentTimelineEvidence_(plan);
+      repairedInterventions++;
+    }
+  }
+
+  writeLog_(
+    'INFO',
+    '',
+    'repairContaminatedDeploymentBaselines | since=' + sinceDate +
+      ' | interventions=' + repairedInterventions +
+      ' | pages=' + repairedPages +
+      ' | existing=' + existingPages +
+      ' | realZero=' + realZeroPages +
+      ' | unknown=' + unknownPages +
+      ' | skippedNew=' + skippedNew
+  );
+  return {
+    ok: true,
+    sinceDate: sinceDate,
+    repairedInterventions: repairedInterventions,
+    repairedPages: repairedPages,
+    existingPages: existingPages,
+    realZeroPages: realZeroPages,
+    unknownPages: unknownPages,
+    skippedNew: skippedNew,
+    consideredInterventions: ids.length
+  };
+}
+
+/**
+ * Same baseline rules as captureDeploymentBaseline_, but reuses already-loaded rows
+ * so bulk repair does not reload Page明细 / Query页面明细 for every page.
+ */
+function captureDeploymentBaselineFromRows_(dailyRows, pages, queryPages, site, primaryUrl, productionUrl, deployedDate, baselineDataDate, action, explicitPageRole) {
+  var requestedEnd = normalizeKeyDate_(baselineDataDate);
+  var end = '';
+  for (var i = 0; i < dailyRows.length; i++) {
+    if (String(dailyRows[i][1] || '').trim() !== site) continue;
+    var d = normalizeKeyDate_(dailyRows[i][0]);
+    if (d && d < deployedDate && d > end) end = d;
+  }
+  if (!end) {
+    var fallback = dailyRows.concat(pages).concat(queryPages);
+    for (var f = 0; f < fallback.length; f++) {
+      if (String(fallback[f][1] || '').trim() !== site) continue;
+      var fd = normalizeKeyDate_(fallback[f][0]);
+      if (fd && fd < deployedDate && fd > end) end = fd;
+    }
+  }
+  if (requestedEnd && requestedEnd < deployedDate) end = requestedEnd;
+  var metrics = computeLedgerWindowMetrics_({
+    dailyRows: dailyRows,
+    pageRows: pages,
+    queryPageRows: queryPages,
+    site: site,
+    primaryUrl: primaryUrl,
+    productionUrl: productionUrl,
+    endDate: end
+  });
+  var baseline = {
+    dataDate: end,
+    clicks: metrics.clicks,
+    impressions: metrics.impressions,
+    ctr: metrics.ctr,
+    position: metrics.position,
+    queryCount: metrics.queryCount,
+    siteClicks: metrics.siteClicks,
+    siteImpressions: metrics.siteImpressions
+  };
+  var hasPageTraffic = false;
+  var hasAnyPageEvidence = false;
+  var target = ledgerNormalizePath_(primaryUrl);
+  for (var pi = 0; pi < pages.length; pi++) {
+    var pageDate = normalizeKeyDate_(pages[pi][0]);
+    if (String(pages[pi][1] || '').trim() === site && pageDate && pageDate < deployedDate &&
+        ledgerPageMatches_(pages[pi], target)) {
+      hasPageTraffic = true;
+      hasAnyPageEvidence = true;
+      break;
+    }
+  }
+  if (!hasAnyPageEvidence) {
+    for (var q = 0; q < queryPages.length; q++) {
+      var queryDate = normalizeKeyDate_(queryPages[q][0]);
+      if (String(queryPages[q][1] || '').trim() === site && queryDate && queryDate < deployedDate &&
+          ledgerPageMatches_([queryPages[q][0], queryPages[q][1], queryPages[q][3], queryPages[q][4]], target)) {
+        hasAnyPageEvidence = true;
+        break;
+      }
+    }
+  }
+  var pageRole = resolveDeploymentReceiptPageRole_(action, hasAnyPageEvidence, explicitPageRole);
+  baseline.pageRole = pageRole;
+  var detailReady = deploymentDetailSourceReady_(dailyRows, pages, queryPages, site, end);
+  var reliableExistingBaseline = hasAnyPageEvidence && hasPageTraffic &&
+    deploymentHasSevenDayCoverage_(pages, site, target, end, false);
+  var hasWindowTraffic = Number(baseline.impressions || 0) > 0 || Number(baseline.clicks || 0) > 0;
+  if (pageRole === DEPLOYMENT_RECEIPT_PAGE_ROLE.NEW_PAGE) {
+    if (!hasAnyPageEvidence || !reliableExistingBaseline) {
+      baseline.clicks = 0;
+      baseline.impressions = 0;
+      baseline.ctr = '';
+      baseline.position = '';
+      baseline.queryCount = 0;
+      baseline.mode = 'NEW_URL_BASELINE';
+    } else {
+      baseline.mode = 'EXISTING_URL_BASELINE';
+    }
+  } else if (reliableExistingBaseline || (detailReady && hasWindowTraffic)) {
+    baseline.mode = 'EXISTING_URL_BASELINE';
+  } else if (detailReady) {
+    baseline.clicks = 0;
+    baseline.impressions = 0;
+    baseline.ctr = '';
+    baseline.position = '';
+    baseline.queryCount = 0;
+    baseline.mode = 'EXISTING_URL_NO_GSC_TRAFFIC';
+  } else {
+    baseline.clicks = '';
+    baseline.impressions = '';
+    baseline.ctr = '';
+    baseline.position = '';
+    baseline.queryCount = '';
+    baseline.mode = 'BASELINE_UNKNOWN';
+    if (typeof writeLog_ === 'function') {
+      writeLog_(
+        'WARN',
+        site,
+        'BASELINE_DETAIL_SOURCE_STALE | path=' + target +
+          ' | baselineDataDate=' + (end || '') +
+          ' | deployedDate=' + (deployedDate || '')
+      );
+    }
+  }
+  if (end && !deploymentSiteHasSevenDayCoverage_(dailyRows, site, end)) {
+    baseline.siteClicks = '';
+    baseline.siteImpressions = '';
+  }
+  return baseline;
+}
+
+function deploymentBaselineChanged_(previous, next) {
+  previous = previous || {};
+  next = next || {};
+  var fields = ['dataDate', 'clicks', 'impressions', 'ctr', 'position', 'queryCount',
+    'siteClicks', 'siteImpressions', 'mode'];
+  for (var i = 0; i < fields.length; i++) {
+    var a = previous[fields[i]];
+    var b = next[fields[i]];
+    if (ledgerBlank_(a) && ledgerBlank_(b)) continue;
+    if (String(a) !== String(b)) return true;
+  }
+  return false;
+}
+
+/** Force-write baseline metric columns on content rows (overwrites fake zeros). */
+function overwriteDeploymentContentBaselineRows_(packed, rows, plan) {
+  if (!packed || !packed.sheet || !rows || !plan || !plan.pages) return 0;
+  var repaired = 0;
+  for (var i = 0; i < rows.length; i++) {
+    var row = rows[i];
+    var path = ledgerNormalizePath_(ledgerCell_(row, packed.map, '页面路径') ||
+      ledgerCell_(row, packed.map, 'PrimaryURL'));
+    var page = null;
+    for (var p = 0; p < plan.pages.length; p++) {
+      if (plan.pages[p].path === path) { page = plan.pages[p]; break; }
+    }
+    if (!page || !page.baseline) continue;
+    var rowIndex = -1;
+    for (var r = 0; r < packed.rows.length; r++) {
+      if (packed.rows[r] === row) { rowIndex = r + 2; break; }
+    }
+    if (rowIndex < 0) continue;
+    var fields = {
+      BaselineDataDate: page.baseline.dataDate,
+      BaselinePageClicks7D: page.baseline.clicks,
+      BaselinePageImpressions7D: page.baseline.impressions,
+      BaselinePageCTR: page.baseline.ctr,
+      BaselinePagePosition: page.baseline.position,
+      BaselinePageQueryCount7D: page.baseline.queryCount,
+      BaselineSiteClicks7D: page.baseline.siteClicks,
+      BaselineSiteImpressions7D: page.baseline.siteImpressions
+    };
+    if (packed.map.BaselineMode !== undefined) fields.BaselineMode = page.baseline.mode;
+    var nextRow = ledgerRowFromFields_(packed, fields, row);
+    var changed = false;
+    for (var c = 0; c < nextRow.length; c++) {
+      if (String(nextRow[c]) !== String(row[c])) { changed = true; break; }
+    }
+    if (!changed) continue;
+    packed.sheet.getRange(rowIndex, 1, 1, packed.header.length).setValues([nextRow]);
+    packed.rows[rowIndex - 2] = nextRow;
+    repaired++;
+  }
+  return repaired;
+}
+
+/** Force-write observation baseline columns from plan pages. */
+function overwriteDeploymentObservationBaselines_(plan) {
+  var packed = loadLedgerSheetRows_(SHEET_NAMES.INTERVENTION_OBSERVATIONS);
+  var interventionCol = packed.map.InterventionID;
+  var primaryCol = packed.map.PrimaryURL;
+  if (interventionCol === undefined) return 0;
+  var pagesByPath = {};
+  for (var p = 0; p < plan.pages.length; p++) pagesByPath[plan.pages[p].path] = plan.pages[p];
+  var repaired = 0;
+  for (var i = 0; i < packed.rows.length; i++) {
+    if (String(packed.rows[i][interventionCol] || '').trim() !== plan.interventionId) continue;
+    var path = ledgerNormalizePath_(primaryCol === undefined ? '' : packed.rows[i][primaryCol]);
+    var page = pagesByPath[path];
+    if (!page || !page.baseline) continue;
+    var baseline = page.baseline;
+    var fields = {
+      BaselineDataDate: baseline.dataDate,
+      BaselineClicks7D: baseline.clicks,
+      BaselineImpressions7D: baseline.impressions,
+      BaselineCTR: baseline.ctr,
+      BaselinePosition: baseline.position,
+      BaselineQueryCount7D: baseline.queryCount,
+      BaselineSiteClicks7D: baseline.siteClicks,
+      BaselineSiteImpressions7D: baseline.siteImpressions,
+      BaselineMode: baseline.mode,
+      UpdatedAt: nowRecordedAt_()
+    };
+    var nextRow = ledgerRowFromFields_(packed, fields, packed.rows[i]);
+    var changed = false;
+    for (var c = 0; c < nextRow.length; c++) {
+      if (String(nextRow[c]) !== String(packed.rows[i][c])) { changed = true; break; }
+    }
+    if (!changed) continue;
+    packed.sheet.getRange(i + 2, 1, 1, packed.header.length).setValues([nextRow]);
+    packed.rows[i] = nextRow;
+    repaired++;
+  }
+  return repaired;
+}
+
+/** Refresh timeline 动作前证据 from recomputed page baselines. */
+function overwriteDeploymentTimelineEvidence_(plan) {
+  var packed = loadLedgerSheetRows_(SHEET_NAMES.INTERVENTION_TIMELINE);
+  var idCol = packed.map.InterventionID;
+  var evidenceCol = packed.map['动作前证据'];
+  if (idCol === undefined || evidenceCol === undefined) return false;
+  var fields = buildDeploymentTimelineFields_(plan);
+  for (var i = 0; i < packed.rows.length; i++) {
+    if (String(packed.rows[i][idCol] || '').trim() !== plan.interventionId) continue;
+    var nextRow = ledgerRowFromFields_(packed, {
+      '动作前证据': fields['动作前证据'],
+      '时间（UTC+8）': fields['时间（UTC+8）']
+    }, packed.rows[i]);
+    packed.sheet.getRange(i + 2, 1, 1, packed.header.length).setValues([nextRow]);
+    packed.rows[i] = nextRow;
+    return true;
+  }
+  return false;
+}
+
+/**
+ * Halloween CTR intent ownership receipt: prefer rebuilt GSC detail baseline;
+ * otherwise apply the frozen pre-deploy realtime snapshot (cutoff 2026-09-03T20:00:00-07:00).
+ * Never invent QueryCount.
+ */
+function repairHalloweenCtrIntentOwnershipBaseline() {
+  var lock = LockService.getScriptLock();
+  if (!lock.tryLock(15000)) throw new Error('repairHalloweenCtrIntentOwnershipBaseline: write lock busy');
+  try {
+    return repairHalloweenCtrIntentOwnershipBaselineUnlocked_();
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+function repairHalloweenCtrIntentOwnershipBaselineUnlocked_() {
+  var interventionId = 'receipt-halloween-the-game-ctr-intent-ownership-20260904';
+  var fallbackByPath = {
+    '/early-access-release-time/': {
+      clicks: 25, impressions: 2180, ctr: 0.01146788991, position: 6.957798165
+    },
+    '/standard-vs-deluxe-upgrade/': {
+      clicks: 9, impressions: 1063, ctr: 0.008466603951, position: 7.04985889
+    },
+    '/bots-private-lobbies-offline/': {
+      clicks: 12, impressions: 553, ctr: 0.02169981917, position: 6.726943942
+    }
+  };
+  var fallbackDataDate = '2026-09-03';
+
+  var packed = loadLedgerSheetRows_(SHEET_NAMES.CONTENT_UPDATES);
+  var rows = [];
+  for (var i = 0; i < packed.rows.length; i++) {
+    if (ledgerCell_(packed.rows[i], packed.map, 'InterventionID') === interventionId ||
+        ledgerCell_(packed.rows[i], packed.map, 'BatchID') ===
+          'halloween-the-game-ctr-intent-ownership-20260904') {
+      rows.push(packed.rows[i]);
+    }
+  }
+  if (!rows.length) {
+    return { ok: false, error: 'Halloween content rows not found', interventionId: interventionId };
+  }
+
+  var plan = planFromDeploymentContentGroup_(rows, packed.map);
+  plan.interventionId = interventionId;
+  inheritDeploymentFrozenSiteBaseline_(plan);
+
+  var usedFallback = [];
+  var usedGsc = [];
+  for (var p = 0; p < plan.pages.length; p++) {
+    var page = plan.pages[p];
+    var recovered = captureDeploymentBaseline_(
+      plan.site,
+      page.path,
+      plan.productionUrl,
+      plan.deployedDate,
+      fallbackDataDate,
+      page.action || plan.action,
+      page.pageRole || DEPLOYMENT_RECEIPT_PAGE_ROLE.EXISTING_PAGE_UPDATE
+    );
+    var snap = fallbackByPath[page.path];
+    var canUseGsc = recovered.mode === 'EXISTING_URL_BASELINE' &&
+      (Number(recovered.impressions || 0) > 0 || Number(recovered.clicks || 0) > 0);
+    if (canUseGsc) {
+      page.baseline = recovered;
+      usedGsc.push(page.path);
+      continue;
+    }
+    if (!snap) {
+      page.baseline = recovered;
+      continue;
+    }
+    // Frozen pre-deploy realtime snapshot fallback.
+    var queryCount = recovered.queryCount;
+    if (recovered.mode === 'BASELINE_UNKNOWN' || ledgerBlank_(queryCount)) queryCount = '';
+    page.baseline = {
+      dataDate: fallbackDataDate,
+      clicks: snap.clicks,
+      impressions: snap.impressions,
+      ctr: snap.ctr,
+      position: snap.position,
+      queryCount: queryCount,
+      siteClicks: recovered.siteClicks,
+      siteImpressions: recovered.siteImpressions,
+      mode: 'EXISTING_URL_BASELINE',
+      pageRole: DEPLOYMENT_RECEIPT_PAGE_ROLE.EXISTING_PAGE_UPDATE
+    };
+    usedFallback.push(page.path);
+  }
+  inheritDeploymentFrozenSiteBaseline_(plan);
+  overwriteDeploymentContentBaselineRows_(packed, rows, plan);
+  var obsFixed = overwriteDeploymentObservationBaselines_(plan);
+  var timelineFixed = overwriteDeploymentTimelineEvidence_(plan);
+
+  writeLog_(
+    'INFO',
+    plan.site || 'Halloween: The Game',
+    'HALLOWEEN_BASELINE_REPAIR | gsc=' + usedGsc.join(',') +
+      ' | fallback=' + usedFallback.join(',') +
+      ' | observations=' + obsFixed
+  );
+  return {
+    ok: true,
+    interventionId: interventionId,
+    pages: plan.pages.map(function (page) {
+      return {
+        path: page.path,
+        mode: page.baseline.mode,
+        dataDate: page.baseline.dataDate,
+        clicks: page.baseline.clicks,
+        impressions: page.baseline.impressions,
+        ctr: page.baseline.ctr,
+        position: page.baseline.position,
+        queryCount: page.baseline.queryCount
+      };
+    }),
+    usedGsc: usedGsc,
+    usedFallback: usedFallback,
+    observationsUpdated: obsFixed,
+    timelineFixed: timelineFixed
+  };
+}
+
+/**
+ * Production verification helper for the detail-gap / baseline fix.
+ */
+function verifyBaselineDetailFixStatus() {
+  var pageMax = latestDetailDateBySite_(SHEET_NAMES.PAGES);
+  var queryMax = latestDetailDateBySite_(SHEET_NAMES.QUERY_PAGES);
+  var dailyMax = latestDetailDateBySite_(SHEET_NAMES.DAILY);
+  var halloween = {};
+  var packed = loadLedgerSheetRows_(SHEET_NAMES.CONTENT_UPDATES);
+  for (var i = 0; i < packed.rows.length; i++) {
+    if (ledgerCell_(packed.rows[i], packed.map, 'InterventionID') !==
+        'receipt-halloween-the-game-ctr-intent-ownership-20260904') continue;
+    var path = ledgerNormalizePath_(ledgerCell_(packed.rows[i], packed.map, '页面路径') ||
+      ledgerCell_(packed.rows[i], packed.map, 'PrimaryURL'));
+    halloween[path] = {
+      dataDate: ledgerDateCell_(packed.rows[i], packed.map, 'BaselineDataDate'),
+      clicks: ledgerValue_(packed.rows[i], packed.map, 'BaselinePageClicks7D'),
+      impressions: ledgerValue_(packed.rows[i], packed.map, 'BaselinePageImpressions7D'),
+      ctr: ledgerValue_(packed.rows[i], packed.map, 'BaselinePageCTR'),
+      position: ledgerValue_(packed.rows[i], packed.map, 'BaselinePagePosition'),
+      queryCount: ledgerValue_(packed.rows[i], packed.map, 'BaselinePageQueryCount7D')
+    };
+  }
+  return {
+    ok: true,
+    pageDetailMaxBySite: pageMax,
+    queryPageDetailMaxBySite: queryMax,
+    dailyMaxBySite: dailyMax,
+    halloweenBaselines: halloween
+  };
+}
+
+function latestDetailDateBySite_(sheetName) {
+  var packed = loadLedgerSheetRows_(sheetName);
+  var out = {};
+  for (var i = 0; i < packed.rows.length; i++) {
+    var site = String(packed.rows[i][1] || '').trim();
+    var date = normalizeKeyDate_(packed.rows[i][0]);
+    if (!site || !date) continue;
+    if (!out[site] || date > out[site]) out[site] = date;
+  }
+  return out;
 }
 
 /** Daily runner entry point; no new trigger is created. */

@@ -2,8 +2,10 @@
  * GSC timeout + retention hotfix.
  *
  * Purpose:
- * - Keep the existing 6-hour runFreshQueryMonitor as the owner of Fresh Query / Query×Page / Page detail sync.
- * - Make the daily collector lightweight so one high-volume site cannot consume the whole Apps Script execution.
+ * - Keep the daily collector lightweight so one high-volume site cannot consume
+ *   the whole Apps Script execution (no multi-day FRESH_QUERY_DAYS loops).
+ * - Still catch up Page明细 / Query页面明细 for the latest available GSC day
+ *   via the existing single-day upsert helpers (prevents detail-source drift).
  * - Keep ScriptLock + cursor continuation.
  * - Keep GSC runtime logs for 30 days and archive URL Inspection history after 90 days.
  *
@@ -182,8 +184,10 @@ function runDailyLeanUnlocked_(isContinuation) {
 
 /**
  * Lightweight finalized collector.
- * IMPORTANT: no syncFreshQueryDetails_, syncFreshQueryPageDetails_ or syncFreshPageDetails_ here.
- * Those are already handled by runFreshQueryMonitor on its own schedule.
+ * IMPORTANT: no syncFreshQueryDetails_ / syncFreshQueryPageDetails_ / syncFreshPageDetails_
+ * (those do a multi-day FRESH_QUERY_DAYS loop and caused the 2026-08-31 timeout).
+ * Instead, catch up at most the latest available GSC day for Page / Query×Page
+ * via the existing single-day upsert helpers.
  */
 function processSiteDailyLean_(site, runDate) {
   var errors = [];
@@ -299,6 +303,19 @@ function processSiteDailyLean_(site, runDate) {
     } catch (e) {
       errors.push('NewQueries: ' + e.message);
     }
+
+    // Catch up Page / Query×Page for the latest GSC day only (or still-missing day).
+    // Do not reintroduce the multi-day fresh sync loop.
+    try {
+      syncLeanPageDetailsForLatestDay_(siteName, propertyUrl, latestDate);
+    } catch (e) {
+      errors.push('Page明细: ' + e.message);
+    }
+    try {
+      syncLeanQueryPageDetailsForLatestDay_(siteName, propertyUrl, latestDate);
+    } catch (e) {
+      errors.push('Query页面明细: ' + e.message);
+    }
   }
 
   var firstImpression = getKnownFirstImpressionDate_(siteName);
@@ -350,6 +367,67 @@ function processSiteDailyLean_(site, runDate) {
       ' indexed=' + (indexedCount === '' ? '无历史' : indexedCount) +
       (errors.length ? ' errors=' + errors.length : '')
   );
+}
+
+/**
+ * Ensure Page明细 has the site's latest available GSC day.
+ * Skips when that DataDate is already present. Never loops FRESH_QUERY_DAYS.
+ */
+function syncLeanPageDetailsForLatestDay_(siteName, propertyUrl, latestDate) {
+  latestDate = normalizeKeyDate_(latestDate);
+  if (!latestDate) return { skipped: true, reason: 'no-latest' };
+  if (leanDetailSheetHasSiteDate_(SHEET_NAMES.PAGES, siteName, latestDate)) {
+    writeLog_('INFO', siteName, 'Lean Page明细已有 latest=' + latestDate);
+    return { skipped: true, reason: 'already-present', dataDate: latestDate };
+  }
+  var dayResult = upsertPageDetailsForDate_(siteName, propertyUrl, latestDate);
+  writeLog_(
+    'INFO',
+    siteName,
+    'Lean Page明细补齐 latest=' + latestDate +
+      ' | apiRows=' + dayResult.apiRowCount +
+      ' | inserted=' + dayResult.inserted +
+      ' | updated=' + dayResult.updated
+  );
+  return { skipped: false, dataDate: latestDate, result: dayResult };
+}
+
+/**
+ * Ensure Query页面明细 has the site's latest available GSC day.
+ * Skips when that DataDate is already present. Never loops FRESH_QUERY_DAYS.
+ */
+function syncLeanQueryPageDetailsForLatestDay_(siteName, propertyUrl, latestDate) {
+  latestDate = normalizeKeyDate_(latestDate);
+  if (!latestDate) return { skipped: true, reason: 'no-latest' };
+  if (leanDetailSheetHasSiteDate_(SHEET_NAMES.QUERY_PAGES, siteName, latestDate)) {
+    writeLog_('INFO', siteName, 'Lean Query页面明细已有 latest=' + latestDate);
+    return { skipped: true, reason: 'already-present', dataDate: latestDate };
+  }
+  var dayResult = upsertQueryPageDetailsForDate_(siteName, propertyUrl, latestDate);
+  writeLog_(
+    'INFO',
+    siteName,
+    'Lean Query页面明细补齐 latest=' + latestDate +
+      ' | apiRows=' + dayResult.apiRowCount +
+      ' | inserted=' + dayResult.inserted +
+      ' | updated=' + dayResult.updated
+  );
+  return { skipped: false, dataDate: latestDate, result: dayResult };
+}
+
+/** True when the detail sheet already has at least one row for site+dataDate. */
+function leanDetailSheetHasSiteDate_(sheetName, siteName, dataDate) {
+  var sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(sheetName);
+  if (!sheet || sheet.getLastRow() < 2) return false;
+  var width = Math.min(sheet.getLastColumn(), 2);
+  var values = sheet.getRange(2, 1, sheet.getLastRow() - 1, width).getValues();
+  var targetSite = String(siteName || '').trim();
+  var targetDate = normalizeKeyDate_(dataDate);
+  for (var i = 0; i < values.length; i++) {
+    var rowDate = normalizeKeyDate_(values[i][0]);
+    if (rowDate === targetDate && String(values[i][1] || '').trim() === targetSite) return true;
+  }
+  return false;
 }
 
 function scheduleDailyLeanContinuation_() {
