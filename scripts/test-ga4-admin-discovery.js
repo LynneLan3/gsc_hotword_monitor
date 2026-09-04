@@ -235,6 +235,50 @@ assert(midCount === 3, 'fixture mid count');
 
 // Config snapshot includes the 8 known production MIDs
 var cfgMids = (configSrc.match(/ga4_measurement_id:\s*'G-[A-Z0-9]+'/g) || []).length;
-assert(cfgMids === 8, 'registry snapshot has 8 measurement IDs, got ' + cfgMids);
+assert(cfgMids === 19, 'registry snapshot has 19 measurement IDs, got ' + cfgMids);
+assert(
+  (configSrc.match(/ga4_property_id:\s*'\d+'/g) || []).length === 19,
+  'registry snapshot has 19 numeric property ids'
+);
+assert(configSrc.indexOf('analytics.edit') < 0, 'edit scope lives in appsscript not Config');
+assert(
+  JSON.parse(require('fs').readFileSync(path.join(root, 'appsscript.json'), 'utf8'))
+    .oauthScopes.indexOf('https://www.googleapis.com/auth/analytics.edit') >= 0,
+  'analytics.edit scope in manifest'
+);
+
+
+// Host collision resolved by known measurement id (mortal-shell case)
+var collide = matchGa4SiteBinding_(
+  {
+    siteId: 'mortal-shell-ii',
+    name: 'Mortal Shell II',
+    propertyUrl: 'https://mortalshell2guide.com/',
+    ga4PropertyId: '',
+    ga4MeasurementId: 'G-1D66T98097',
+    productionUrl: 'https://mortalshell2guide.com'
+  },
+  [
+    {
+      property_id: '529734708',
+      property_display_name: 'wrong',
+      stream_id: 's-wrong',
+      measurement_id: 'G-YCED6H0BGL',
+      default_uri: 'https://mortalshell2guide.com/',
+      match_key: normalizeGa4MatchKey_('https://mortalshell2guide.com/')
+    },
+    {
+      property_id: '550850186',
+      property_display_name: 'mortal-shell-ii',
+      stream_id: 's-right',
+      measurement_id: 'G-1D66T98097',
+      default_uri: 'https://mortalshell2guide.com/',
+      match_key: normalizeGa4MatchKey_('https://mortalshell2guide.com/')
+    }
+  ]
+);
+assert(collide.match_status === 'MATCHED', 'MID resolves host collision');
+assert(collide.ga4_property_id === '550850186', 'correct property selected');
+assert(collide.write === true, 'resolved collision writeable');
 
 console.log('test-ga4-admin-discovery: PASS');

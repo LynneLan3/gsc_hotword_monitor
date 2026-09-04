@@ -1462,6 +1462,39 @@ var GA4_TIER1_COUNTRIES_V1 = [
 ];
 var GA4_TIER1_DEFINITION_REF = 'contracts/site-data-v1/tier1-countries.v1.json';
 
+/** GA4 Admin account used for P4 identity bootstrap (create Property/Stream). */
+var GA4_BOOTSTRAP_ACCOUNT_ID = '388651947';
+
+/**
+ * Active sites confirmed NO_MATCH by discovery — bootstrap targets only.
+ * Re-check production URL before create; never invent matches.
+ */
+var GA4_BOOTSTRAP_NO_MATCH_SITE_IDS = [
+  'project-p-i-t-t',
+  'brigandine-abyss',
+  'nba-2k27',
+  'bombanana',
+  'metal-gear-solid-4-master-collection',
+  'resonance-a-plague-tale-legacy',
+  'serious-sam-shatterverse',
+  'halloween-the-game',
+  'sucker-for-love-crush-landing',
+  'zad-archery',
+  'shipshaper-falconeer-chronicles'
+];
+
+/** mortal-shell-ii conflict repair — update correct stream defaultUri only. */
+var GA4_MORTAL_SHELL_FIX = {
+  site_id: 'mortal-shell-ii',
+  property_id: '550850186',
+  stream_id: '15471726554',
+  measurement_id: 'G-1D66T98097',
+  target_default_uri: 'https://mortalshell2guide.com',
+  /** Must never be modified */
+  forbidden_property_id: '529734708',
+  forbidden_measurement_id: 'G-YCED6H0BGL'
+};
+
 /**
  * G027 P4 — Active-site identity snapshot from hotword-control-center
  * registry/sites.yaml (production_url + known measurement IDs).
@@ -1471,79 +1504,117 @@ var GA4_TIER1_DEFINITION_REF = 'contracts/site-data-v1/tier1-countries.v1.json';
 var GA4_REGISTRY_IDENTITY_V1 = {
   'agefield-high-rock-the-school': {
     production_url: 'https://agefield-high-rock-the-school.vercel.app',
-    ga4_measurement_id: 'G-018TGF2YT4'
+    ga4_measurement_id: 'G-018TGF2YT4',
+    ga4_property_id: '550893832',
+    ga4_stream_id: '15471688178'
   },
   'mortal-shell-ii': {
     production_url: 'https://mortalshell2guide.com',
-    ga4_measurement_id: 'G-1D66T98097'
+    ga4_measurement_id: 'G-1D66T98097',
+    ga4_property_id: '550850186',
+    ga4_stream_id: '15471726554'
   },
   beastlink: {
     production_url: 'https://beast-link.vercel.app',
-    ga4_measurement_id: 'G-ME3VVC6QLD'
+    ga4_measurement_id: 'G-ME3VVC6QLD',
+    ga4_property_id: '550872648',
+    ga4_stream_id: '15471700752'
   },
   'sovereign-tower': {
     production_url: 'https://sovereign-tower.vercel.app',
-    ga4_measurement_id: 'G-FCM51HDVC1'
+    ga4_measurement_id: 'G-FCM51HDVC1',
+    ga4_property_id: '550850774',
+    ga4_stream_id: '15471693822'
   },
   'approximately-up': {
     production_url: 'https://approximately-up.vercel.app',
-    ga4_measurement_id: 'G-MPK5L4KF4D'
+    ga4_measurement_id: 'G-MPK5L4KF4D',
+    ga4_property_id: '550829648',
+    ga4_stream_id: '15471736435'
   },
   'grain-rot': {
     production_url: 'https://grainrot.vercel.app',
-    ga4_measurement_id: 'G-6XGRN3QF1N'
+    ga4_measurement_id: 'G-6XGRN3QF1N',
+    ga4_property_id: '550874748',
+    ga4_stream_id: '15471726559'
   },
   'leafy-corner': {
     production_url: 'https://leafy-corner.vercel.app',
-    ga4_measurement_id: 'G-VJ4HPNTW3J'
+    ga4_measurement_id: 'G-VJ4HPNTW3J',
+    ga4_property_id: '550849626',
+    ga4_stream_id: '15471694948'
   },
   'agent-64-spies-never-die': {
     production_url: 'https://agent-64.vercel.app',
-    ga4_measurement_id: 'G-1PRF1N423J'
+    ga4_measurement_id: 'G-1PRF1N423J',
+    ga4_property_id: '550838746',
+    ga4_stream_id: '15471703678'
   },
   'project-p-i-t-t': {
     production_url: 'https://project-p-i-t-t.vercel.app',
-    ga4_measurement_id: ''
+    ga4_measurement_id: 'G-D933X3JP30',
+    ga4_property_id: '552730731',
+    ga4_stream_id: '15716130404'
   },
   'brigandine-abyss': {
     production_url: 'https://brigandine-abyss.vercel.app',
-    ga4_measurement_id: ''
+    ga4_measurement_id: 'G-MZMGBK3Z4N',
+    ga4_property_id: '552763579',
+    ga4_stream_id: '15716093280'
   },
   'nba-2k27': {
     production_url: 'https://nba-2k27-game.vercel.app',
-    ga4_measurement_id: ''
+    ga4_measurement_id: 'G-J7ZT18D2DC',
+    ga4_property_id: '552761290',
+    ga4_stream_id: '15716106884'
   },
   bombanana: {
     production_url: 'https://bombanana-guide.vercel.app',
-    ga4_measurement_id: ''
+    ga4_measurement_id: 'G-QZWQ03NWKT',
+    ga4_property_id: '552735591',
+    ga4_stream_id: '15716035844'
   },
   'metal-gear-solid-4-master-collection': {
     production_url: 'https://metal-gear-solid-4-master-collectio.vercel.app',
-    ga4_measurement_id: ''
+    ga4_measurement_id: 'G-834RPZY5J1',
+    ga4_property_id: '552737796',
+    ga4_stream_id: '15716116044'
   },
   'resonance-a-plague-tale-legacy': {
-    production_url: 'MISSING',
-    ga4_measurement_id: ''
+    production_url: 'https://resonance-a-plague-tale-legacy.vercel.app/',
+    ga4_measurement_id: 'G-RZ417V3WG3',
+    ga4_property_id: '552679525',
+    ga4_stream_id: '15716133216'
   },
   'serious-sam-shatterverse': {
     production_url: 'https://serious-sam-shatterverse.vercel.app/',
-    ga4_measurement_id: ''
+    ga4_measurement_id: 'G-5SGN750FBS',
+    ga4_property_id: '552770605',
+    ga4_stream_id: '15715968785'
   },
   'halloween-the-game': {
     production_url: 'https://halloween-the-game-guide.vercel.app/',
-    ga4_measurement_id: ''
+    ga4_measurement_id: 'G-BV89NNYS61',
+    ga4_property_id: '552735592',
+    ga4_stream_id: '15716047775'
   },
   'sucker-for-love-crush-landing': {
     production_url: 'https://crushlanding.wiki/',
-    ga4_measurement_id: ''
+    ga4_measurement_id: 'G-ER9YWC3GPJ',
+    ga4_property_id: '552738290',
+    ga4_stream_id: '15716136235'
   },
   'zad-archery': {
     production_url: 'https://zadarchery.help',
-    ga4_measurement_id: ''
+    ga4_measurement_id: 'G-7DZ7RXYT8F',
+    ga4_property_id: '552740456',
+    ga4_stream_id: '15716121880'
   },
   'shipshaper-falconeer-chronicles': {
     production_url: 'https://shipshaper-falconeer-chronicles.vercel.app/',
-    ga4_measurement_id: ''
+    ga4_measurement_id: 'G-E2WFNEP05F',
+    ga4_property_id: '552676432',
+    ga4_stream_id: '15716140798'
   }
 };
 
