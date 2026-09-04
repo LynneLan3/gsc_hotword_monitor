@@ -45,6 +45,8 @@ var SHEET_NAMES = {
   GA4_SITE_ROLLUP: 'GA4_SITE_ROLLUP',
   /** G027 P4 — GA4 identity discovery audit */
   GA4_DISCOVERY: 'GA4_DISCOVERY',
+  /** G028 P1 — per-site daily operations history (idempotent: 日期 + Site ID) */
+  OPS_DAILY_HISTORY: '经营日报历史',
   /** 旧/实验层：仅用于识别与隐藏，setup 不会创建 */
   PAGE_OPPORTUNITIES: 'PAGE_OPPORTUNITIES'
 };
@@ -106,6 +108,7 @@ var SHEET_UI_ORDER = [
   SHEET_NAMES.RESEARCH_REVIEW,
   SHEET_NAMES.SITE_STATUS,
   SHEET_NAMES.PORTFOLIO,
+  SHEET_NAMES.OPS_DAILY_HISTORY,
   SHEET_NAMES.WINNER_ASSETS,
   SHEET_NAMES.DECISION_HISTORY,
   SHEET_NAMES.DECISION_OUTCOMES,
@@ -196,6 +199,39 @@ var GA4_DISCOVERY_HEADERS = [
   'notes',
   'discovered_at'
 ];
+/**
+ * G028 P1 — 经营日报历史。
+ * Upsert key: 日期 + Site ID. Reuses snapshot / site status / realtime / content facts.
+ * Does not rebuild GSC collection. Steam gaps must not block writes.
+ */
+var OPS_DAILY_HISTORY_HEADERS = [
+  '日期',
+  'Site ID',
+  '站点',
+  '游戏阶段',
+  '点击',
+  '曝光',
+  'CTR',
+  '平均排名',
+  '7日趋势',
+  '站点状态',
+  '经营状态',
+  '主要变化',
+  '建议操作',
+  '优先级',
+  '判断原因',
+  '最近修改'
+];
+/** G028 P1 — 经营状态 enum（中文，仅允许下列值） */
+var OPS_STATUS = {
+  GROWTH: '增长',
+  STABLE: '稳定',
+  DECLINE: '衰退',
+  PAUSE: '暂停投入'
+};
+/** Formal 3d impression growth thresholds for ops status (not a score system). */
+var OPS_TREND_GROWTH_MIN = 1.2;
+var OPS_TREND_DECLINE_MAX = 0.8;
 var SNAPSHOT_HEADERS = [
   'RunDate', 'LatestGSCDataDate', 'Site', 'PropertyURL', 'Day',
   'SitemapURLCount', 'IndexedURLCount', 'IndexRate',

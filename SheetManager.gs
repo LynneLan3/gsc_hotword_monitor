@@ -631,6 +631,7 @@ function setupSheets() {
   ensureSheet_(SHEET_NAMES.SITE_STATUS, SITE_STATUS_HEADERS);
   ensureSheet_(SHEET_NAMES.PORTFOLIO, PORTFOLIO_HEADERS);
   ensurePortfolioHeader_();
+  ensureSheet_(SHEET_NAMES.OPS_DAILY_HISTORY, OPS_DAILY_HISTORY_HEADERS);
   ensureSheet_(SHEET_NAMES.WINNER_ASSETS, WINNER_ASSET_HEADERS);
   ensureWinnerAssetHeader_();
   applyWinnerAssetDecisionValidation_();
