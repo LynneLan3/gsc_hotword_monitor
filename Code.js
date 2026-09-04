@@ -18,6 +18,7 @@ function onOpen() {
     .addItem('运行决策引擎', 'runDecisionEngine')
     .addItem('重建站点经营', 'runPortfolioEngine')
     .addItem('生成经营日报历史', 'runOpsDailyReportHistory')
+    .addItem('生成站点经营日报', 'runOpsDailyReport')
     .addItem('重建内容资产候选', 'runWinnerAssetEngine')
     .addItem('处理内容资产决定', 'processWinnerAssetDecisions')
     .addItem('同步内容资产研究结果', 'syncWinnerAssetResearchResults')

@@ -47,6 +47,8 @@ var SHEET_NAMES = {
   GA4_DISCOVERY: 'GA4_DISCOVERY',
   /** G028 P1 — per-site daily operations history (idempotent: 日期 + Site ID) */
   OPS_DAILY_HISTORY: '经营日报历史',
+  /** G028 P2 — latest readable daily report view (overwrite each run) */
+  OPS_DAILY_REPORT: '站点经营日报',
   /** 旧/实验层：仅用于识别与隐藏，setup 不会创建 */
   PAGE_OPPORTUNITIES: 'PAGE_OPPORTUNITIES'
 };
@@ -97,6 +99,7 @@ var SHEET_UI_ORDER = [
   SHEET_NAMES.USAGE,
   SHEET_NAMES.METRICS,
   SHEET_NAMES.TODAY_ACTIONS,
+  SHEET_NAMES.OPS_DAILY_REPORT,
   SHEET_NAMES.SNAPSHOT,
   SHEET_NAMES.OPPORTUNITIES,
   SHEET_NAMES.DEMAND_RADAR,
@@ -239,6 +242,47 @@ var OPS_TREND_GROWTH_PCT_MIN = 25;
 var OPS_TREND_DECLINE_PCT_MAX = -25;
 var OPS_TREND_MIN_WINDOW_IMPRESSIONS = 50;
 var OPS_TREND_MIN_7D_IMPRESSIONS = 80;
+/** G028 P2 — max actionable recommendations on the daily report view */
+var OPS_DAILY_ACTION_LIMIT = 3;
+/** Min impressions for a Query/Page evidence row to support 更新/新增页面 */
+var OPS_ACTION_MIN_QUERY_IMPRESSIONS = 10;
+/** Rank band treated as “接近可提升” for update-page evidence */
+var OPS_ACTION_RANK_MIN = 4;
+var OPS_ACTION_RANK_MAX = 20;
+/** G028 P2 — 今日判断 enum */
+var OPS_JUDGMENT = {
+  EXECUTE: '建议执行',
+  WATCH: '继续观察',
+  NONE: '无需操作',
+  PAUSE: '暂停投入'
+};
+/** G028 P2 — allowed execute action labels */
+var OPS_EXECUTE_ACTION = {
+  NEW_PAGE: '新增页面',
+  UPDATE_PAGE: '更新页面',
+  TECH_FIX: '技术修复'
+};
+/** Action section headers on 站点经营日报 */
+var OPS_DAILY_ACTION_HEADERS = [
+  '优先级',
+  '站点',
+  '建议操作',
+  '目标 Query 或页面',
+  '为什么现在做',
+  '核心数据证据'
+];
+/** Site overview headers on 站点经营日报 */
+var OPS_DAILY_SITE_HEADERS = [
+  '站点',
+  '游戏阶段',
+  '经营状态',
+  '7日趋势',
+  '点击',
+  '曝光',
+  '平均排名',
+  '主要变化',
+  '今日判断'
+];
 var SNAPSHOT_HEADERS = [
   'RunDate', 'LatestGSCDataDate', 'Site', 'PropertyURL', 'Day',
   'SitemapURLCount', 'IndexedURLCount', 'IndexRate',
