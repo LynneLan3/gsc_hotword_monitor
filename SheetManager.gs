@@ -774,6 +774,23 @@ function getEnabledSites() {
 }
 
 /**
+ * 写入宽度必须由当前 header/schema 决定，禁止写死旧列数。
+ * 短行右侧补空；超长行截断到 headers.length。
+ * @param {Array} row
+ * @param {Array<string>} headers
+ * @return {Array}
+ */
+function alignRowToHeaders_(row, headers) {
+  var width = headers && headers.length ? headers.length : 0;
+  var src = row || [];
+  var out = [];
+  for (var i = 0; i < width; i++) {
+    out.push(i < src.length ? src[i] : '');
+  }
+  return out;
+}
+
+/**
  * 按唯一键 upsert：keyFn(rowValues) -> string
  * headers 对应列顺序；row 为与 headers 对齐的数组
  * @return {{rowIndex:number, action:string}} action = 'insert' | 'update'
@@ -784,8 +801,10 @@ function upsertRow_(sheetName, headers, row, keyFn) {
     sheet = ensureSheet_(sheetName, headers);
   }
 
+  row = alignRowToHeaders_(row, headers);
   var lastRow = sheet.getLastRow();
   var key = keyFn(row);
+  ensureSheetGrid_(sheet, Math.max(lastRow, 2), headers.length);
 
   if (lastRow >= 2) {
     var existing = sheet.getRange(2, 1, lastRow, headers.length).getValues();
@@ -848,10 +867,26 @@ function appendSnapshotRow_(row) {
   });
 }
 
+/**
+ * URL索引写入：同一天同一 Site+URL 幂等 upsert；跨日期保留历史。
+ * @param {Array} row
+ * @return {{rowIndex:number, action:string}}
+ */
+function upsertUrlIndexRow_(row) {
+  return upsertRow_(SHEET_NAMES.URL_INDEX, URL_INDEX_HEADERS, row, function (r) {
+    return (
+      normalizeKeyDate_(r[0]) +
+      '||' +
+      String(r[1] || '') +
+      '||' +
+      String(r[2] || '')
+    );
+  });
+}
+
+/** @deprecated 使用 upsertUrlIndexRow_；保留别名避免旧调用漏改 */
 function appendUrlIndexRow_(row) {
-  var sheet = getSpreadsheet_().getSheetByName(SHEET_NAMES.URL_INDEX);
-  if (!sheet) sheet = ensureSheet_(SHEET_NAMES.URL_INDEX, URL_INDEX_HEADERS);
-  sheet.appendRow(row);
+  return upsertUrlIndexRow_(row);
 }
 
 /**

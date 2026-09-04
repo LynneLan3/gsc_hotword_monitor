@@ -189,7 +189,8 @@ function runDailyUnlocked_(isContinuation) {
           appendSnapshotRow_([
             runDate, '', site.name, site.propertyUrl, '',
             '', '', '', '', '', '', '', '', '',
-            '', '', '', '🔴 需要检查', errMsg
+            '', '', '', '🔴 需要检查', errMsg,
+            site.siteId || ''
           ]);
         }
         markDailySiteDone_(site.name);
@@ -391,12 +392,27 @@ function deleteDailyContinuationTriggers_() {
 }
 
 /**
- * URL Inspection 批次：每天可多次触发。
- * 同一天内按 INDEX_AUDIT_CURSOR 推进，每批最多 INDEX_AUDIT_BATCH_SIZE 个站。
- * 同一站同一天最多完整 Inspection 一次；全部完成后再次调用直接 return。
+ * URL Inspection 批次：跨天持续 rolling round-robin。
+ * 持久化 site cursor + 当前站 URL cursor；每完成一个 URL 就落盘。
+ * 单次按 INDEX_AUDIT_MAX_MS 时间预算尽量处理；保留现有 4× trigger，不新增。
  */
 function runIndexAuditBatch() {
+  var lock = LockService.getScriptLock();
+  if (!lock.tryLock(10000)) {
+    writeLog_('WARN', '', 'runIndexAuditBatch 跳过：已有实例在运行（LockService）');
+    Logger.log('runIndexAuditBatch skipped: lock busy');
+    return 'runIndexAuditBatch skipped: lock busy';
+  }
+  try {
+    return runIndexAuditBatchUnlocked_();
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+function runIndexAuditBatchUnlocked_() {
   assertRuntimePrerequisites_();
+  clearGscPropertyResolutionCache_();
   var sites = getEnabledSites();
   var runDate = todayStr_();
   var total = sites.length;
@@ -407,97 +423,210 @@ function runIndexAuditBatch() {
     return;
   }
 
-  ensureIndexAuditDay_(runDate);
-  var cursor = getIndexAuditCursor_();
+  var state = loadIndexAuditCursorState_(sites);
+  var startedAt = Date.now();
+  var urlsDone = 0;
+  var sitesCompleted = 0;
 
-  if (cursor >= total) {
-    writeLog_('INFO', '', '今日URL索引轮询已全部完成 ' + total + '/' + total);
-    sortSheetsNewestFirst_([SHEET_NAMES.URL_INDEX, SHEET_NAMES.LOG]);
-    return;
+  writeLog_(
+    'INFO',
+    '',
+    'runIndexAuditBatch 开始 siteCursor=' +
+      state.siteCursor +
+      '/' +
+      total +
+      ' urlCursor=' +
+      state.urlCursor +
+      ' site=' +
+      (sites[state.siteCursor] && sites[state.siteCursor].name) +
+      ' budgetMs=' +
+      INDEX_AUDIT_MAX_MS
+  );
+
+  // 防止空站/全权限失败导致 tight loop
+  var guard = 0;
+  var maxGuards = Math.max(total * 3, 8);
+
+  while (Date.now() - startedAt < INDEX_AUDIT_MAX_MS && guard < maxGuards) {
+    guard += 1;
+    var site = sites[state.siteCursor];
+    var result;
+    try {
+      result = processSiteUrlInspectionBatch_(
+        site,
+        runDate,
+        state.urlCursor,
+        startedAt,
+        INDEX_AUDIT_MAX_MS
+      );
+    } catch (e) {
+      // URL cursor 已在成功处理的 URL 上落盘；site cursor 不前进，下次同站续跑
+      writeLog_(
+        'ERROR',
+        site.name,
+        'URL索引批次失败（未推进site cursor）: ' + e.message
+      );
+      sortSheetsNewestFirst_([SHEET_NAMES.URL_INDEX, SHEET_NAMES.LOG]);
+      return;
+    }
+
+    urlsDone += result.urlsProcessed || 0;
+
+    if (result.siteDone) {
+      sitesCompleted += 1;
+      var next = state.siteCursor + 1;
+      if (next >= total) {
+        next = 0;
+        writeLog_('INFO', '', 'URL索引完成一轮 ' + total + '/' + total + '，wrap 到 0');
+      }
+      state.siteCursor = next;
+      state.urlCursor = 0;
+      saveIndexAuditCursorState_(
+        state.siteCursor,
+        0,
+        sites[state.siteCursor] && sites[state.siteCursor].name
+      );
+      if (result.budgetExhausted) break;
+      continue;
+    }
+
+    state.urlCursor = result.nextUrlCursor;
+    saveIndexAuditCursorState_(state.siteCursor, state.urlCursor, site.name);
+    break;
   }
 
   writeLog_(
     'INFO',
     '',
-    'runIndexAuditBatch 开始 cursor=' + cursor + '/' + total +
-      ' batchSize=' + INDEX_AUDIT_BATCH_SIZE
+    'runIndexAuditBatch 结束 siteCursor=' +
+      state.siteCursor +
+      '/' +
+      total +
+      ' urlCursor=' +
+      state.urlCursor +
+      ' urlsDone=' +
+      urlsDone +
+      ' sitesCompleted=' +
+      sitesCompleted +
+      ' elapsedMs=' +
+      (Date.now() - startedAt)
   );
-
-  var processed = 0;
-  while (processed < INDEX_AUDIT_BATCH_SIZE && cursor < total) {
-    var site = sites[cursor];
-    try {
-      processSiteUrlInspection_(site, runDate);
-      cursor += 1;
-      setIndexAuditCursor_(cursor);
-      processed += 1;
-      writeLog_('INFO', '', 'URL索引进度 ' + cursor + '/' + total);
-    } catch (e) {
-      writeLog_('ERROR', site.name, 'URL索引批次失败（未推进cursor）: ' + e.message);
-      // 成功完成一个站后才推进 cursor；失败则下次同站重试
-      sortSheetsNewestFirst_([SHEET_NAMES.URL_INDEX, SHEET_NAMES.LOG]);
-      return;
-    }
-  }
-
-  if (cursor >= total) {
-    writeLog_('INFO', '', '今日URL索引轮询已全部完成 ' + total + '/' + total);
-  } else {
-    writeLog_('INFO', '', 'runIndexAuditBatch 结束，今日进度 ' + cursor + '/' + total);
-  }
   sortSheetsNewestFirst_([SHEET_NAMES.URL_INDEX, SHEET_NAMES.LOG]);
-}
-
-function ensureIndexAuditDay_(today) {
-  var props = PropertiesService.getScriptProperties();
-  var auditDate = props.getProperty('INDEX_AUDIT_DATE');
-  if (auditDate !== today) {
-    props.setProperty('INDEX_AUDIT_DATE', today);
-    props.setProperty('INDEX_AUDIT_CURSOR', '0');
-  }
-}
-
-function getIndexAuditCursor_() {
-  var raw = PropertiesService.getScriptProperties().getProperty('INDEX_AUDIT_CURSOR');
-  var n = parseInt(raw, 10);
-  if (isNaN(n) || n < 0) return 0;
-  return n;
-}
-
-function setIndexAuditCursor_(n) {
-  PropertiesService.getScriptProperties().setProperty('INDEX_AUDIT_CURSOR', String(n));
+  return (
+    'done siteCursor=' +
+    state.siteCursor +
+    ' urlCursor=' +
+    state.urlCursor +
+    ' urlsDone=' +
+    urlsDone
+  );
 }
 
 /**
- * 单站完整 sitemap URL Inspection；写入「URL索引」历史。
- * @param {Object} site
- * @param {string} runDate
+ * 加载并校正跨天持续的 index-audit cursor。
+ * 不再按日期重置 site cursor。
+ * @param {Array<Object>} sites
+ * @return {{siteCursor:number, urlCursor:number, siteKey:string}}
  */
-function processSiteUrlInspection_(site, runDate) {
-  var propertyUrl = site.propertyUrl;
+function loadIndexAuditCursorState_(sites) {
+  var props = PropertiesService.getScriptProperties();
+  var total = sites.length;
+  var siteCursor = parseInt(props.getProperty(INDEX_AUDIT_CURSOR_PROP) || '0', 10);
+  if (isNaN(siteCursor) || siteCursor < 0) siteCursor = 0;
+  if (siteCursor >= total) siteCursor = 0;
+
+  var urlCursor = parseInt(props.getProperty(INDEX_AUDIT_URL_CURSOR_PROP) || '0', 10);
+  if (isNaN(urlCursor) || urlCursor < 0) urlCursor = 0;
+
+  var storedKey = String(props.getProperty(INDEX_AUDIT_SITE_KEY_PROP) || '');
+  var currentKey = sites[siteCursor] ? String(sites[siteCursor].name || '') : '';
+  if (storedKey && currentKey && storedKey !== currentKey) {
+    // 站点列表重排/增删后，旧 URL cursor 不可复用
+    urlCursor = 0;
+  }
+  if (!storedKey || storedKey !== currentKey) {
+    saveIndexAuditCursorState_(siteCursor, urlCursor, currentKey);
+  }
+  return { siteCursor: siteCursor, urlCursor: urlCursor, siteKey: currentKey };
+}
+
+function saveIndexAuditCursorState_(siteCursor, urlCursor, siteKey) {
+  var props = PropertiesService.getScriptProperties();
+  props.setProperty(INDEX_AUDIT_CURSOR_PROP, String(siteCursor));
+  props.setProperty(INDEX_AUDIT_URL_CURSOR_PROP, String(urlCursor));
+  if (siteKey !== undefined && siteKey !== null) {
+    props.setProperty(INDEX_AUDIT_SITE_KEY_PROP, String(siteKey || ''));
+  }
+}
+
+/** 仅落盘 URL cursor（每完成一个 URL 调用） */
+function saveIndexAuditUrlCursor_(urlCursor) {
+  PropertiesService.getScriptProperties().setProperty(
+    INDEX_AUDIT_URL_CURSOR_PROP,
+    String(urlCursor)
+  );
+}
+
+/**
+ * 从当前 URL cursor 继续 Inspection；每完成一个 URL 落盘。
+ * 当前站全部 URL 完成后 siteDone=true。
+ * @return {{siteDone:boolean, nextUrlCursor:number, urlsProcessed:number, budgetExhausted:boolean}}
+ */
+function processSiteUrlInspectionBatch_(site, runDate, startUrlIndex, startedAt, maxMs) {
+  var resolved = resolveAccessibleGscProperty_(site.propertyUrl);
+  if (!resolved.ok) {
+    if (noteGscPropertyPermissionOnce_(site.name, resolved)) {
+      writeLog_('ERROR', site.name, formatPropertyPermissionMessage_(resolved));
+    }
+    return {
+      siteDone: true,
+      nextUrlCursor: 0,
+      urlsProcessed: 0,
+      budgetExhausted: false
+    };
+  }
+
+  var propertyUrl = resolved.propertyUrl;
   var siteName = site.name;
   var sitemapUrls = fetchSitemapUrls(site.sitemapUrl);
+  var urlCursor = Math.max(0, parseInt(startUrlIndex, 10) || 0);
+  if (urlCursor > sitemapUrls.length) urlCursor = 0;
+
   var indexedCount = 0;
   var errors = [];
+  var urlsProcessed = 0;
 
-  for (var u = 0; u < sitemapUrls.length; u++) {
-    var pageUrl = sitemapUrls[u];
+  while (urlCursor < sitemapUrls.length) {
+    if (urlsProcessed > 0 && Date.now() - startedAt >= maxMs) {
+      return {
+        siteDone: false,
+        nextUrlCursor: urlCursor,
+        urlsProcessed: urlsProcessed,
+        budgetExhausted: true
+      };
+    }
+
+    var pageUrl = sitemapUrls[urlCursor];
     var insp = inspectUrl(pageUrl, propertyUrl);
     if (!insp.ok) {
-      appendUrlIndexRow_([
+      upsertUrlIndexRow_([
         runDate, siteName, pageUrl, '', '', '', '', '', '', '', '', '', insp.error
       ]);
       errors.push('Inspection ' + pageUrl + ': ' + insp.error);
-      continue;
+    } else {
+      var st = extractIndexStatus_(insp.data);
+      if (st.verdict === 'PASS') indexedCount++;
+      upsertUrlIndexRow_([
+        runDate, siteName, pageUrl,
+        st.verdict, st.coverageState, st.robotsTxtState, st.indexingState,
+        st.lastCrawlTime, st.pageFetchState, st.googleCanonical, st.userCanonical,
+        st.crawledAs, ''
+      ]);
     }
-    var st = extractIndexStatus_(insp.data);
-    if (st.verdict === 'PASS') indexedCount++;
-    appendUrlIndexRow_([
-      runDate, siteName, pageUrl,
-      st.verdict, st.coverageState, st.robotsTxtState, st.indexingState,
-      st.lastCrawlTime, st.pageFetchState, st.googleCanonical, st.userCanonical,
-      st.crawledAs, ''
-    ]);
+
+    urlCursor += 1;
+    urlsProcessed += 1;
+    saveIndexAuditUrlCursor_(urlCursor);
   }
 
   writeLog_(
@@ -507,9 +636,31 @@ function processSiteUrlInspection_(site, runDate) {
       siteName +
       '\n' +
       sitemapUrls.length +
-      ' URLs\nindexed=' +
+      ' URLs\nindexedPassThisPass=' +
       indexedCount +
+      ' property=' +
+      propertyUrl +
       (errors.length ? '\npartialErrors=' + errors.length : '')
+  );
+
+  return {
+    siteDone: true,
+    nextUrlCursor: 0,
+    urlsProcessed: urlsProcessed,
+    budgetExhausted: Date.now() - startedAt >= maxMs
+  };
+}
+
+/**
+ * @deprecated 完整单站路径已由 processSiteUrlInspectionBatch_ 替代；保留供测试引用。
+ */
+function processSiteUrlInspection_(site, runDate) {
+  return processSiteUrlInspectionBatch_(
+    site,
+    runDate,
+    0,
+    Date.now(),
+    INDEX_AUDIT_MAX_MS
   );
 }
 
@@ -519,28 +670,64 @@ function processSiteUrlInspection_(site, runDate) {
  */
 function processSiteDaily_(site, runDate) {
   var errors = [];
-  var propertyUrl = site.propertyUrl;
   var siteName = site.name;
+  var configuredUrl = site.propertyUrl;
   var permissionBlocked = false;
-  writeLog_('INFO', siteName, '开始采集 propertyUrl=' + propertyUrl);
+  var propertyUrl = configuredUrl;
+
+  var resolved = resolveAccessibleGscProperty_(configuredUrl);
+  if (!resolved.ok) {
+    permissionBlocked = true;
+    if (noteGscPropertyPermissionOnce_(siteName, resolved)) {
+      var missingMsg = formatPropertyPermissionMessage_(resolved);
+      errors.push(missingMsg);
+      writeLog_('ERROR', siteName, missingMsg);
+    } else {
+      errors.push(formatPropertyPermissionMessage_(resolved));
+    }
+  } else {
+    propertyUrl = resolved.propertyUrl;
+  }
+
+  writeLog_(
+    'INFO',
+    siteName,
+    '开始采集 propertyUrl=' +
+      propertyUrl +
+      (resolved.ok && resolved.matchedAs !== 'url-prefix'
+        ? ' (via ' + resolved.matchedAs + ', configured=' + configuredUrl + ')'
+        : '')
+  );
 
   // 1) 最新有数据日期（GSC / America/Los_Angeles）
   var latestDate = '';
-  try {
-    latestDate = findLatestGscDataDate(propertyUrl, LOOKBACK_DAYS_FOR_LATEST);
-  } catch (e) {
-    if (isGscPermissionError_(e)) {
-      permissionBlocked = true;
-      errors.push(
-        'PROPERTY_PERMISSION | siteUrl=' + propertyUrl + ' | ' + e.message
-      );
-      writeLog_(
-        'ERROR',
-        siteName,
-        'PROPERTY_PERMISSION | siteUrl=' + propertyUrl + ' | ' + e.message
-      );
-    } else {
-      errors.push('GSC最新日期: ' + e.message);
+  if (!permissionBlocked) {
+    try {
+      latestDate = findLatestGscDataDate(propertyUrl, LOOKBACK_DAYS_FOR_LATEST);
+    } catch (e) {
+      if (isGscPermissionError_(e)) {
+        permissionBlocked = true;
+        var permResolved = {
+          configuredUrl: configuredUrl,
+          tried: gscPropertyCandidates_(configuredUrl)
+        };
+        if (noteGscPropertyPermissionOnce_(siteName, permResolved)) {
+          errors.push(
+            'PROPERTY_PERMISSION | siteUrl=' + propertyUrl + ' | ' + e.message
+          );
+          writeLog_(
+            'ERROR',
+            siteName,
+            'PROPERTY_PERMISSION | siteUrl=' + propertyUrl + ' | ' + e.message
+          );
+        } else {
+          errors.push(
+            'PROPERTY_PERMISSION | siteUrl=' + propertyUrl + ' | ' + e.message
+          );
+        }
+      } else {
+        errors.push('GSC最新日期: ' + e.message);
+      }
     }
   }
 
@@ -626,8 +813,15 @@ function processSiteDaily_(site, runDate) {
           propertyUrl +
           ' | ' +
           String(e.message || e);
-        errors.push(permMsg);
-        writeLog_('ERROR', siteName, permMsg);
+        if (noteGscPropertyPermissionOnce_(siteName, {
+          configuredUrl: configuredUrl,
+          tried: gscPropertyCandidates_(configuredUrl)
+        })) {
+          errors.push(permMsg);
+          writeLog_('ERROR', siteName, permMsg);
+        } else {
+          errors.push(permMsg);
+        }
       } else {
         errors.push('FreshQueries: ' + e.message);
       }
@@ -640,11 +834,16 @@ function processSiteDaily_(site, runDate) {
       syncFreshQueryPageDetails_(siteName, propertyUrl, runDate);
     } catch (e) {
       if (isGscPermissionError_(e)) {
-        writeLog_(
-          'ERROR',
-          siteName,
-          'QUERY_PAGE_PERMISSION | siteUrl=' + propertyUrl + ' | ' + e.message
-        );
+        if (noteGscPropertyPermissionOnce_(siteName, {
+          configuredUrl: configuredUrl,
+          tried: gscPropertyCandidates_(configuredUrl)
+        })) {
+          writeLog_(
+            'ERROR',
+            siteName,
+            'QUERY_PAGE_PERMISSION | siteUrl=' + propertyUrl + ' | ' + e.message
+          );
+        }
       } else {
         writeLog_('WARN', siteName, 'QUERY_PAGE_FAILED | ' + e.message);
       }
@@ -657,11 +856,16 @@ function processSiteDaily_(site, runDate) {
       syncFreshPageDetails_(siteName, propertyUrl, runDate);
     } catch (e) {
       if (isGscPermissionError_(e)) {
-        writeLog_(
-          'ERROR',
-          siteName,
-          'PAGE_PERMISSION | siteUrl=' + propertyUrl + ' | ' + e.message
-        );
+        if (noteGscPropertyPermissionOnce_(siteName, {
+          configuredUrl: configuredUrl,
+          tried: gscPropertyCandidates_(configuredUrl)
+        })) {
+          writeLog_(
+            'ERROR',
+            siteName,
+            'PAGE_PERMISSION | siteUrl=' + propertyUrl + ' | ' + e.message
+          );
+        }
       } else {
         writeLog_('WARN', siteName, 'PAGE_FAILED | ' + e.message);
       }
@@ -691,7 +895,8 @@ function processSiteDaily_(site, runDate) {
     runDate,
     latestDate || '',
     siteName,
-    propertyUrl,
+    // 快照保留配置 URL；runtime 可能走 sc-domain
+    configuredUrl,
     dayNum === '' ? '' : dayNum,
     sitemapCount,
     indexedCount === '' ? '' : indexedCount,
@@ -1460,6 +1665,7 @@ function debugLeafyCornerQueryPages() {
  */
 function testGscAccess() {
   setupSheets();
+  clearGscPropertyResolutionCache_();
   var enabled = getEnabledSites();
   var expected = enabled.map(function (s) {
     return s.propertyUrl;
@@ -1473,6 +1679,7 @@ function testGscAccess() {
   var accessible;
   try {
     accessible = listGscSites();
+    GSC_SITES_LIST_CACHE_ = accessible;
   } catch (e) {
     Logger.log('FAIL: 无法调用 Sites.list');
     Logger.log(e.message);
@@ -1485,33 +1692,36 @@ function testGscAccess() {
     Logger.log('- ' + accessible[i]);
   }
 
-  // 归一化比较：去掉末尾斜杠再比，也接受带斜杠版本
-  var accessSet = {};
-  for (var a = 0; a < accessible.length; a++) {
-    var u = String(accessible[a] || '');
-    accessSet[u] = true;
-    accessSet[ensureTrailingSlash_(u)] = true;
-    if (u.charAt(u.length - 1) === '/') {
-      accessSet[u.substring(0, u.length - 1)] = true;
-    }
-  }
-
+  // URL-prefix exact，或同 host 的 sc-domain:
   var missing = [];
   var missingNames = [];
+  var resolvedViaDomain = [];
   for (var e = 0; e < expected.length; e++) {
     var want = expected[e];
-    var wantNoSlash =
-      want.charAt(want.length - 1) === '/'
-        ? want.substring(0, want.length - 1)
-        : want;
-    if (!accessSet[want] && !accessSet[wantNoSlash]) {
-      missing.push(want);
-      if (enabled[e]) missingNames.push(enabled[e].name);
+    var resolved = resolveAccessibleGscProperty_(want);
+    if (resolved.ok) {
+      if (resolved.matchedAs === 'sc-domain') {
+        resolvedViaDomain.push(
+          (enabled[e] ? enabled[e].name + ' → ' : '') +
+            want +
+            ' via ' +
+            resolved.propertyUrl
+        );
+      }
+      continue;
     }
+    missing.push(want);
+    if (enabled[e]) missingNames.push(enabled[e].name);
   }
 
   var okCount = expected.length - missing.length;
   Logger.log('');
+  if (resolvedViaDomain.length) {
+    Logger.log('Resolved via sc-domain:');
+    for (var d = 0; d < resolvedViaDomain.length; d++) {
+      Logger.log('- ' + resolvedViaDomain[d]);
+    }
+  }
   if (missing.length === 0) {
     Logger.log('PASS:');
     Logger.log(okCount + '/' + expected.length + ' GSC properties accessible');
@@ -1520,8 +1730,12 @@ function testGscAccess() {
     Logger.log(okCount + '/' + expected.length);
     Logger.log('Missing（需在 Search Console 为运行脚本的 Google 账号添加权限）:');
     for (var m = 0; m < missing.length; m++) {
+      var tried = gscPropertyCandidates_(missing[m]);
       Logger.log(
-        (missingNames[m] ? missingNames[m] + ' → ' : '') + missing[m]
+        (missingNames[m] ? missingNames[m] + ' → ' : '') +
+          missing[m] +
+          ' | need one of: ' +
+          tried.join(' | ')
       );
     }
   }
@@ -1543,6 +1757,135 @@ function testGscAccess() {
     '\n\n详情见「执行」→「执行记录」中的日志。';
   alertUi_(summary);
   return summary;
+}
+
+/**
+ * 生产验收：解析全部 Enabled 站的实际 GSC property identity。
+ * 返回结构化结果（含 Resonance / Crush Landing），不写业务表。
+ * @return {Object}
+ */
+function debugResolveEnabledGscProperties() {
+  clearGscPropertyResolutionCache_();
+  var sites = getEnabledSites();
+  var accessible = getAccessibleGscSitesCached_();
+  var rows = [];
+  var missing = [];
+  for (var i = 0; i < sites.length; i++) {
+    var site = sites[i];
+    var resolved = resolveAccessibleGscProperty_(site.propertyUrl);
+    var row = {
+      name: site.name,
+      configuredUrl: site.propertyUrl,
+      ok: !!resolved.ok,
+      matchedAs: resolved.matchedAs || '',
+      runtimePropertyUrl: resolved.propertyUrl || '',
+      tried: resolved.tried || []
+    };
+    rows.push(row);
+    if (!resolved.ok) missing.push(row);
+  }
+  var focusNames = {
+    'Resonance: A Plague Tale Legacy': true,
+    'Sucker for Love: Crush Landing Guide': true
+  };
+  var focus = [];
+  for (var f = 0; f < rows.length; f++) {
+    if (focusNames[rows[f].name]) focus.push(rows[f]);
+  }
+  var out = {
+    accessibleCount: accessible.length,
+    enabledCount: sites.length,
+    okCount: sites.length - missing.length,
+    missingCount: missing.length,
+    focus: focus,
+    missing: missing,
+    rows: rows
+  };
+  Logger.log(JSON.stringify(out, null, 2));
+  return out;
+}
+
+function dedupeUrlIndexSameDay() {
+  return dedupeUrlIndexSameDay_();
+}
+
+/**
+ * 生产验收：去掉「URL索引」同日 Site+URL 重复行，保留每个键最后一次写入。
+ * 跨日期历史不动。可重复运行。
+ * @return {{scanned:number, removed:number, kept:number}}
+ */
+function dedupeUrlIndexSameDay_() {
+  var sheet = getSpreadsheet_().getSheetByName(SHEET_NAMES.URL_INDEX);
+  if (!sheet || sheet.getLastRow() < 2) {
+    return { scanned: 0, removed: 0, kept: 0 };
+  }
+  var width = URL_INDEX_HEADERS.length;
+  ensureSheetGrid_(sheet, sheet.getLastRow(), width);
+  var values = sheet.getRange(2, 1, sheet.getLastRow() - 1, width).getValues();
+  var lastIndexByKey = {};
+  for (var i = 0; i < values.length; i++) {
+    var key =
+      normalizeKeyDate_(values[i][0]) +
+      '||' +
+      String(values[i][1] || '') +
+      '||' +
+      String(values[i][2] || '');
+    if (!normalizeKeyDate_(values[i][0]) || !String(values[i][2] || '').trim()) continue;
+    lastIndexByKey[key] = i;
+  }
+  var kept = [];
+  var keepFlags = {};
+  for (var k in lastIndexByKey) {
+    if (Object.prototype.hasOwnProperty.call(lastIndexByKey, k)) {
+      keepFlags[lastIndexByKey[k]] = true;
+    }
+  }
+  for (var r = 0; r < values.length; r++) {
+    var rowKey =
+      normalizeKeyDate_(values[r][0]) +
+      '||' +
+      String(values[r][1] || '') +
+      '||' +
+      String(values[r][2] || '');
+    if (!normalizeKeyDate_(values[r][0]) || !String(values[r][2] || '').trim()) {
+      kept.push(alignRowToHeaders_(values[r], URL_INDEX_HEADERS));
+      continue;
+    }
+    if (keepFlags[r]) kept.push(alignRowToHeaders_(values[r], URL_INDEX_HEADERS));
+  }
+  var removed = values.length - kept.length;
+  if (sheet.getLastRow() > 1) {
+    sheet.getRange(2, 1, sheet.getLastRow() - 1, width).clearContent();
+  }
+  if (kept.length) {
+    ensureSheetGrid_(sheet, 1 + kept.length, width);
+    sheet.getRange(2, 1, kept.length, width).setValues(kept);
+  }
+  writeLog_(
+    'INFO',
+    '',
+    'URL索引同日去重 scanned=' + values.length + ' kept=' + kept.length + ' removed=' + removed
+  );
+  return { scanned: values.length, removed: removed, kept: kept.length };
+}
+
+/**
+ * 生产验收：读取 index-audit rolling cursor 状态（只读）。
+ * @return {Object}
+ */
+function debugIndexAuditCursorState() {
+  var sites = getEnabledSites();
+  var state = loadIndexAuditCursorState_(sites);
+  var site = sites[state.siteCursor] || null;
+  var out = {
+    siteCursor: state.siteCursor,
+    urlCursor: state.urlCursor,
+    siteKey: state.siteKey,
+    siteName: site ? site.name : '',
+    totalSites: sites.length
+  };
+  Logger.log(JSON.stringify(out));
+  return out;
 }
 
 /** 一次性诊断/修复：重置 active sheet 上下文，排查 Sheet 0 not found */

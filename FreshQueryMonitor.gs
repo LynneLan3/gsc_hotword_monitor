@@ -27,6 +27,7 @@ function runFreshQueryMonitor() {
 }
 
 function runFreshQueryMonitorUnlocked_() {
+  clearGscPropertyResolutionCache_();
   ensureSheet_(SHEET_NAMES.FRESH_SITE_MONITOR, FRESH_SITE_MONITOR_HEADERS);
   ensureSheet_(SHEET_NAMES.FRESH_QUERY_MONITOR, FRESH_QUERY_MONITOR_HEADERS);
   ensureSheet_(SHEET_NAMES.FRESH_PAGE_MONITOR, FRESH_PAGE_MONITOR_HEADERS);
@@ -56,10 +57,14 @@ function runFreshQueryMonitorUnlocked_() {
     var site = sites[i];
     try {
       var result = collectFreshQueryMonitorSite_(site, generatedAt, range);
+      if (!result.siteRow) {
+        // 无可用 property：保留该站旧 realtime 快照，不记入 completedSites。
+        continue;
+      }
       siteRows.push(result.siteRow);
-      queryRows = queryRows.concat(result.queryRows);
-      pageRows = pageRows.concat(result.pageRows);
-      statusRecords.push(result.statusRecord);
+      queryRows = queryRows.concat(result.queryRows || []);
+      pageRows = pageRows.concat(result.pageRows || []);
+      if (result.statusRecord) statusRecords.push(result.statusRecord);
       completedSites.push(site.name);
     } catch (e) {
       errors++;
@@ -99,7 +104,20 @@ function getFreshQueryHourlyDateRange_() {
 }
 
 function collectFreshQueryMonitorSite_(site, generatedAt, range) {
-  var propertyUrls = getFreshRealtimePropertyUrls_(site);
+  var propertyUrls = resolveFreshRealtimePropertyUrls_(site);
+  if (!propertyUrls.length) {
+    writeLog_(
+      'WARN',
+      site.name,
+      'Fresh hourly skipped: no accessible GSC property for configured URLs'
+    );
+    return {
+      siteRow: null,
+      queryRows: [],
+      pageRows: [],
+      statusRecord: null
+    };
+  }
   var totalRows = [];
   var queryRows = [];
   var pageRows = [];
@@ -809,6 +827,32 @@ function getFreshRealtimePropertyUrls_(site) {
     if (!url) continue;
     url = normalizePropertyUrlForGsc_(url);
     if (!seen[url]) { seen[url] = true; out.push(url); }
+  }
+  return out;
+}
+
+/**
+ * 将配置的 realtime / Property URL 解析为当前账号真实可访问的 identity。
+ * 无权限时单次运行只记一次 PROPERTY_PERMISSION，不连续打 GSC。
+ * @param {Object} site
+ * @return {Array<string>}
+ */
+function resolveFreshRealtimePropertyUrls_(site) {
+  var configured = getFreshRealtimePropertyUrls_(site);
+  var out = [];
+  var seen = {};
+  for (var i = 0; i < configured.length; i++) {
+    var resolved = resolveAccessibleGscProperty_(configured[i]);
+    if (!resolved.ok) {
+      if (noteGscPropertyPermissionOnce_(site && site.name, resolved)) {
+        writeLog_('ERROR', site && site.name, formatPropertyPermissionMessage_(resolved));
+      }
+      continue;
+    }
+    if (!seen[resolved.propertyUrl]) {
+      seen[resolved.propertyUrl] = true;
+      out.push(resolved.propertyUrl);
+    }
   }
   return out;
 }

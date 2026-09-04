@@ -1977,8 +1977,18 @@ var OPPORTUNITY_CONFIDENCE = {
   OPPORTUNITY_VALIDATED: 'OPPORTUNITY_VALIDATED'
 };
 
-/** 每次 runIndexAuditBatch 最多完整 Inspection 的站点数 */
-var INDEX_AUDIT_BATCH_SIZE = 2;
+/**
+ * runIndexAuditBatch 单次安全时间预算（Apps Script ~6min 上限，预留收尾）。
+ * 按 URL 推进，不再固定“每批 2 个完整站”。
+ */
+var INDEX_AUDIT_MAX_MS = 4.5 * 60 * 1000;
+
+/** ScriptProperties：跨天持续的 site cursor（enabled sites 下标） */
+var INDEX_AUDIT_CURSOR_PROP = 'INDEX_AUDIT_CURSOR';
+/** ScriptProperties：当前 site 内已处理到的 URL 下标（下一待处理） */
+var INDEX_AUDIT_URL_CURSOR_PROP = 'INDEX_AUDIT_URL_CURSOR';
+/** ScriptProperties：site cursor 对应的站点名（站点列表变动时重置 URL cursor） */
+var INDEX_AUDIT_SITE_KEY_PROP = 'INDEX_AUDIT_SITE_KEY';
 
 /** runIndexAuditBatch 一天内 4 次 trigger 的大致时段（Asia/Shanghai） */
 var INDEX_AUDIT_TRIGGER_HOURS = [9, 12, 15, 20];

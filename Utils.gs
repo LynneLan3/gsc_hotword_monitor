@@ -276,6 +276,176 @@ function normalizePropertyUrlForGsc_(url) {
   return ensureTrailingSlash_(url);
 }
 
+/** 单次 execution 内 Sites.list 缓存；不跨执行持久化。 */
+var GSC_SITES_LIST_CACHE_ = null;
+/** 单次 execution 内已记录 PROPERTY_PERMISSION 的站点，避免刷 ERROR。 */
+var GSC_PROPERTY_PERM_NOTED_ = {};
+
+function clearGscPropertyResolutionCache_() {
+  GSC_SITES_LIST_CACHE_ = null;
+  GSC_PROPERTY_PERM_NOTED_ = {};
+}
+
+/**
+ * 当前账号可访问的 GSC property 列表（execution 内缓存）。
+ * @return {Array<string>}
+ */
+function getAccessibleGscSitesCached_() {
+  if (GSC_SITES_LIST_CACHE_) return GSC_SITES_LIST_CACHE_;
+  try {
+    GSC_SITES_LIST_CACHE_ = listGscSites() || [];
+  } catch (e) {
+    GSC_SITES_LIST_CACHE_ = [];
+    throw e;
+  }
+  return GSC_SITES_LIST_CACHE_;
+}
+
+/**
+ * 构建可访问 property 的归一化查找集（含有/无尾斜杠别名）。
+ * @param {Array<string>} accessible
+ * @return {Object}
+ */
+function buildGscAccessSet_(accessible) {
+  var accessSet = {};
+  for (var a = 0; a < (accessible || []).length; a++) {
+    var u = String(accessible[a] || '').trim();
+    if (!u) continue;
+    var norm = normalizePropertyUrlForGsc_(u);
+    accessSet[u] = norm;
+    accessSet[norm] = norm;
+    accessSet[ensureTrailingSlash_(norm)] = norm;
+    if (norm.charAt(norm.length - 1) === '/') {
+      accessSet[norm.substring(0, norm.length - 1)] = norm;
+    }
+  }
+  return accessSet;
+}
+
+/**
+ * 从配置 URL 推导候选 GSC property：
+ * 1) exact URL-prefix（归一化后）
+ * 2) sc-domain:<host>
+ * @param {string} configuredUrl
+ * @return {Array<string>}
+ */
+function gscPropertyCandidates_(configuredUrl) {
+  var configured = normalizePropertyUrlForGsc_(configuredUrl);
+  var out = [];
+  var seen = {};
+  function push(v) {
+    var n = normalizePropertyUrlForGsc_(v);
+    if (!n || seen[n]) return;
+    seen[n] = true;
+    out.push(n);
+  }
+  if (configured) push(configured);
+  if (configured && configured.indexOf('sc-domain:') === 0) return out;
+  var host = extractHostFromPropertyUrl_(configured);
+  if (host) push('sc-domain:' + host);
+  return out;
+}
+
+/**
+ * @param {string} propertyUrl
+ * @return {string} hostname or ''
+ */
+function extractHostFromPropertyUrl_(propertyUrl) {
+  var raw = String(propertyUrl || '').trim();
+  if (!raw) return '';
+  if (raw.indexOf('sc-domain:') === 0) {
+    return raw.substring('sc-domain:'.length).replace(/\/+$/, '').toLowerCase();
+  }
+  try {
+    return String(new URL(raw).hostname || '').toLowerCase();
+  } catch (e) {
+    var m = raw.match(/^https?:\/\/([^\/?#]+)/i);
+    return m ? String(m[1] || '').toLowerCase() : '';
+  }
+}
+
+/**
+ * 在当前账号可访问的 properties 中解析真实可用的 identity。
+ * 优先 exact URL-prefix；否则匹配 sc-domain:<host>。
+ * 两者都没有 → ok=false（调用方标 PROPERTY_PERMISSION，保留旧数据）。
+ *
+ * @param {string} configuredUrl 站点配置中的 Property URL
+ * @return {{ok:boolean, propertyUrl:string, matchedAs:string, tried:Array<string>, configuredUrl:string}}
+ */
+function resolveAccessibleGscProperty_(configuredUrl) {
+  var configured = normalizePropertyUrlForGsc_(configuredUrl);
+  var tried = gscPropertyCandidates_(configured);
+  if (!configured) {
+    return {
+      ok: false,
+      propertyUrl: '',
+      matchedAs: '',
+      tried: tried,
+      configuredUrl: configured
+    };
+  }
+
+  var accessible = getAccessibleGscSitesCached_();
+  var accessSet = buildGscAccessSet_(accessible);
+
+  for (var i = 0; i < tried.length; i++) {
+    var candidate = tried[i];
+    if (accessSet[candidate]) {
+      return {
+        ok: true,
+        propertyUrl: accessSet[candidate],
+        matchedAs: candidate.indexOf('sc-domain:') === 0 ? 'sc-domain' : 'url-prefix',
+        tried: tried,
+        configuredUrl: configured
+      };
+    }
+  }
+
+  return {
+    ok: false,
+    propertyUrl: '',
+    matchedAs: '',
+    tried: tried,
+    configuredUrl: configured
+  };
+}
+
+/**
+ * 标准 PROPERTY_PERMISSION 日志（含仍缺的人工授权候选）。
+ * @param {Object} resolved resolveAccessibleGscProperty_ 结果
+ * @return {string}
+ */
+function formatPropertyPermissionMessage_(resolved) {
+  resolved = resolved || {};
+  var tried = resolved.tried && resolved.tried.length
+    ? resolved.tried
+    : gscPropertyCandidates_(resolved.configuredUrl || '');
+  return (
+    'PROPERTY_PERMISSION | siteUrl=' +
+    (resolved.configuredUrl || tried[0] || '') +
+    ' | missing=[' +
+    tried.join(', ') +
+    '] | need GSC grant for one of: ' +
+    tried.join(' | ')
+  );
+}
+
+/**
+ * 单次 execution 内对同一站点只允许记录一次权限缺口。
+ * @return {boolean} true = 本次应写日志/ERROR
+ */
+function noteGscPropertyPermissionOnce_(siteName, resolved) {
+  var key = String(siteName || '').trim() || String((resolved && resolved.configuredUrl) || '');
+  if (!key) key = '__unknown__';
+  if (GSC_PROPERTY_PERM_NOTED_[key]) return false;
+  GSC_PROPERTY_PERM_NOTED_[key] = formatPropertyPermissionMessage_(resolved);
+  return true;
+}
+
+function isGscPropertyPermissionNoted_(siteName) {
+  return !!GSC_PROPERTY_PERM_NOTED_[String(siteName || '').trim()];
+}
+
 /**
  * 统一把 Date / yyyy-MM-dd 字符串转为 yyyy-MM-dd。
  * 不要对 Date 直接 String() 后再做 yyyy-MM-dd 正则。
@@ -377,12 +547,12 @@ function ensureTrailingSlash_(url) {
 function pagePathFromUrl_(pageUrl) {
   var raw = String(pageUrl || '').trim();
   if (!raw) return '';
-  // Apps Script V8 does not consistently expose the browser's global URL
-  // constructor. Parse the URL path directly so Sheet snapshots never fall
-  // back to values such as "/https://example.com/page".
-  var match = raw.match(/^https?:\/\/[^\/?#]+(\/[^?#]*)?(?:[?#].*)?$/i);
-  if (match) return match[1] || '/';
-  return raw;
+  try {
+    var u = new URL(raw);
+    return u.pathname || '/';
+  } catch (e) {
+    return raw;
+  }
 }
 
 function defaultSitemapUrl_(propertyUrl) {
@@ -402,3 +572,4 @@ function alertUi_(message) {
     Logger.log(text);
   }
 }
+

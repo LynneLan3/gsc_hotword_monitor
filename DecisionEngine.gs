@@ -215,7 +215,11 @@ function writeDecisionSiteStatusRows_(canonicalRows) {
     var existingSite = String(existing[i][col.Site] || '').trim();
     if (existingSite) bySite[existingSite] = i;
   }
-  var owned = SITE_STATUS_HEADERS.slice(0, 27);
+  var earlyIdx = SITE_STATUS_HEADERS.indexOf('EarlySignalStatus');
+  var owned =
+    earlyIdx >= 0
+      ? SITE_STATUS_HEADERS.slice(0, earlyIdx)
+      : SITE_STATUS_HEADERS.slice();
   for (var r = 0; r < (canonicalRows || []).length; r++) {
     var source = canonicalRows[r] || [];
     var siteName = String(source[1] || '').trim();
@@ -1514,8 +1518,16 @@ function replaceSheetDataRows_(sheetName, headers, rows) {
     sheet.getRange(2, 1, clearRows, clearCols).clearContent();
   }
   if (writeRows) {
+    var aligned = [];
+    for (var i = 0; i < rows.length; i++) {
+      aligned.push(
+        typeof alignRowToHeaders_ === 'function'
+          ? alignRowToHeaders_(rows[i], headers)
+          : rows[i]
+      );
+    }
     ensureSheetGrid_(sheet, 1 + writeRows, headers.length);
-    sheet.getRange(2, 1, writeRows, headers.length).setValues(rows);
+    sheet.getRange(2, 1, writeRows, headers.length).setValues(aligned);
   }
 }
 

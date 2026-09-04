@@ -81,8 +81,10 @@ assert(/DAILY_DONE_SITES_PROP/.test(doneFn), 'stores done names');
 assert(!/propertyUrl|vercel\.app/.test(doneFn), 'done state has no URL');
 
 var processFn = extractFn(codeSrc, 'processSiteDaily_');
-assert(/propertyUrl = site\.propertyUrl/.test(processFn), 'GSC uses site.propertyUrl from config');
+assert(/configuredUrl = site\.propertyUrl/.test(processFn), 'GSC starts from site.propertyUrl config');
+assert(/resolveAccessibleGscProperty_/.test(processFn), 'resolves accessible GSC property at runtime');
 assert(/开始采集 propertyUrl=/.test(processFn), 'logs the URL actually queried');
+assert(/site\.siteId \|\| ''/.test(processFn), 'snapshot includes site_id');
 
 // --- 3. 模拟：历史长域名快照不得进入续跑 GSC 请求 ---
 var enabled = [

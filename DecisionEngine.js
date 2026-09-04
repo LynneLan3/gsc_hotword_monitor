@@ -15,7 +15,7 @@ function runDecisionEngine() {
   var rules = getDecisionRules_();
   var sites = getEnabledSites();
   if (!sites.length) {
-    replaceSheetDataRows_(SHEET_NAMES.SITE_STATUS, SITE_STATUS_HEADERS, []);
+    writeDecisionSiteStatusRows_([]);
     writeLog_('INFO', '', 'runDecisionEngine 结束：无启用站点');
     return;
   }
@@ -130,7 +130,7 @@ function runDecisionEngine() {
     summaries.push(site.name + '→' + decision.action + '(' + decision.priority + ')');
   }
 
-  replaceSheetDataRows_(SHEET_NAMES.SITE_STATUS, SITE_STATUS_HEADERS, statusRows);
+  writeDecisionSiteStatusRows_(statusRows);
   refreshTodayActions_(runDate, actionRows);
   appendDecisionHistoryRows_(historyRows);
   applyTodayActionValidation_();
@@ -196,16 +196,49 @@ function ensureTodayActionHeader_() {
 function ensureSiteStatusHeader_() {
   var sheet = getSpreadsheet_().getSheetByName(SHEET_NAMES.SITE_STATUS);
   if (!sheet) return;
-  ensureSheetGrid_(sheet, 1, SITE_STATUS_HEADERS.length);
-  var lastCol = Math.max(sheet.getLastColumn(), SITE_STATUS_HEADERS.length);
-  var header = sheet.getRange(1, 1, 1, lastCol).getValues()[0];
-  var actual = [];
-  for (var i = 0; i < SITE_STATUS_HEADERS.length; i++) {
-    actual.push(String(header[i] || '').trim());
+  ensureSheetHeaders_(sheet, SITE_STATUS_HEADERS);
+}
+
+/**
+ * The daily Decision Engine owns only its canonical fields. It must never
+ * truncate additive realtime columns or clear the early-signal state.
+ */
+function writeDecisionSiteStatusRows_(canonicalRows) {
+  var sheet = ensureSheet_(SHEET_NAMES.SITE_STATUS, SITE_STATUS_HEADERS);
+  var header = ensureSheetHeaders_(sheet, SITE_STATUS_HEADERS);
+  var col = sheetHeaderIndexMap_(header);
+  var existing = sheet.getLastRow() >= 2
+    ? sheet.getRange(2, 1, sheet.getLastRow() - 1, header.length).getValues()
+    : [];
+  var bySite = {};
+  for (var i = 0; i < existing.length; i++) {
+    var existingSite = String(existing[i][col.Site] || '').trim();
+    if (existingSite) bySite[existingSite] = i;
   }
-  if (actual.join('|') === SITE_STATUS_HEADERS.join('|')) return;
-  sheet.getRange(1, 1, 1, SITE_STATUS_HEADERS.length).setValues([SITE_STATUS_HEADERS]);
-  sheet.getRange(1, 1, 1, SITE_STATUS_HEADERS.length).setFontWeight('bold');
+  var earlyIdx = SITE_STATUS_HEADERS.indexOf('EarlySignalStatus');
+  var owned =
+    earlyIdx >= 0
+      ? SITE_STATUS_HEADERS.slice(0, earlyIdx)
+      : SITE_STATUS_HEADERS.slice();
+  for (var r = 0; r < (canonicalRows || []).length; r++) {
+    var source = canonicalRows[r] || [];
+    var siteName = String(source[1] || '').trim();
+    if (!siteName) continue;
+    var index = bySite[siteName];
+    if (index === undefined) {
+      index = existing.length;
+      var blank = [];
+      for (var b = 0; b < header.length; b++) blank.push('');
+      existing.push(blank);
+      bySite[siteName] = index;
+    }
+    for (var f = 0; f < owned.length; f++) {
+      var targetCol = col[owned[f]];
+      if (targetCol !== undefined) existing[index][targetCol] = source[f];
+    }
+  }
+  ensureSheetGrid_(sheet, Math.max(1, existing.length + 1), header.length);
+  if (existing.length) sheet.getRange(2, 1, existing.length, header.length).setValues(existing);
 }
 
 function seedMissingDecisionRules_() {
@@ -1081,7 +1114,10 @@ function buildDecisionHistoryRow_(
     baseline.bestPosition === null ||
     baseline.bestPosition === undefined
       ? ''
-      : baseline.bestPosition
+      : baseline.bestPosition,
+    // Phase 7C-1 additive column; intentionally blank until an explicitly
+    // linked opportunity is available for this decision snapshot.
+    ''
   ];
 }
 
@@ -1482,8 +1518,16 @@ function replaceSheetDataRows_(sheetName, headers, rows) {
     sheet.getRange(2, 1, clearRows, clearCols).clearContent();
   }
   if (writeRows) {
+    var aligned = [];
+    for (var i = 0; i < rows.length; i++) {
+      aligned.push(
+        typeof alignRowToHeaders_ === 'function'
+          ? alignRowToHeaders_(rows[i], headers)
+          : rows[i]
+      );
+    }
     ensureSheetGrid_(sheet, 1 + writeRows, headers.length);
-    sheet.getRange(2, 1, writeRows, headers.length).setValues(rows);
+    sheet.getRange(2, 1, writeRows, headers.length).setValues(aligned);
   }
 }
 

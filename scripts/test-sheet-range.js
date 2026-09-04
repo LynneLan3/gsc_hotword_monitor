@@ -57,7 +57,8 @@ assert(/1 \+ writeRows/.test(replaceFn), 'write expands rows for payload');
 
 assert(/ensureSheetHeaders_\(sheet, SITE_STATUS_HEADERS\)/.test(decisionSrc), '站点状态 header migration is additive');
 assert(/function writeDecisionSiteStatusRows_/.test(decisionSrc), '站点状态 daily writer is header addressed');
-assert(/SITE_STATUS_HEADERS\.slice\(0, 27\)/.test(decisionSrc), 'daily writer owns only daily fields');
+assert(/EarlySignalStatus/.test(extractFn(decisionSrc, 'writeDecisionSiteStatusRows_')), 'daily writer owns fields before EarlySignalStatus');
+assert(/alignRowToHeaders_/.test(extractFn(decisionSrc, 'replaceSheetDataRows_')), 'replace pads rows to schema width');
 assert(
   /ensureSheetGrid_\(sheet, 1, DECISION_HISTORY_HEADERS.length\)/.test(decisionSrc),
   '决策历史 header expands'

@@ -77,6 +77,7 @@ function runDailyLeanWithLock_(isContinuation) {
 }
 
 function runDailyLeanUnlocked_(isContinuation) {
+  clearGscPropertyResolutionCache_();
   var startedAt = Date.now();
   if (!isContinuation) setupSheets();
 
@@ -186,20 +187,55 @@ function runDailyLeanUnlocked_(isContinuation) {
  */
 function processSiteDailyLean_(site, runDate) {
   var errors = [];
-  var propertyUrl = site.propertyUrl;
   var siteName = site.name;
+  var configuredUrl = site.propertyUrl;
   var permissionBlocked = false;
-  writeLog_('INFO', siteName, 'Lean开始采集 propertyUrl=' + propertyUrl);
+  var propertyUrl = configuredUrl;
+
+  var resolved = resolveAccessibleGscProperty_(configuredUrl);
+  if (!resolved.ok) {
+    permissionBlocked = true;
+    if (noteGscPropertyPermissionOnce_(siteName, resolved)) {
+      var missingMsg = formatPropertyPermissionMessage_(resolved);
+      errors.push(missingMsg);
+      writeLog_('ERROR', siteName, missingMsg);
+    } else {
+      errors.push(formatPropertyPermissionMessage_(resolved));
+    }
+  } else {
+    propertyUrl = resolved.propertyUrl;
+  }
+
+  writeLog_(
+    'INFO',
+    siteName,
+    'Lean开始采集 propertyUrl=' +
+      propertyUrl +
+      (resolved.ok && resolved.matchedAs !== 'url-prefix'
+        ? ' (via ' + resolved.matchedAs + ', configured=' + configuredUrl + ')'
+        : '')
+  );
 
   var latestDate = '';
-  try {
-    latestDate = findLatestGscDataDate(propertyUrl, LOOKBACK_DAYS_FOR_LATEST);
-  } catch (e) {
-    if (typeof isGscPermissionError_ === 'function' && isGscPermissionError_(e)) {
-      permissionBlocked = true;
-      errors.push('PROPERTY_PERMISSION | siteUrl=' + propertyUrl + ' | ' + e.message);
-    } else {
-      errors.push('GSC最新日期: ' + e.message);
+  if (!permissionBlocked) {
+    try {
+      latestDate = findLatestGscDataDate(propertyUrl, LOOKBACK_DAYS_FOR_LATEST);
+    } catch (e) {
+      if (typeof isGscPermissionError_ === 'function' && isGscPermissionError_(e)) {
+        permissionBlocked = true;
+        var permResolved = {
+          configuredUrl: configuredUrl,
+          tried: gscPropertyCandidates_(configuredUrl)
+        };
+        if (noteGscPropertyPermissionOnce_(siteName, permResolved)) {
+          errors.push('PROPERTY_PERMISSION | siteUrl=' + propertyUrl + ' | ' + e.message);
+          writeLog_('ERROR', siteName, 'PROPERTY_PERMISSION | siteUrl=' + propertyUrl + ' | ' + e.message);
+        } else {
+          errors.push('PROPERTY_PERMISSION | siteUrl=' + propertyUrl + ' | ' + e.message);
+        }
+      } else {
+        errors.push('GSC最新日期: ' + e.message);
+      }
     }
   }
 
@@ -287,7 +323,7 @@ function processSiteDailyLean_(site, runDate) {
     runDate,
     latestDate || '',
     siteName,
-    propertyUrl,
+    configuredUrl,
     dayNum === '' ? '' : dayNum,
     sitemapCount,
     indexedCount === '' ? '' : indexedCount,
