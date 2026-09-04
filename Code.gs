@@ -9,6 +9,9 @@ function onOpen() {
     .addItem('整理工作表视图', 'organizeSheetUi')
     .addItem('立即运行一次', 'runDaily')
     .addItem('重试每日后处理', 'runDailyFinalizer')
+    .addItem('同步GA4中央数据', 'runGa4CentralSync')
+    .addItem('授权GA4 Admin', 'authorizeGa4Admin')
+    .addItem('发现GA4站点绑定', 'discoverGa4SiteBindings')
     .addItem('运行决策引擎', 'runDecisionEngine')
     .addItem('重建站点经营', 'runPortfolioEngine')
     .addItem('重建内容资产候选', 'runWinnerAssetEngine')
@@ -250,6 +253,15 @@ function runDailyFinalizerUnlocked_(sites, runDate) {
       var ledgerDetail = formatErrorWithStack_(ledgerError);
       writeLog_('WARN', '', 'EXPERIMENT_LEDGER_MAINTENANCE_FAILED | ' + ledgerDetail);
       Logger.log('EXPERIMENT_LEDGER_MAINTENANCE_FAILED | ' + ledgerDetail);
+    }
+    try {
+      // G027 P3 — after GSC facts are written; per-site isolation inside.
+      // Must not throw into finalizer / break GSC engines.
+      runGa4CentralSync_(sites, { asOf: ga4LatestCompleteDateStr_() });
+    } catch (ga4Error) {
+      var ga4Detail = formatErrorWithStack_(ga4Error);
+      writeLog_('WARN', '', 'GA4_CENTRAL_SYNC_BATCH_FAILED | ' + ga4Detail);
+      Logger.log('GA4_CENTRAL_SYNC_BATCH_FAILED | ' + ga4Detail);
     }
     sortSheetsNewestFirst_([SHEET_NAMES.LOG]);
     setDailyRunPhase_('done');
@@ -1663,6 +1675,58 @@ function registerSuckerForLoveCrushLandingSite() {
     sheet.getRange(rowIndex, 1, 1, SITE_HEADERS.length).setValues([row]);
     sheet.getRange(rowIndex, 5).insertCheckboxes();
   }
+  SpreadsheetApp.flush();
+  var readBack = sheet.getRange(rowIndex, 1, 1, SITE_HEADERS.length).getValues()[0];
+  var result = {
+    action: values.length && rowIndex <= lastRow ? 'UPDATE_OR_REPAIR' : 'APPEND',
+    row: rowIndex,
+    siteName: String(readBack[0] || ''),
+    propertyUrl: String(readBack[1] || ''),
+    sitemapUrl: String(readBack[2] || ''),
+    day0: toDateStr_(readBack[3]),
+    enabled: readBack[4],
+    siteId: String(readBack[5] || '')
+  };
+  Logger.log(JSON.stringify(result));
+  return result;
+}
+
+/**
+ * 一次性：注册 ShipShaper: Falconeer Chronicles 到「站点配置」并回读核对。
+ * 以 site_id 为稳定键，重复执行只更新同一行，不追加重复站点。
+ * Identity sourced from Control Center registry (site_id / production_url / sitemap).
+ */
+function registerShipShaperFalconeerChroniclesSite() {
+  var SITE_ID = 'shipshaper-falconeer-chronicles';
+  var SITE_NAME = 'ShipShaper: Falconeer Chronicles';
+  var PROPERTY_URL = 'https://shipshaper-falconeer-chronicles.vercel.app/';
+  var SITEMAP_URL = 'https://shipshaper-falconeer-chronicles.vercel.app/sitemap-index.xml';
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  if (!ss) throw new Error('No active spreadsheet. Open the bound Sheet and run from editor/webapp.');
+  var sheet = ss.getSheetByName(SHEET_NAMES.SITES);
+  if (!sheet) throw new Error('找不到工作表：' + SHEET_NAMES.SITES);
+
+  var lastRow = sheet.getLastRow();
+  var values = lastRow >= 2
+    ? sheet.getRange(2, 1, lastRow - 1, SITE_HEADERS.length).getValues()
+    : [];
+  var rowIndex = -1;
+  for (var i = 0; i < values.length; i++) {
+    var existingId = String(values[i][5] || '').trim();
+    var existingName = String(values[i][0] || '').trim();
+    var existingProperty = String(values[i][1] || '').trim().replace(/\/+$/, '');
+    if (existingId === SITE_ID || existingName === SITE_NAME || existingProperty === PROPERTY_URL.replace(/\/+$/, '')) {
+      rowIndex = i + 2;
+      break;
+    }
+  }
+
+  var row = [SITE_NAME, PROPERTY_URL, SITEMAP_URL, '', true, SITE_ID, ''];
+  if (rowIndex < 0) {
+    rowIndex = Math.max(lastRow + 1, 2);
+  }
+  sheet.getRange(rowIndex, 1, 1, SITE_HEADERS.length).setValues([row]);
+  sheet.getRange(rowIndex, 5).insertCheckboxes();
   SpreadsheetApp.flush();
   var readBack = sheet.getRange(rowIndex, 1, 1, SITE_HEADERS.length).getValues()[0];
   var result = {

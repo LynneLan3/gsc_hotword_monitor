@@ -69,6 +69,43 @@ function ensureSheet_(name, headers) {
   return sheet;
 }
 
+/**
+ * Additive header migration. Existing column order and values remain intact;
+ * writers must resolve field locations from the returned header row.
+ */
+function ensureSheetHeaders_(sheet, requiredHeaders) {
+  if (!sheet || !requiredHeaders || !requiredHeaders.length) return [];
+  ensureSheetGrid_(sheet, 1, Math.max(sheet.getLastColumn(), requiredHeaders.length));
+  var lastCol = Math.max(sheet.getLastColumn(), 1);
+  var header = sheet.getRange(1, 1, 1, lastCol).getValues()[0];
+  var existing = {};
+  for (var i = 0; i < header.length; i++) {
+    var name = String(header[i] || '').trim();
+    if (name && existing[name] === undefined) existing[name] = i;
+  }
+  var additions = [];
+  for (var j = 0; j < requiredHeaders.length; j++) {
+    var required = String(requiredHeaders[j] || '').trim();
+    if (required && existing[required] === undefined) additions.push(required);
+  }
+  if (additions.length) {
+    ensureSheetGrid_(sheet, 1, lastCol + additions.length);
+    sheet.getRange(1, lastCol + 1, 1, additions.length).setValues([additions]);
+    sheet.getRange(1, lastCol + 1, 1, additions.length).setFontWeight('bold');
+    header = header.concat(additions);
+  }
+  return header;
+}
+
+function sheetHeaderIndexMap_(header) {
+  var map = {};
+  for (var i = 0; i < (header || []).length; i++) {
+    var name = String(header[i] || '').trim();
+    if (name && map[name] === undefined) map[name] = i;
+  }
+  return map;
+}
+
 function applyColumnWidths_(sheet, name) {
   var widths = {};
   if (name === SHEET_NAMES.SITES) {
@@ -611,18 +648,26 @@ function setupSheets() {
   ensureSheet_(SHEET_NAMES.OPPORTUNITIES, OPPORTUNITY_HEADERS);
   ensureSheet_(SHEET_NAMES.DEMAND_RADAR, DEMAND_RADAR_HEADERS);
   ensureDemandRadarHeader_();
+  ensureSheet_(SHEET_NAMES.FRESH_SITE_MONITOR, FRESH_SITE_MONITOR_HEADERS);
   ensureSheet_(SHEET_NAMES.FRESH_QUERY_MONITOR, FRESH_QUERY_MONITOR_HEADERS);
+  ensureSheet_(SHEET_NAMES.FRESH_PAGE_MONITOR, FRESH_PAGE_MONITOR_HEADERS);
   ensureSheet_(SHEET_NAMES.RESEARCH_JOBS, RESEARCH_JOB_HEADERS);
   ensureSheet_(SHEET_NAMES.RESEARCH_REVIEW, RESEARCH_REVIEW_HEADERS);
   ensureSheet_(SHEET_NAMES.DEVELOPMENT_TASKS, DEVELOPMENT_TASK_HEADERS);
   ensureSheet_(SHEET_NAMES.CONTENT_UPDATES, CONTENT_UPDATE_HEADERS);
   ensureContentUpdateHeader_();
+  ensureSheet_(SHEET_NAMES.GA4_DAILY, GA4_DAILY_HEADERS);
+  ensureSheet_(SHEET_NAMES.GA4_COUNTRY, GA4_COUNTRY_HEADERS);
+  ensureSheet_(SHEET_NAMES.GA4_SITE_ROLLUP, GA4_SITE_ROLLUP_HEADERS);
+  ensureSheet_(SHEET_NAMES.GA4_DISCOVERY, GA4_DISCOVERY_HEADERS);
+  ensureSheetHeaders_(ss.getSheetByName(SHEET_NAMES.SITES), SITE_HEADERS);
 
   // 不 ensure PAGE_OPPORTUNITIES：旧实验页只识别/排序/隐藏，不新建
   ensureUsageGuideSheet_();
   ensureMetricGuideSheet_();
 
   seedSitesIfEmpty_();
+  ensureRealtimePropertyUrlDefaults_();
   seedMissingDecisionRules_();
   applyTodayActionValidation_();
   ensureResearchJobResultColumns_(
@@ -656,6 +701,24 @@ function seedSitesIfEmpty_() {
   sheet.getRange(2, 5, rows.length, 1).insertCheckboxes();
 }
 
+/** Add the one known migration pair without changing a non-empty operator value. */
+function ensureRealtimePropertyUrlDefaults_() {
+  var sheet = getSpreadsheet_().getSheetByName(SHEET_NAMES.SITES);
+  if (!sheet || sheet.getLastRow() < 2) return;
+  var header = ensureSheetHeaders_(sheet, SITE_HEADERS);
+  var col = sheetHeaderIndexMap_(header);
+  var nameCol = col['站点名称'];
+  var realtimeCol = col['Realtime Property URLs'];
+  if (nameCol === undefined || realtimeCol === undefined) return;
+  var values = sheet.getRange(2, 1, sheet.getLastRow() - 1, header.length).getValues();
+  for (var i = 0; i < values.length; i++) {
+    if (String(values[i][nameCol] || '').trim() !== 'Halloween: The Game') continue;
+    if (String(values[i][realtimeCol] || '').trim()) return;
+    sheet.getRange(i + 2, realtimeCol + 1).setValue(HALLOWEEN_REALTIME_PROPERTY_URLS);
+    return;
+  }
+}
+
 /**
  * 读取启用的站点配置
  * @return {Array<Object>}
@@ -663,30 +726,45 @@ function seedSitesIfEmpty_() {
 function getEnabledSites() {
   var sheet = getSpreadsheet_().getSheetByName(SHEET_NAMES.SITES);
   if (!sheet || sheet.getLastRow() < 2) return [];
-
-  var values = sheet.getRange(2, 1, sheet.getLastRow(), SITE_HEADERS.length).getValues();
+  var header = ensureSheetHeaders_(sheet, SITE_HEADERS);
+  var col = sheetHeaderIndexMap_(header);
+  var values = sheet.getRange(2, 1, sheet.getLastRow() - 1, header.length).getValues();
   var sites = [];
   for (var i = 0; i < values.length; i++) {
     var row = values[i];
-    var name = String(row[0] || '').trim();
-    var propertyUrl = String(row[1] || '').trim();
+    var name = String(row[col['站点名称']] || '').trim();
+    var propertyUrl = String(row[col['Property URL']] || '').trim();
     if (!name || !propertyUrl) continue;
 
-    var enabled = row[4];
+    var enabled = row[col.Enabled];
     if (enabled === false || enabled === 'FALSE' || enabled === 'false' || enabled === 0) {
       continue;
     }
 
-    var day0 = row[3];
+    var day0 = row[col.Day0];
     var day0Str = toDateStr_(day0);
 
-    var sitemapUrl = String(row[2] || '').trim() || defaultSitemapUrl_(propertyUrl);
+    var sitemapUrl = String(row[col['Sitemap URL']] || '').trim() || defaultSitemapUrl_(propertyUrl);
 
     sites.push({
       name: name,
       propertyUrl: normalizePropertyUrlForGsc_(propertyUrl),
       sitemapUrl: sitemapUrl,
       day0: day0Str,
+      siteId: String(row[col.site_id] || '').trim(),
+      realtimePropertyUrls: String(row[col['Realtime Property URLs']] || '').trim(),
+      ga4PropertyId: String(
+        row[col.ga4_property_id] !== undefined ? row[col.ga4_property_id] : ''
+      ).trim(),
+      ga4StreamId: String(
+        row[col.ga4_stream_id] !== undefined ? row[col.ga4_stream_id] : ''
+      ).trim(),
+      ga4MeasurementId: String(
+        row[col.ga4_measurement_id] !== undefined ? row[col.ga4_measurement_id] : ''
+      ).trim(),
+      productionUrl: String(
+        row[col.production_url] !== undefined ? row[col.production_url] : ''
+      ).trim(),
       rowIndex: i + 2
     });
   }
@@ -820,7 +898,11 @@ function getLatestKnownIndexStats_(siteName) {
 
 function normalizeKeyDate_(v) {
   if (v instanceof Date) return formatDate_(v);
-  return String(v || '').trim().substring(0, 10);
+  var raw = String(v || '').trim();
+  if (!raw) return '';
+  if (/^\d{4}-\d{2}-\d{2}/.test(raw)) return raw.substring(0, 10);
+  var parsed = new Date(raw);
+  return isNaN(parsed.getTime()) ? '' : formatDate_(parsed);
 }
 
 /**

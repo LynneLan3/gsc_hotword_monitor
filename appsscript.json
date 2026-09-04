@@ -1,6 +1,19 @@
 {
   "timeZone": "Asia/Shanghai",
-  "dependencies": {},
+  "dependencies": {
+    "enabledAdvancedServices": [
+      {
+        "userSymbol": "AnalyticsAdmin",
+        "version": "v1beta",
+        "serviceId": "analyticsadmin"
+      },
+      {
+        "userSymbol": "AnalyticsData",
+        "version": "v1beta",
+        "serviceId": "analyticsdata"
+      }
+    ]
+  },
   "exceptionLogging": "STACKDRIVER",
   "runtimeVersion": "V8",
   "executionApi": {
@@ -12,6 +25,7 @@
   },
   "oauthScopes": [
     "https://www.googleapis.com/auth/webmasters.readonly",
+    "https://www.googleapis.com/auth/analytics.readonly",
     "https://www.googleapis.com/auth/spreadsheets",
     "https://www.googleapis.com/auth/spreadsheets.currentonly",
     "https://www.googleapis.com/auth/script.external_request",

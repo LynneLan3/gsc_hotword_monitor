@@ -5,19 +5,63 @@
 function onOpen() {
   SpreadsheetApp.getUi()
     .createMenu('热词站监控')
-    .addItem('运行每日监控', 'runDaily')
-    .addItem('运行实时 Query 监控', 'runFreshQueryMonitor')
-    .addItem('运行 URL 索引批次', 'runIndexAuditBatch')
-    .addItem('系统状态', 'showGscSystemStatus')
+    .addItem('初始化表格', 'setup')
+    .addItem('整理工作表视图', 'organizeSheetUi')
+    .addItem('立即运行一次', 'runDaily')
+    .addItem('重试每日后处理', 'runDailyFinalizer')
+    .addItem('同步GA4中央数据', 'runGa4CentralSync')
+    .addItem('授权GA4 Admin', 'authorizeGa4Admin')
+    .addItem('发现GA4站点绑定', 'discoverGa4SiteBindings')
+    .addItem('运行决策引擎', 'runDecisionEngine')
+    .addItem('重建站点经营', 'runPortfolioEngine')
+    .addItem('重建内容资产候选', 'runWinnerAssetEngine')
+    .addItem('处理内容资产决定', 'processWinnerAssetDecisions')
+    .addItem('同步内容资产研究结果', 'syncWinnerAssetResearchResults')
+    .addItem('观察决策结果', 'runDecisionOutcomeObservation')
+    .addItem('同步人工决策', 'syncHumanDecisions')
+    .addItem('记录内容更新', 'recordContentInterventionMenu')
+    .addItem('重建反馈样本', 'rebuildFeedbackSamples')
+    .addItem('重建规则评分卡', 'rebuildRuleScorecard')
+    .addItem('重建评价资格', 'rebuildEvaluationEligibility')
+    .addItem('重建效果变化', 'rebuildOutcomeDelta')
+    .addItem('重建效果评价', 'rebuildEffectEvaluation')
+    .addItem('运行内容机会引擎', 'runContentOpportunityEngine')
+    .addItem('刷新需求雷达', 'refreshDemandRadar')
+    .addItem('运行实时Query监控', 'runFreshQueryMonitor')
+    .addItem('创建需求发现任务', 'createDemandDiscoveryJobs')
+    .addItem('创建搜索需求任务', 'createSearchDemandJobs')
+    .addItem('创建研究任务', 'createResearchJobs')
+    .addItem('重置并创建研究任务', 'resetAndCreateResearchJobs')
+    .addItem('处理研究审核决定', 'processResearchReviewDecisions')
+    .addItem('创建开发任务', 'createDevelopmentTasks')
+    .addItem('运行URL索引批次', 'runIndexAuditBatch')
+    .addItem('回填最近14天GSC数据', 'backfill14Days')
+    .addItem('补采14天Query页面明细', 'backfillQueryPageDetails14Days')
+    .addItem('补采14天Page明细', 'backfillPageDetails14Days')
     .addSeparator()
-    .addItem('管理员：重装自动触发器', 'createDailyTrigger')
+    .addItem('测试GSC权限', 'testGscAccess')
+    .addItem('运行自测', 'runSelfTests')
+    .addItem('创建每日自动任务', 'createDailyTrigger')
+    .addItem('删除每日自动任务', 'removeDailyTrigger')
     .addToUi();
 }
+
 
 /** 初始化全部工作表；DEFAULT_SITES 仅在「站点配置」为空时预填，不覆盖已有行 */
 function setup() {
   setupSheets();
   SpreadsheetApp.getUi().alert('初始化完成。请在「站点配置」填写各站 Day0（可选），然后运行 testGscAccess / runDaily。');
+}
+
+/**
+ * Shared guard for manual daily/finalizer/index entry points.
+ * The project is container-bound, so an active Spreadsheet is the only
+ * prerequisite these flows require before their own sheet setup/reads.
+ */
+function assertRuntimePrerequisites_() {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  if (!ss) throw new Error('No active spreadsheet');
+  return ss;
 }
 
 /**
@@ -74,10 +118,7 @@ function runDailyWithLock_(isContinuation) {
 function runDailyUnlocked_(isContinuation) {
   var startedAt = Date.now();
   isContinuation = !!isContinuation;
-
-  if (!isContinuation) {
-    setupSheets(); // 确保表存在，不覆盖已有「站点配置」数据
-  }
+  assertRuntimePrerequisites_();
 
   var sites = getEnabledSites();
   var runDate = todayStr_();
@@ -185,7 +226,7 @@ function runDailyFinalizer() {
     return 'runDailyFinalizer skipped: lock busy';
   }
   try {
-    setupSheets();
+    assertRuntimePrerequisites_();
     var sites = getEnabledSites();
     var runDate = todayStr_();
     return runDailyFinalizerUnlocked_(sites, runDate);
@@ -200,7 +241,28 @@ function runDailyFinalizerUnlocked_(sites, runDate) {
     runDecisionEngine();
     runContentOpportunityEngine();
     refreshDemandRadar_(sites, runDate);
-    saveGscMonitoringRaw_('gsc-daily-' + runDate, runDate);
+    refreshUnifiedActionQueue_(runDate);
+    syncDevelopmentTasksFromApprovedDecisions();
+    refreshImplementationHandoffs_();
+    try {
+      maintainExperimentLedger_();
+      // Receipt observations run after all GSC collection and reuse this
+      // daily lock; no second daily trigger is created.
+      runInterventionObservationsUnlocked_();
+    } catch (ledgerError) {
+      var ledgerDetail = formatErrorWithStack_(ledgerError);
+      writeLog_('WARN', '', 'EXPERIMENT_LEDGER_MAINTENANCE_FAILED | ' + ledgerDetail);
+      Logger.log('EXPERIMENT_LEDGER_MAINTENANCE_FAILED | ' + ledgerDetail);
+    }
+    try {
+      // G027 P3 — after GSC facts are written; per-site isolation inside.
+      // Must not throw into finalizer / break GSC engines.
+      runGa4CentralSync_(sites, { asOf: ga4LatestCompleteDateStr_() });
+    } catch (ga4Error) {
+      var ga4Detail = formatErrorWithStack_(ga4Error);
+      writeLog_('WARN', '', 'GA4_CENTRAL_SYNC_BATCH_FAILED | ' + ga4Detail);
+      Logger.log('GA4_CENTRAL_SYNC_BATCH_FAILED | ' + ga4Detail);
+    }
     sortSheetsNewestFirst_([SHEET_NAMES.LOG]);
     setDailyRunPhase_('done');
     deleteDailyContinuationTriggers_();
@@ -321,7 +383,7 @@ function deleteDailyContinuationTriggers_() {
  * 同一站同一天最多完整 Inspection 一次；全部完成后再次调用直接 return。
  */
 function runIndexAuditBatch() {
-  setupSheets();
+  assertRuntimePrerequisites_();
   var sites = getEnabledSites();
   var runDate = todayStr_();
   var total = sites.length;
@@ -337,7 +399,6 @@ function runIndexAuditBatch() {
 
   if (cursor >= total) {
     writeLog_('INFO', '', '今日URL索引轮询已全部完成 ' + total + '/' + total);
-    saveGscMonitoringRaw_('gsc-url-' + runDate, runDate);
     sortSheetsNewestFirst_([SHEET_NAMES.URL_INDEX, SHEET_NAMES.LOG]);
     return;
   }
@@ -368,7 +429,6 @@ function runIndexAuditBatch() {
 
   if (cursor >= total) {
     writeLog_('INFO', '', '今日URL索引轮询已全部完成 ' + total + '/' + total);
-    saveGscMonitoringRaw_('gsc-url-' + runDate, runDate);
   } else {
     writeLog_('INFO', '', 'runIndexAuditBatch 结束，今日进度 ' + cursor + '/' + total);
   }
@@ -633,7 +693,8 @@ function processSiteDaily_(site, runDate) {
     topPages,
     newQueriesText,
     status,
-    errors.join(' | ')
+    errors.join(' | '),
+    site.siteId || ''
   ]);
 
   writeLog_(
@@ -1544,7 +1605,7 @@ function updateAgent64CanonicalDomainConfig() {
     // 不存在则追加一行，避免静默失败
     rowIndex = lastRow + 1;
     sheet.getRange(rowIndex, 1, rowIndex, SITE_HEADERS.length).setValues([
-      [TARGET_NAME, PROPERTY_URL, SITEMAP_URL, DAY0, true]
+      [TARGET_NAME, PROPERTY_URL, SITEMAP_URL, DAY0, true, 'agent-64-spies-never-die']
     ]);
     sheet.getRange(rowIndex, 5).insertCheckboxes();
     Logger.log('APPEND row=' + rowIndex + ' name=' + TARGET_NAME);
@@ -1577,6 +1638,163 @@ function updateAgent64CanonicalDomainConfig() {
 }
 
 /**
+ * 一次性：注册 Sucker for Love: Crush Landing 到「站点配置」并回读核对。
+ * 以 site_id 为稳定键，重复执行只更新同一行，不追加重复站点。
+ */
+function registerSuckerForLoveCrushLandingSite() {
+  var SITE_ID = 'sucker-for-love-crush-landing';
+  var SITE_NAME = 'Sucker for Love: Crush Landing Guide';
+  var PROPERTY_URL = 'https://crushlanding.wiki/';
+  var SITEMAP_URL = 'https://crushlanding.wiki/sitemap-index.xml';
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  if (!ss) throw new Error('No active spreadsheet. Open the bound Sheet and run from editor/webapp.');
+  var sheet = ss.getSheetByName(SHEET_NAMES.SITES);
+  if (!sheet) throw new Error('找不到工作表：' + SHEET_NAMES.SITES);
+
+  var lastRow = sheet.getLastRow();
+  var values = lastRow >= 2
+    ? sheet.getRange(2, 1, lastRow - 1, SITE_HEADERS.length).getValues()
+    : [];
+  var rowIndex = -1;
+  for (var i = 0; i < values.length; i++) {
+    var existingId = String(values[i][5] || '').trim();
+    var existingName = String(values[i][0] || '').trim();
+    var existingProperty = String(values[i][1] || '').trim().replace(/\/+$/, '');
+    if (existingId === SITE_ID || existingName === SITE_NAME || existingProperty === PROPERTY_URL.replace(/\/+$/, '')) {
+      rowIndex = i + 2;
+      break;
+    }
+  }
+
+  var row = [SITE_NAME, PROPERTY_URL, SITEMAP_URL, '', true, SITE_ID];
+  if (rowIndex < 0) {
+    rowIndex = Math.max(lastRow + 1, 2);
+    sheet.getRange(rowIndex, 1, 1, SITE_HEADERS.length).setValues([row]);
+    sheet.getRange(rowIndex, 5).insertCheckboxes();
+  } else {
+    sheet.getRange(rowIndex, 1, 1, SITE_HEADERS.length).setValues([row]);
+    sheet.getRange(rowIndex, 5).insertCheckboxes();
+  }
+  SpreadsheetApp.flush();
+  var readBack = sheet.getRange(rowIndex, 1, 1, SITE_HEADERS.length).getValues()[0];
+  var result = {
+    action: values.length && rowIndex <= lastRow ? 'UPDATE_OR_REPAIR' : 'APPEND',
+    row: rowIndex,
+    siteName: String(readBack[0] || ''),
+    propertyUrl: String(readBack[1] || ''),
+    sitemapUrl: String(readBack[2] || ''),
+    day0: toDateStr_(readBack[3]),
+    enabled: readBack[4],
+    siteId: String(readBack[5] || '')
+  };
+  Logger.log(JSON.stringify(result));
+  return result;
+}
+
+/**
+ * 一次性：注册 ShipShaper: Falconeer Chronicles 到「站点配置」并回读核对。
+ * 以 site_id 为稳定键，重复执行只更新同一行，不追加重复站点。
+ * Identity sourced from Control Center registry (site_id / production_url / sitemap).
+ */
+function registerShipShaperFalconeerChroniclesSite() {
+  var SITE_ID = 'shipshaper-falconeer-chronicles';
+  var SITE_NAME = 'ShipShaper: Falconeer Chronicles';
+  var PROPERTY_URL = 'https://shipshaper-falconeer-chronicles.vercel.app/';
+  var SITEMAP_URL = 'https://shipshaper-falconeer-chronicles.vercel.app/sitemap-index.xml';
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  if (!ss) throw new Error('No active spreadsheet. Open the bound Sheet and run from editor/webapp.');
+  var sheet = ss.getSheetByName(SHEET_NAMES.SITES);
+  if (!sheet) throw new Error('找不到工作表：' + SHEET_NAMES.SITES);
+
+  var lastRow = sheet.getLastRow();
+  var values = lastRow >= 2
+    ? sheet.getRange(2, 1, lastRow - 1, SITE_HEADERS.length).getValues()
+    : [];
+  var rowIndex = -1;
+  for (var i = 0; i < values.length; i++) {
+    var existingId = String(values[i][5] || '').trim();
+    var existingName = String(values[i][0] || '').trim();
+    var existingProperty = String(values[i][1] || '').trim().replace(/\/+$/, '');
+    if (existingId === SITE_ID || existingName === SITE_NAME || existingProperty === PROPERTY_URL.replace(/\/+$/, '')) {
+      rowIndex = i + 2;
+      break;
+    }
+  }
+
+  var row = [SITE_NAME, PROPERTY_URL, SITEMAP_URL, '', true, SITE_ID, ''];
+  if (rowIndex < 0) {
+    rowIndex = Math.max(lastRow + 1, 2);
+  }
+  sheet.getRange(rowIndex, 1, 1, SITE_HEADERS.length).setValues([row]);
+  sheet.getRange(rowIndex, 5).insertCheckboxes();
+  SpreadsheetApp.flush();
+  var readBack = sheet.getRange(rowIndex, 1, 1, SITE_HEADERS.length).getValues()[0];
+  var result = {
+    action: values.length && rowIndex <= lastRow ? 'UPDATE_OR_REPAIR' : 'APPEND',
+    row: rowIndex,
+    siteName: String(readBack[0] || ''),
+    propertyUrl: String(readBack[1] || ''),
+    sitemapUrl: String(readBack[2] || ''),
+    day0: toDateStr_(readBack[3]),
+    enabled: readBack[4],
+    siteId: String(readBack[5] || '')
+  };
+  Logger.log(JSON.stringify(result));
+  return result;
+}
+
+/**
+ * 一次性：注册 Zad Archery Help 到「站点配置」并回读核对。
+ * 以 site_id 为稳定键，重复执行只更新同一行，不追加重复站点。
+ */
+function registerZadArcherySite() {
+  var SITE_ID = 'zad-archery';
+  var SITE_NAME = 'Zad Archery Help';
+  var PROPERTY_URL = 'https://zadarchery.help/';
+  var SITEMAP_URL = 'https://zadarchery.help/sitemap-index.xml';
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  if (!ss) throw new Error('No active spreadsheet. Open the bound Sheet and run from editor/webapp.');
+  var sheet = ss.getSheetByName(SHEET_NAMES.SITES);
+  if (!sheet) throw new Error('找不到工作表：' + SHEET_NAMES.SITES);
+
+  var lastRow = sheet.getLastRow();
+  var values = lastRow >= 2
+    ? sheet.getRange(2, 1, lastRow - 1, SITE_HEADERS.length).getValues()
+    : [];
+  var rowIndex = -1;
+  for (var i = 0; i < values.length; i++) {
+    var existingId = String(values[i][5] || '').trim();
+    var existingName = String(values[i][0] || '').trim();
+    var existingProperty = String(values[i][1] || '').trim().replace(/\/+$/, '');
+    if (existingId === SITE_ID || existingName === SITE_NAME || existingProperty === PROPERTY_URL.replace(/\/+$/, '')) {
+      rowIndex = i + 2;
+      break;
+    }
+  }
+
+  var row = [SITE_NAME, PROPERTY_URL, SITEMAP_URL, '', true, SITE_ID, ''];
+  if (rowIndex < 0) {
+    rowIndex = Math.max(lastRow + 1, 2);
+  }
+  sheet.getRange(rowIndex, 1, 1, SITE_HEADERS.length).setValues([row]);
+  sheet.getRange(rowIndex, 5).insertCheckboxes();
+  SpreadsheetApp.flush();
+  var readBack = sheet.getRange(rowIndex, 1, 1, SITE_HEADERS.length).getValues()[0];
+  var result = {
+    action: values.length && rowIndex <= lastRow ? 'UPDATE_OR_REPAIR' : 'APPEND',
+    row: rowIndex,
+    siteName: String(readBack[0] || ''),
+    propertyUrl: String(readBack[1] || ''),
+    sitemapUrl: String(readBack[2] || ''),
+    day0: toDateStr_(readBack[3]),
+    enabled: readBack[4],
+    siteId: String(readBack[5] || '')
+  };
+  Logger.log(JSON.stringify(result));
+  return result;
+}
+
+/**
  * 回读 Agent 64 短域名配置、近期日志，以及今日 Query 行数（用于幂等核对）。
  * 只读：不改「站点配置」、不改写 2026-08-14 长域名历史快照。
  */
@@ -1599,7 +1817,8 @@ function readAgent64ShortDomainStatus_() {
           propertyUrl: values[i][1],
           sitemapUrl: values[i][2],
           day0: toDateStr_(values[i][3]),
-          enabled: values[i][4]
+          enabled: values[i][4],
+          siteId: String(values[i][5] || '').trim()
         };
         break;
       }

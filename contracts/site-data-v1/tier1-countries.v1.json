@@ -1,0 +1,32 @@
+{
+  "contract_version": "site-data-v1",
+  "definition_id": "tier1-countries.v1",
+  "description": "Central Tier-1 country set for G027 GA4 rollups and Journey / ad-platform readiness. Must not be redefined inside daily-report scripts.",
+  "country_code_standard": "ISO-3166-1-alpha-2",
+  "countries": [
+    "US",
+    "CA",
+    "GB",
+    "AU",
+    "NZ",
+    "IE",
+    "DE",
+    "FR",
+    "NL",
+    "SE",
+    "NO",
+    "DK",
+    "FI",
+    "CH",
+    "AT",
+    "BE",
+    "LU",
+    "SG",
+    "JP",
+    "KR"
+  ],
+  "derived_metrics": {
+    "tier1_sessions_30d": "sum of ga4_by_country.sessions where window_days=30 and country_code in countries",
+    "tier1_share_30d": "tier1_sessions_30d / ga4_sessions_30d when ga4_sessions_30d > 0; else null"
+  }
+}

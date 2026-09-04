@@ -656,6 +656,11 @@ function setupSheets() {
   ensureSheet_(SHEET_NAMES.DEVELOPMENT_TASKS, DEVELOPMENT_TASK_HEADERS);
   ensureSheet_(SHEET_NAMES.CONTENT_UPDATES, CONTENT_UPDATE_HEADERS);
   ensureContentUpdateHeader_();
+  ensureSheet_(SHEET_NAMES.GA4_DAILY, GA4_DAILY_HEADERS);
+  ensureSheet_(SHEET_NAMES.GA4_COUNTRY, GA4_COUNTRY_HEADERS);
+  ensureSheet_(SHEET_NAMES.GA4_SITE_ROLLUP, GA4_SITE_ROLLUP_HEADERS);
+  ensureSheet_(SHEET_NAMES.GA4_DISCOVERY, GA4_DISCOVERY_HEADERS);
+  ensureSheetHeaders_(ss.getSheetByName(SHEET_NAMES.SITES), SITE_HEADERS);
 
   // 不 ensure PAGE_OPPORTUNITIES：旧实验页只识别/排序/隐藏，不新建
   ensureUsageGuideSheet_();
@@ -748,6 +753,18 @@ function getEnabledSites() {
       day0: day0Str,
       siteId: String(row[col.site_id] || '').trim(),
       realtimePropertyUrls: String(row[col['Realtime Property URLs']] || '').trim(),
+      ga4PropertyId: String(
+        row[col.ga4_property_id] !== undefined ? row[col.ga4_property_id] : ''
+      ).trim(),
+      ga4StreamId: String(
+        row[col.ga4_stream_id] !== undefined ? row[col.ga4_stream_id] : ''
+      ).trim(),
+      ga4MeasurementId: String(
+        row[col.ga4_measurement_id] !== undefined ? row[col.ga4_measurement_id] : ''
+      ).trim(),
+      productionUrl: String(
+        row[col.production_url] !== undefined ? row[col.production_url] : ''
+      ).trim(),
       rowIndex: i + 2
     });
   }

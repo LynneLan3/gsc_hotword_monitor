@@ -39,6 +39,12 @@ var SHEET_NAMES = {
   INTERVENTION_OBSERVATIONS: '干预观察',
   INTERVENTION_TIMELINE: '干预时间线',
   EARLY_FOLLOWUP_STATE: 'EARLY_FOLLOWUP_STATE',
+  /** G027 P3 — GA4 Central Sync (identity join: site_id) */
+  GA4_DAILY: 'GA4_DAILY',
+  GA4_COUNTRY: 'GA4_COUNTRY',
+  GA4_SITE_ROLLUP: 'GA4_SITE_ROLLUP',
+  /** G027 P4 — GA4 identity discovery audit */
+  GA4_DISCOVERY: 'GA4_DISCOVERY',
   /** 旧/实验层：仅用于识别与隐藏，setup 不会创建 */
   PAGE_OPPORTUNITIES: 'PAGE_OPPORTUNITIES'
 };
@@ -149,7 +155,46 @@ var SHEET_UI_HIDDEN = [SHEET_NAMES.PAGE_OPPORTUNITIES, SHEET_NAMES.EARLY_FOLLOWU
 // existing 5-column 站点配置 rows remain readable without migration.
 var SITE_HEADERS = [
   '站点名称', 'Property URL', 'Sitemap URL', 'Day0', 'Enabled', 'site_id',
-  'Realtime Property URLs'
+  'Realtime Property URLs', 'ga4_property_id', 'ga4_stream_id', 'ga4_measurement_id',
+  'production_url'
+];
+/** G027 P3 — daily sessions fact (idempotent key: site_id + date) */
+var GA4_DAILY_HEADERS = ['site_id', 'date', 'sessions', 'synced_at'];
+/** G027 P3 — country sessions fact (idempotent key: site_id + date + country) */
+var GA4_COUNTRY_HEADERS = ['site_id', 'date', 'country', 'sessions', 'synced_at'];
+/**
+ * G027 P3 — Journey-ready site rollup (no GSC clicks fallback).
+ * Upsert key: site_id (latest as_of wins).
+ */
+var GA4_SITE_ROLLUP_HEADERS = [
+  'site_id',
+  'as_of',
+  'production_url',
+  'ga4_sessions_7d',
+  'ga4_sessions_30d',
+  'tier1_sessions_30d',
+  'tier1_share_30d',
+  'status',
+  'error',
+  'synced_at'
+];
+/**
+ * G027 P4 — discovery audit rows (idempotent key: site_id + discovered_at batch).
+ * Latest row per site_id is authoritative for operator review.
+ */
+var GA4_DISCOVERY_HEADERS = [
+  'site_id',
+  'site_name',
+  'production_url',
+  'match_status',
+  'ga4_property_id',
+  'ga4_stream_id',
+  'ga4_measurement_id',
+  'property_display_name',
+  'default_uri',
+  'candidate_count',
+  'notes',
+  'discovered_at'
 ];
 var SNAPSHOT_HEADERS = [
   'RunDate', 'LatestGSCDataDate', 'Site', 'PropertyURL', 'Day',
@@ -1388,6 +1433,119 @@ var BRAND_TOKEN_STOPWORDS = {
  * 脚本项目时区仍为 Asia/Shanghai（RunDate / Trigger），二者不可混用。
  */
 var GSC_TIMEZONE = 'America/Los_Angeles';
+
+/**
+ * G027 P3 — GA4 date window rules (distinct from GSC America/Los_Angeles).
+ * - Calendar dates for GA4 reports use the script project timezone (Asia/Shanghai)
+ *   as the operational day boundary for as_of / 7D / 30D windows.
+ * - GA4_DATA_LAG_DAYS excludes incomplete trailing days (today + lag-1).
+ * - latest-complete-date = todayStr_() - GA4_DATA_LAG_DAYS.
+ * - GSC lag uses findLatestGscDataDate independently; never mix GSC clicks into
+ *   ga4_sessions_* fields.
+ */
+var GA4_DATA_LAG_DAYS = 2;
+/** Inclusive lookback length ending at latest-complete-date (covers 30D + buffer). */
+var GA4_SYNC_LOOKBACK_DAYS = 35;
+var GA4_ROLLUP_WINDOW_7D = 7;
+var GA4_ROLLUP_WINDOW_30D = 30;
+var GA4_SENTINELS = { UNKNOWN: 'UNKNOWN', MISSING: 'MISSING', DISABLED: 'DISABLED' };
+/**
+ * Frozen deployment copy of control-plane
+ * contracts/site-data-v1/tier1-countries.v1.json (and local
+ * gsc_hotword_monitor/contracts/site-data-v1/tier1-countries.v1.json).
+ * Do not invent a second Tier-1 list in daily-report scripts.
+ * scripts/test-ga4-sync.js asserts equality with the JSON SoT.
+ */
+var GA4_TIER1_COUNTRIES_V1 = [
+  'US', 'CA', 'GB', 'AU', 'NZ', 'IE', 'DE', 'FR', 'NL', 'SE',
+  'NO', 'DK', 'FI', 'CH', 'AT', 'BE', 'LU', 'SG', 'JP', 'KR'
+];
+var GA4_TIER1_DEFINITION_REF = 'contracts/site-data-v1/tier1-countries.v1.json';
+
+/**
+ * G027 P4 — Active-site identity snapshot from hotword-control-center
+ * registry/sites.yaml (production_url + known measurement IDs).
+ * Used as the deterministic match baseline inside Apps Script (no local secrets).
+ * Refresh when Registry production_url / measurement_id changes.
+ */
+var GA4_REGISTRY_IDENTITY_V1 = {
+  'agefield-high-rock-the-school': {
+    production_url: 'https://agefield-high-rock-the-school.vercel.app',
+    ga4_measurement_id: 'G-018TGF2YT4'
+  },
+  'mortal-shell-ii': {
+    production_url: 'https://mortalshell2guide.com',
+    ga4_measurement_id: 'G-1D66T98097'
+  },
+  beastlink: {
+    production_url: 'https://beast-link.vercel.app',
+    ga4_measurement_id: 'G-ME3VVC6QLD'
+  },
+  'sovereign-tower': {
+    production_url: 'https://sovereign-tower.vercel.app',
+    ga4_measurement_id: 'G-FCM51HDVC1'
+  },
+  'approximately-up': {
+    production_url: 'https://approximately-up.vercel.app',
+    ga4_measurement_id: 'G-MPK5L4KF4D'
+  },
+  'grain-rot': {
+    production_url: 'https://grainrot.vercel.app',
+    ga4_measurement_id: 'G-6XGRN3QF1N'
+  },
+  'leafy-corner': {
+    production_url: 'https://leafy-corner.vercel.app',
+    ga4_measurement_id: 'G-VJ4HPNTW3J'
+  },
+  'agent-64-spies-never-die': {
+    production_url: 'https://agent-64.vercel.app',
+    ga4_measurement_id: 'G-1PRF1N423J'
+  },
+  'project-p-i-t-t': {
+    production_url: 'https://project-p-i-t-t.vercel.app',
+    ga4_measurement_id: ''
+  },
+  'brigandine-abyss': {
+    production_url: 'https://brigandine-abyss.vercel.app',
+    ga4_measurement_id: ''
+  },
+  'nba-2k27': {
+    production_url: 'https://nba-2k27-game.vercel.app',
+    ga4_measurement_id: ''
+  },
+  bombanana: {
+    production_url: 'https://bombanana-guide.vercel.app',
+    ga4_measurement_id: ''
+  },
+  'metal-gear-solid-4-master-collection': {
+    production_url: 'https://metal-gear-solid-4-master-collectio.vercel.app',
+    ga4_measurement_id: ''
+  },
+  'resonance-a-plague-tale-legacy': {
+    production_url: 'MISSING',
+    ga4_measurement_id: ''
+  },
+  'serious-sam-shatterverse': {
+    production_url: 'https://serious-sam-shatterverse.vercel.app/',
+    ga4_measurement_id: ''
+  },
+  'halloween-the-game': {
+    production_url: 'https://halloween-the-game-guide.vercel.app/',
+    ga4_measurement_id: ''
+  },
+  'sucker-for-love-crush-landing': {
+    production_url: 'https://crushlanding.wiki/',
+    ga4_measurement_id: ''
+  },
+  'zad-archery': {
+    production_url: 'https://zadarchery.help',
+    ga4_measurement_id: ''
+  },
+  'shipshaper-falconeer-chronicles': {
+    production_url: 'https://shipshaper-falconeer-chronicles.vercel.app/',
+    ga4_measurement_id: ''
+  }
+};
 
 /** 首次 setup 时预填的站点（Day0 留空；已有「站点配置」数据时不会覆盖） */
 var DEFAULT_SITES = [
