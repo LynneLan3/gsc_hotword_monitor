@@ -229,9 +229,16 @@ var OPS_STATUS = {
   DECLINE: '衰退',
   PAUSE: '暂停投入'
 };
-/** Formal 3d impression growth thresholds for ops status (not a score system). */
-var OPS_TREND_GROWTH_MIN = 1.2;
-var OPS_TREND_DECLINE_MAX = 0.8;
+/**
+ * G028 P1 trend thresholds (not a score system).
+ * Compare recent 3 complete GSC days vs prior 3 days from GSC日数据
+ * (end date = latest daily DataDate for that site — never stale Growth3D).
+ * Both windows need enough impressions; otherwise prefer 稳定.
+ */
+var OPS_TREND_GROWTH_PCT_MIN = 25;
+var OPS_TREND_DECLINE_PCT_MAX = -25;
+var OPS_TREND_MIN_WINDOW_IMPRESSIONS = 50;
+var OPS_TREND_MIN_7D_IMPRESSIONS = 80;
 var SNAPSHOT_HEADERS = [
   'RunDate', 'LatestGSCDataDate', 'Site', 'PropertyURL', 'Day',
   'SitemapURLCount', 'IndexedURLCount', 'IndexRate',

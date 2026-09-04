@@ -37,6 +37,7 @@ function runOpsDailyReportHistory_(reportDate, options) {
   var freshBySite = options.freshBySite || loadOpsFreshSiteMonitorBySite_();
   var contentUpdates =
     options.contentUpdates || loadOpsContentUpdatesBySite_();
+  var dailyBySite = options.dailyBySite || loadDailyRowsBySite_();
   var upsert =
     options.upsert ||
     function (row) {
@@ -83,7 +84,8 @@ function runOpsDailyReportHistory_(reportDate, options) {
       siteStatus: siteStatusBySite[site.name] || null,
       portfolio: portfolioBySite[site.name] || null,
       fresh: freshBySite[site.name] || null,
-      lastContentUpdate: contentUpdates[site.name] || null
+      lastContentUpdate: contentUpdates[site.name] || null,
+      dailyRows: dailyBySite[site.name] || []
     });
     var row = opsDailyHistoryRow_(record);
     var result = upsert(row);
@@ -166,6 +168,7 @@ function opsDailyHistoryRow_(record) {
 
 /**
  * Pure record builder from already-loaded facts.
+ * Trend / ops status use GSC日数据 recent windows — never stale Growth3D.
  * @param {Object} ctx
  * @return {Object}
  */
@@ -183,26 +186,21 @@ function buildOpsDailyRecord_(ctx) {
   var ctr = snap ? blankableNumber_(snap[10]) : '';
   var avgPosition = snap ? blankableNumber_(snap[11]) : '';
 
-  var hasGrowth = status.hasGrowth === true;
-  var growth3d = hasGrowth ? Number(status.growth3d) : NaN;
-  if (hasGrowth && isNaN(growth3d)) hasGrowth = false;
-
-  var trend7d = formatOpsTrend7d_(hasGrowth, growth3d);
+  var trend = ctx.trend || computeOpsSiteTrendFromDaily_(ctx.dailyRows || []);
+  var trend7d = formatOpsTrend7d_(trend);
   var siteStatusLabel = String(status.lifecycleStage || '').trim();
   var recommendedAction = String(status.recommendedAction || '').trim();
   var priority = String(status.priority || '').trim();
   var indexedCount = status.indexedCount;
   var indexKnown = isOpsIndexAuditKnown_(indexedCount);
+  var realtimeIncomplete = isOpsRealtimeIncomplete_(fresh);
 
   var classification = classifyOpsStatus_({
     investmentTier: portfolio.investmentTier,
     portfolioAction: portfolio.portfolioAction,
     recommendedAction: recommendedAction,
-    hasGrowth: hasGrowth,
-    growth3d: growth3d,
-    realtimeIncomplete: isOpsRealtimeIncomplete_(fresh),
-    realtimeClickGrowth: fresh.clickGrowthRate,
-    realtimeImpressionGrowth: fresh.impressionGrowthRate
+    trend: trend,
+    realtimeIncomplete: realtimeIncomplete
   });
 
   var gameStage = '';
@@ -212,13 +210,12 @@ function buildOpsDailyRecord_(ctx) {
 
   var lastModified = lastUpdate && lastUpdate.date ? lastUpdate.date : '';
   var mainChange = buildOpsMainChange_({
-    hasGrowth: hasGrowth,
-    growth3d: growth3d,
+    trend: trend,
     trend7d: trend7d,
     recommendedAction: recommendedAction,
     lastModified: lastModified,
     indexKnown: indexKnown,
-    realtimeIncomplete: isOpsRealtimeIncomplete_(fresh)
+    realtimeIncomplete: realtimeIncomplete
   });
 
   return {
@@ -242,14 +239,160 @@ function buildOpsDailyRecord_(ctx) {
 }
 
 /**
- * Simple ops status: prefer formal Growth3D; never decline from incomplete realtime.
- * IndexedURLCount null is not used here at all.
+ * Recent site-level trend from GSC日数据.
+ * endDate = latest DataDate present for the site.
+ * recent = [end-2, end]; prior = [end-5, end-3]; also sum full 7d [end-6, end].
+ * Does not use 站点状态.Growth3D (aligned to possibly stale DecisionDataDate).
+ *
+ * @param {Array<Array>} dailyRows rows: DataDate, Site, Clicks, Impressions, ...
+ * @return {{ok:boolean, endDate:string, recent3d:number, prior3d:number, impressions7d:number, pctChange:number|null, direction:string, label:string, reason:string}}
+ */
+function computeOpsSiteTrendFromDaily_(dailyRows) {
+  var empty = {
+    ok: false,
+    endDate: '',
+    recent3d: 0,
+    prior3d: 0,
+    impressions7d: 0,
+    pctChange: null,
+    direction: 'insufficient',
+    label: '样本不足',
+    reason: 'GSC日数据不足，无法判断近期趋势'
+  };
+  var endDate = latestDateInRows_(dailyRows || [], 0);
+  if (!endDate) return empty;
+
+  var recentStart = addDaysStr_(endDate, -2);
+  var priorEnd = addDaysStr_(endDate, -3);
+  var priorStart = addDaysStr_(endDate, -5);
+  var window7Start = addDaysStr_(endDate, -6);
+  if (!recentStart || !priorEnd || !priorStart || !window7Start) return empty;
+
+  var recent3d = 0;
+  var prior3d = 0;
+  var impressions7d = 0;
+  var recentDays = {};
+  var priorDays = {};
+
+  for (var i = 0; i < dailyRows.length; i++) {
+    var dataDate = normalizeKeyDate_(dailyRows[i][0]);
+    if (!dataDate) continue;
+    var impressions = Number(dailyRows[i][3] || 0);
+    if (isNaN(impressions)) impressions = 0;
+    if (dataDate >= window7Start && dataDate <= endDate) {
+      impressions7d += impressions;
+    }
+    if (dataDate >= recentStart && dataDate <= endDate) {
+      recent3d += impressions;
+      recentDays[dataDate] = true;
+    }
+    if (dataDate >= priorStart && dataDate <= priorEnd) {
+      prior3d += impressions;
+      priorDays[dataDate] = true;
+    }
+  }
+
+  var recentDayCount = Object.keys(recentDays).length;
+  var priorDayCount = Object.keys(priorDays).length;
+  if (recentDayCount < 2 || priorDayCount < 2) {
+    return {
+      ok: false,
+      endDate: endDate,
+      recent3d: recent3d,
+      prior3d: prior3d,
+      impressions7d: impressions7d,
+      pctChange: null,
+      direction: 'insufficient',
+      label: '样本不足',
+      reason: '近期日数据天数不足（截止 ' + endDate + '）'
+    };
+  }
+
+  if (
+    impressions7d < OPS_TREND_MIN_7D_IMPRESSIONS ||
+    recent3d < OPS_TREND_MIN_WINDOW_IMPRESSIONS ||
+    prior3d < OPS_TREND_MIN_WINDOW_IMPRESSIONS
+  ) {
+    return {
+      ok: false,
+      endDate: endDate,
+      recent3d: recent3d,
+      prior3d: prior3d,
+      impressions7d: impressions7d,
+      pctChange: null,
+      direction: 'insufficient',
+      label: '样本不足',
+      reason:
+        '小样本（近3日 ' +
+        recent3d +
+        ' / 前3日 ' +
+        prior3d +
+        ' / 7日 ' +
+        impressions7d +
+        '，截止 ' +
+        endDate +
+        '）'
+    };
+  }
+
+  if (prior3d <= 0) {
+    return {
+      ok: false,
+      endDate: endDate,
+      recent3d: recent3d,
+      prior3d: prior3d,
+      impressions7d: impressions7d,
+      pctChange: null,
+      direction: 'insufficient',
+      label: '样本不足',
+      reason: '前3日曝光为 0，无法计算可比变化（截止 ' + endDate + '）'
+    };
+  }
+
+  var pctChange = ((recent3d - prior3d) / prior3d) * 100;
+  var rounded = Math.round(pctChange);
+  var direction = 'flat';
+  var label = '持平';
+  if (rounded > 0) {
+    direction = 'up';
+    label = '上升 ' + Math.abs(rounded) + '%';
+  } else if (rounded < 0) {
+    direction = 'down';
+    label = '下降 ' + Math.abs(rounded) + '%';
+  }
+
+  return {
+    ok: true,
+    endDate: endDate,
+    recent3d: recent3d,
+    prior3d: prior3d,
+    impressions7d: impressions7d,
+    pctChange: pctChange,
+    direction: direction,
+    label: label,
+    reason:
+      '近3日曝光 ' +
+      recent3d +
+      ' vs 前3日 ' +
+      prior3d +
+      '（截止 ' +
+      endDate +
+      '）→ ' +
+      label
+  };
+}
+
+/**
+ * Simple ops status from recent GSC日数据 trend.
+ * Incomplete realtime never drives 衰退. Prefer 稳定 when sample is weak.
+ * 暂停投入 only from explicit FROZEN/FREEZE/ARCHIVE evidence.
  */
 function classifyOpsStatus_(input) {
   input = input || {};
   var tier = String(input.investmentTier || '').trim();
   var portfolioAction = String(input.portfolioAction || '').trim();
   var recommendedAction = String(input.recommendedAction || '').trim();
+  var trend = input.trend || {};
 
   if (
     tier === INVESTMENT_TIER.FROZEN ||
@@ -258,59 +401,58 @@ function classifyOpsStatus_(input) {
   ) {
     return {
       status: OPS_STATUS.PAUSE,
-      reason: '已有经营层判定为冻结/归档，建议暂停投入',
+      reason: '已有经营层明确冻结/归档依据，建议暂停投入',
       suggestedAction: recommendedAction || PORTFOLIO_ACTION.FREEZE,
       priority: 'P3'
     };
   }
 
-  // Incomplete realtime must not drive decline from a short-window drop.
+  // Incomplete realtime must not be used as decline evidence.
   if (input.realtimeIncomplete) {
-    // Fall through to formal trend only; ignore realtime growth rates.
+    // Ignore realtime rates; continue with formal daily trend only.
   }
 
-  if (!input.hasGrowth) {
+  if (!trend.ok) {
     return {
       status: OPS_STATUS.STABLE,
-      reason: '正式3日趋势数据不足；不因 realtime 短期波动判定衰退',
+      reason: (trend.reason || '近期证据不足') + '；默认稳定，不因 realtime 短期波动判定衰退',
       suggestedAction: recommendedAction || 'WAIT',
       priority: 'P3'
     };
   }
 
-  var growth = Number(input.growth3d);
-  if (growth >= OPS_TREND_GROWTH_MIN) {
+  var pct = Number(trend.pctChange);
+  if (!isNaN(pct) && pct >= OPS_TREND_GROWTH_PCT_MIN) {
     return {
       status: OPS_STATUS.GROWTH,
-      reason: '正式3日曝光增长 ' + formatOpsGrowth_(growth) + 'x',
+      reason: '明确增长：' + (trend.reason || trend.label),
       suggestedAction: recommendedAction || 'WAIT',
       priority: 'P2'
     };
   }
-  if (growth < OPS_TREND_DECLINE_MAX) {
+  if (!isNaN(pct) && pct <= OPS_TREND_DECLINE_PCT_MAX) {
     return {
       status: OPS_STATUS.DECLINE,
-      reason: '正式3日曝光降至 ' + formatOpsGrowth_(growth) + 'x（仅用正式趋势，未用未完整 realtime）',
+      reason:
+        '明确持续下降：' +
+        (trend.reason || trend.label) +
+        '（未用未完整 realtime）',
       suggestedAction: recommendedAction || 'WAIT',
       priority: 'P2'
     };
   }
   return {
     status: OPS_STATUS.STABLE,
-    reason: '正式3日曝光变化温和 ' + formatOpsGrowth_(growth) + 'x',
+    reason: '波动不足：' + (trend.reason || trend.label),
     suggestedAction: recommendedAction || 'WAIT',
     priority: 'P3'
   };
 }
 
-function formatOpsTrend7d_(hasGrowth, growth3d) {
-  if (!hasGrowth) return '数据不足';
-  return formatOpsGrowth_(growth3d) + 'x';
-}
-
-function formatOpsGrowth_(n) {
-  if (n === '' || n === null || n === undefined || isNaN(Number(n))) return 'n/a';
-  return String(Math.round(Number(n) * 100) / 100);
+function formatOpsTrend7d_(trend) {
+  trend = trend || {};
+  if (trend.label) return String(trend.label);
+  return '样本不足';
 }
 
 function isOpsIndexAuditKnown_(indexedCount) {
@@ -328,10 +470,16 @@ function isOpsRealtimeIncomplete_(fresh) {
 function buildOpsMainChange_(ctx) {
   ctx = ctx || {};
   var parts = [];
-  if (ctx.hasGrowth) {
-    parts.push('3日曝光趋势 ' + formatOpsGrowth_(ctx.growth3d) + 'x');
+  var trend = ctx.trend || {};
+  if (ctx.trend7d) {
+    parts.push('7日趋势 ' + ctx.trend7d);
+  } else if (trend.label) {
+    parts.push('7日趋势 ' + trend.label);
   } else {
-    parts.push('正式趋势数据不足');
+    parts.push('近期趋势样本不足');
+  }
+  if (trend.endDate) {
+    parts.push('数据截止 ' + trend.endDate);
   }
   if (ctx.realtimeIncomplete) {
     parts.push('realtime 未完整（未用于衰退判定）');
@@ -365,9 +513,6 @@ function loadOpsSiteStatusBySite_() {
   for (var i = 0; i < values.length; i++) {
     var name = String(values[i][col.Site] || '').trim();
     if (!name) continue;
-    var growthRaw = values[i][col.Growth3D];
-    var hasGrowth =
-      growthRaw !== '' && growthRaw !== null && growthRaw !== undefined && !isNaN(Number(growthRaw));
     out[name] = {
       lifecycleStage: String(values[i][col.LifecycleStage] || '').trim(),
       recommendedAction: String(values[i][col.RecommendedAction] || '').trim(),
@@ -377,11 +522,7 @@ function loadOpsSiteStatusBySite_() {
         values[i][col.IndexedURLCount] === null ||
         values[i][col.IndexedURLCount] === undefined
           ? null
-          : values[i][col.IndexedURLCount],
-      growth3d: hasGrowth ? Number(growthRaw) : '',
-      hasGrowth: hasGrowth,
-      impressions7d: numericOrZero_(values[i][col.Impressions7D]),
-      clicks7d: numericOrZero_(values[i][col.Clicks7D])
+          : values[i][col.IndexedURLCount]
     };
   }
   return out;
@@ -467,9 +608,4 @@ function loadOpsContentUpdatesBySite_() {
     };
   }
   return out;
-}
-
-function numericOrZero_(value) {
-  var n = Number(value);
-  return isNaN(n) ? 0 : n;
 }

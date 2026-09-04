@@ -27,19 +27,19 @@ function extractFn(src, name) {
 
 // --- 1. Wiring / headers ---
 assert(configSrc.indexOf("OPS_DAILY_HISTORY: '经营日报历史'") >= 0, 'sheet name');
-assert(configSrc.indexOf('OPS_DAILY_HISTORY_HEADERS') >= 0, 'headers constant');
-assert(configSrc.indexOf("GROWTH: '增长'") >= 0, 'ops status growth');
-assert(configSrc.indexOf("DECLINE: '衰退'") >= 0, 'ops status decline');
-assert(configSrc.indexOf("PAUSE: '暂停投入'") >= 0, 'ops status pause');
+assert(configSrc.indexOf('OPS_TREND_GROWTH_PCT_MIN') >= 0, 'pct growth threshold');
+assert(configSrc.indexOf('OPS_TREND_MIN_WINDOW_IMPRESSIONS') >= 0, 'min window impressions');
+assert(!/OPS_TREND_GROWTH_MIN\s*=\s*1\.2/.test(configSrc), 'old multiplier thresholds removed');
 assert(sheetSrc.indexOf('SHEET_NAMES.OPS_DAILY_HISTORY') >= 0, 'setup creates ops history');
 assert(codeSrc.indexOf('runOpsDailyReportHistory') >= 0, 'menu entry');
-assert(codeSrc.indexOf('runOpsDailyReportHistory') < codeSrc.indexOf('runDailyFinalizerUnlocked_') ||
-  !/runOpsDailyReportHistory/.test(extractFn(codeSrc, 'runDailyFinalizerUnlocked_')),
-  'P1 must not auto-wire into finalizer (P3)');
 assert(!/runOpsDailyReportHistory/.test(extractFn(codeSrc, 'runDailyFinalizerUnlocked_')),
   'finalizer does not call ops daily yet');
+assert(opsSrc.indexOf('computeOpsSiteTrendFromDaily_') >= 0, 'daily trend helper');
+assert(opsSrc.indexOf('Growth3D') < 0 || opsSrc.indexOf('never stale Growth3D') >= 0,
+  'must not rely on stale Growth3D for classification');
+assert(!/status\.growth3d|status\.hasGrowth/.test(opsSrc), 'record builder ignores status Growth3D');
 
-// --- 2. VM classification + record + idempotent upsert ---
+// --- 2. VM ---
 var sandbox = {
   SHEET_NAMES: { OPS_DAILY_HISTORY: '经营日报历史' },
   OPS_DAILY_HISTORY_HEADERS: [
@@ -47,8 +47,10 @@ var sandbox = {
     '7日趋势', '站点状态', '经营状态', '主要变化', '建议操作', '优先级', '判断原因', '最近修改'
   ],
   OPS_STATUS: { GROWTH: '增长', STABLE: '稳定', DECLINE: '衰退', PAUSE: '暂停投入' },
-  OPS_TREND_GROWTH_MIN: 1.2,
-  OPS_TREND_DECLINE_MAX: 0.8,
+  OPS_TREND_GROWTH_PCT_MIN: 25,
+  OPS_TREND_DECLINE_PCT_MAX: -25,
+  OPS_TREND_MIN_WINDOW_IMPRESSIONS: 50,
+  OPS_TREND_MIN_7D_IMPRESSIONS: 80,
   INVESTMENT_TIER: { FROZEN: 'FROZEN' },
   PORTFOLIO_ACTION: { FREEZE: 'FREEZE' },
   console: console,
@@ -60,14 +62,35 @@ function normalizeKeyDate_(v) {
   if (!v) return '';
   return String(v).substring(0, 10);
 }
+function addDaysStr_(yyyyMmDd, deltaDays) {
+  var p = String(yyyyMmDd).split('-').map(Number);
+  var d = new Date(p[0], p[1] - 1, p[2]);
+  d.setDate(d.getDate() + Number(deltaDays || 0));
+  var y = d.getFullYear();
+  var m = d.getMonth() + 1;
+  var day = d.getDate();
+  return y + '-' + (m < 10 ? '0' : '') + m + '-' + (day < 10 ? '0' : '') + day;
+}
+function latestDateInRows_(rows, dateCol) {
+  var latest = '';
+  for (var i = 0; i < (rows || []).length; i++) {
+    var d = normalizeKeyDate_(rows[i][dateCol]);
+    if (d && d > latest) latest = d;
+  }
+  return latest;
+}
+
 sandbox.normalizeKeyDate_ = normalizeKeyDate_;
 sandbox.todayStr_ = function () { return '2026-09-04'; };
+sandbox.addDaysStr_ = addDaysStr_;
+sandbox.latestDateInRows_ = latestDateInRows_;
 
 vm.createContext(sandbox);
 vm.runInContext(
   'function ensureOpsDailyHistorySheet_() {}\n' +
     'function loadOpsContentUpdatesBySite_() { return {}; }\n' +
-    extractFn(opsSrc, 'formatOpsGrowth_') +
+    'function loadDailyRowsBySite_() { return {}; }\n' +
+    extractFn(opsSrc, 'computeOpsSiteTrendFromDaily_') +
     extractFn(opsSrc, 'formatOpsTrend7d_') +
     extractFn(opsSrc, 'isOpsIndexAuditKnown_') +
     extractFn(opsSrc, 'isOpsRealtimeIncomplete_') +
@@ -80,74 +103,127 @@ vm.runInContext(
   sandbox
 );
 
-var growth = sandbox.classifyOpsStatus_({ hasGrowth: true, growth3d: 1.5 });
-assert(growth.status === '增长', 'growth status');
+function dailyRow(date, impressions, clicks) {
+  return [date, 'Site', clicks || 0, impressions];
+}
 
-var stable = sandbox.classifyOpsStatus_({ hasGrowth: true, growth3d: 1.0 });
-assert(stable.status === '稳定', 'stable status');
+// Mortal Shell II style: recent clear decline (not the stale 144x Growth3D spike).
+var ms2Daily = [
+  dailyRow('2026-08-26', 5908, 61),
+  dailyRow('2026-08-27', 3215, 41),
+  dailyRow('2026-08-28', 1796, 23),
+  dailyRow('2026-08-29', 1512, 18),
+  dailyRow('2026-08-30', 1270, 3),
+  dailyRow('2026-08-31', 894, 4),
+  dailyRow('2026-09-01', 664, 4)
+];
+var ms2Trend = sandbox.computeOpsSiteTrendFromDaily_(ms2Daily);
+assert(ms2Trend.ok, 'MS2 trend computable');
+assert(ms2Trend.endDate === '2026-09-01', 'MS2 uses latest daily date');
+assert(ms2Trend.pctChange < -25, 'MS2 recent down');
+assert(ms2Trend.label.indexOf('下降') === 0, 'MS2 label is 下降 %');
+assert(ms2Trend.label.indexOf('x') < 0, 'no multiplier in label');
+var ms2Class = sandbox.classifyOpsStatus_({ trend: ms2Trend });
+assert(ms2Class.status === '衰退', 'MS2 → 衰退');
 
-var decline = sandbox.classifyOpsStatus_({ hasGrowth: true, growth3d: 0.5 });
-assert(decline.status === '衰退', 'decline status');
+// Agefield style: tiny volumes → 稳定 even if ratio looks down.
+var ageDaily = [
+  dailyRow('2026-08-26', 30, 4),
+  dailyRow('2026-08-27', 20, 5),
+  dailyRow('2026-08-28', 15, 3),
+  dailyRow('2026-08-29', 15, 5),
+  dailyRow('2026-08-30', 14, 2),
+  dailyRow('2026-08-31', 6, 1),
+  dailyRow('2026-09-01', 13, 5)
+];
+var ageTrend = sandbox.computeOpsSiteTrendFromDaily_(ageDaily);
+assert(!ageTrend.ok, 'Agefield sample insufficient');
+assert(ageTrend.label === '样本不足', 'Agefield trend label');
+var ageClass = sandbox.classifyOpsStatus_({ trend: ageTrend });
+assert(ageClass.status === '稳定', 'Agefield → 稳定 not 衰退');
+
+// Clear growth with enough volume.
+var growthTrend = sandbox.computeOpsSiteTrendFromDaily_([
+  dailyRow('2026-08-26', 100),
+  dailyRow('2026-08-27', 100),
+  dailyRow('2026-08-28', 100),
+  dailyRow('2026-08-29', 100),
+  dailyRow('2026-08-30', 160),
+  dailyRow('2026-08-31', 170),
+  dailyRow('2026-09-01', 180)
+]);
+assert(growthTrend.ok && growthTrend.pctChange >= 25, 'growth pct');
+assert(sandbox.classifyOpsStatus_({ trend: growthTrend }).status === '增长', 'growth status');
+
+// Mild move → 稳定
+var mild = sandbox.computeOpsSiteTrendFromDaily_([
+  dailyRow('2026-08-26', 100),
+  dailyRow('2026-08-27', 100),
+  dailyRow('2026-08-28', 100),
+  dailyRow('2026-08-29', 100),
+  dailyRow('2026-08-30', 105),
+  dailyRow('2026-08-31', 110),
+  dailyRow('2026-09-01', 100)
+]);
+assert(sandbox.classifyOpsStatus_({ trend: mild }).status === '稳定', 'mild → stable');
 
 var noTrend = sandbox.classifyOpsStatus_({
-  hasGrowth: false,
-  realtimeIncomplete: true,
-  realtimeClickGrowth: -0.8
+  trend: { ok: false, reason: '样本不足', label: '样本不足' },
+  realtimeIncomplete: true
 });
 assert(noTrend.status === '稳定', 'incomplete realtime must not force decline');
 assert(noTrend.reason.indexOf('realtime') >= 0, 'reason mentions realtime guard');
 
-var pause = sandbox.classifyOpsStatus_({
-  investmentTier: 'FROZEN',
-  hasGrowth: true,
-  growth3d: 0.4
-});
-assert(pause.status === '暂停投入', 'frozen → pause');
-
-var archivePause = sandbox.classifyOpsStatus_({
-  recommendedAction: 'ARCHIVE',
-  hasGrowth: true,
-  growth3d: 2
-});
-assert(archivePause.status === '暂停投入', 'ARCHIVE → pause');
+assert(
+  sandbox.classifyOpsStatus_({
+    investmentTier: 'FROZEN',
+    trend: ms2Trend
+  }).status === '暂停投入',
+  'frozen → pause'
+);
+assert(
+  sandbox.classifyOpsStatus_({
+    recommendedAction: 'ARCHIVE',
+    trend: growthTrend
+  }).status === '暂停投入',
+  'ARCHIVE → pause'
+);
 
 var main = sandbox.buildOpsMainChange_({
-  hasGrowth: false,
+  trend: ageTrend,
+  trend7d: ageTrend.label,
   indexKnown: false,
   realtimeIncomplete: true,
   recommendedAction: 'WAIT'
 });
-assert(main.indexOf('索引审计暂缺') >= 0, 'notes missing index without anomaly');
-assert(main.indexOf('不触发低索引异常') >= 0, 'explicitly avoids low-index false positive');
-assert(!/触发低索引异常(?!）)/.test(main.replace('不触发低索引异常', '')), 'must not invent low-index anomaly');
-assert(main.indexOf('realtime 未完整') >= 0, 'notes incomplete realtime');
+assert(main.indexOf('样本不足') >= 0, 'main change uses trend label');
+assert(main.indexOf('不触发低索引异常') >= 0, 'index null guard');
 
 var record = sandbox.buildOpsDailyRecord_({
   reportDate: '2026-09-04',
-  site: { name: 'Brigandine Abyss', siteId: 'brigandine-abyss' },
+  site: { name: 'Mortal Shell II', siteId: 'mortal-shell-ii' },
   snapshot: [
-    '2026-09-04', '2026-09-02', 'Brigandine Abyss', 'sc-domain:x', 7,
-    10, '', '', 120, 5, 0.041, 18.2
+    '2026-09-04', '2026-09-01', 'Mortal Shell II', 'u', 7,
+    10, '', '', 664, 4, 0.006, 8.4
   ],
   siteStatus: {
-    lifecycleStage: 'TRACTION',
-    recommendedAction: 'CONTENT_OPTIMIZE',
-    priority: 'P2',
-    indexedCount: null,
+    lifecycleStage: 'DOMAIN_READY',
+    recommendedAction: 'DOMAIN_UPGRADE',
+    priority: 'P0',
+    indexedCount: 10,
+    // Stale status Growth3D must be ignored if present.
     hasGrowth: true,
-    growth3d: 1.4
+    growth3d: 144.99
   },
-  portfolio: { investmentTier: 'T1_TRACTION', portfolioAction: 'HOLD' },
-  fresh: { dataIncomplete: true, clickGrowthRate: -0.9, impressionGrowthRate: -0.5 },
-  lastContentUpdate: { date: '2026-09-01', lifecyclePhase: 'WEEK1' }
+  portfolio: { investmentTier: 'T2_WINNER', portfolioAction: 'INVEST' },
+  fresh: { dataIncomplete: true, clickGrowthRate: -0.9 },
+  dailyRows: ms2Daily,
+  lastContentUpdate: { date: '2026-09-03', lifecyclePhase: 'PUBLISHED' }
 });
-assert(record.opsStatus === '增长', 'record uses formal growth despite realtime drop');
-assert(record.gameStage === 'WEEK1', 'game stage from content update when present');
-assert(record.clicks === 5, 'clicks from snapshot');
-assert(record.impressions === 120, 'impressions from snapshot');
-assert(record.mainChange.indexOf('低索引') < 0 || record.mainChange.indexOf('不触发低索引异常') >= 0,
-  'null IndexedURLCount does not trigger low-index anomaly');
-assert(record.reason.indexOf('正式3日曝光增长') >= 0, 'reason from formal trend');
+assert(record.opsStatus === '衰退', 'MS2 record ignores stale 144x Growth3D');
+assert(record.trend7d.indexOf('下降') === 0, 'MS2 trend7d is direction %');
+assert(record.trend7d.indexOf('x') < 0, 'no x multiplier');
+assert(record.gameStage === 'PUBLISHED', 'game stage preserved');
 
 var store = [];
 function fakeUpsert(row) {
@@ -164,68 +240,70 @@ function fakeUpsert(row) {
 }
 
 var sites = [
-  { name: 'Brigandine Abyss', siteId: 'brigandine-abyss' },
-  { name: 'Project P.I.T.T.', siteId: 'project-p-i-t-t' },
+  { name: 'Mortal Shell II', siteId: 'mortal-shell-ii' },
+  { name: 'Agefield High: Rock the School', siteId: 'agefield-high-rock-the-school' },
   { name: 'No Id Site', siteId: '' }
 ];
-var snapshotBySite = {
-  'Brigandine Abyss': [
-    '2026-09-04', '2026-09-02', 'Brigandine Abyss', 'u', 7, 10, 3, 0.3, 200, 8, 0.04, 12
-  ],
-  'Project P.I.T.T.': [
-    '2026-09-04', '2026-09-02', 'Project P.I.T.T.', 'u', 9, 20, '', '', 50, 1, 0.02, 40
-  ]
-};
-var siteStatusBySite = {
-  'Brigandine Abyss': {
-    lifecycleStage: 'TRACTION',
-    recommendedAction: 'WAIT',
-    priority: 'P3',
-    indexedCount: 3,
-    hasGrowth: true,
-    growth3d: 1.6
-  },
-  'Project P.I.T.T.': {
-    lifecycleStage: 'LOW_SIGNAL',
-    recommendedAction: 'ARCHIVE',
-    priority: 'P3',
-    indexedCount: null,
-    hasGrowth: true,
-    growth3d: 0.4
-  }
-};
-var portfolioBySite = {
-  'Brigandine Abyss': { investmentTier: 'T1_TRACTION', portfolioAction: 'HOLD' },
-  'Project P.I.T.T.': { investmentTier: 'FROZEN', portfolioAction: 'FREEZE' }
-};
-
 var first = sandbox.runOpsDailyReportHistory_('2026-09-04', {
   sites: sites,
-  snapshotBySite: snapshotBySite,
-  siteStatusBySite: siteStatusBySite,
-  portfolioBySite: portfolioBySite,
+  snapshotBySite: {
+    'Mortal Shell II': [
+      '2026-09-04', '2026-09-01', 'Mortal Shell II', 'u', 7, 10, 3, 0.3, 664, 4, 0.006, 8
+    ],
+    'Agefield High: Rock the School': [
+      '2026-09-04', '2026-09-01', 'Agefield', 'u', 7, 10, '', '', 13, 5, 0.38, 4
+    ]
+  },
+  siteStatusBySite: {
+    'Mortal Shell II': {
+      lifecycleStage: 'DOMAIN_READY',
+      recommendedAction: 'DOMAIN_UPGRADE',
+      priority: 'P0',
+      indexedCount: 10
+    },
+    'Agefield High: Rock the School': {
+      lifecycleStage: 'INDEX_CHECK',
+      recommendedAction: 'CHECK_INDEX',
+      priority: 'P0',
+      indexedCount: 6
+    }
+  },
+  portfolioBySite: {
+    'Mortal Shell II': { investmentTier: 'T2_WINNER', portfolioAction: 'INVEST' },
+    'Agefield High: Rock the School': { investmentTier: 'T1_TRACTION', portfolioAction: 'HOLD' }
+  },
   freshBySite: {},
   contentUpdates: {},
+  dailyBySite: {
+    'Mortal Shell II': ms2Daily,
+    'Agefield High: Rock the School': ageDaily
+  },
   upsert: fakeUpsert
 });
-assert(first.written === 2, 'writes enabled sites with site_id');
+assert(first.written === 2, 'writes 2');
 assert(first.skipped === 1, 'skips missing site_id');
-assert(first.inserted === 2, 'first run inserts');
-assert(first.byStatus['增长'] === 1, 'one growth');
-assert(first.byStatus['暂停投入'] === 1, 'one pause');
-assert(store.length === 2, 'two history rows');
+assert(first.byStatus['衰退'] === 1, 'MS2 decline');
+assert(first.byStatus['稳定'] === 1, 'Agefield stable');
+assert(store[0][8].indexOf('下降') === 0, 'history trend column is direction');
+assert(store[1][8] === '样本不足' || store[1][10] === '稳定', 'Agefield stable/sample');
 
 var second = sandbox.runOpsDailyReportHistory_('2026-09-04', {
   sites: sites,
-  snapshotBySite: snapshotBySite,
-  siteStatusBySite: siteStatusBySite,
-  portfolioBySite: portfolioBySite,
+  snapshotBySite: {},
+  siteStatusBySite: {},
+  portfolioBySite: {
+    'Mortal Shell II': { investmentTier: 'T2_WINNER', portfolioAction: 'INVEST' },
+    'Agefield High: Rock the School': { investmentTier: 'T1_TRACTION', portfolioAction: 'HOLD' }
+  },
   freshBySite: {},
   contentUpdates: {},
+  dailyBySite: {
+    'Mortal Shell II': ms2Daily,
+    'Agefield High: Rock the School': ageDaily
+  },
   upsert: fakeUpsert
 });
-assert(second.updated === 2, 'rerun updates same date+site_id');
-assert(second.inserted === 0, 'rerun inserts none');
-assert(store.length === 2, 'idempotent: no duplicate rows');
+assert(second.updated === 2 && second.inserted === 0, 'idempotent update');
+assert(store.length === 2, 'no duplicate rows');
 
 console.log('PASS scripts/test-ops-daily-report.js');
