@@ -249,6 +249,8 @@ var OPS_ACTION_MIN_QUERY_IMPRESSIONS = 10;
 /** Rank band treated as “接近可提升” for update-page evidence */
 var OPS_ACTION_RANK_MIN = 4;
 var OPS_ACTION_RANK_MAX = 20;
+/** Tech-fix evidence older than this many days is treated as expired */
+var OPS_TECH_EVIDENCE_MAX_AGE_DAYS = 14;
 /** G028 P2 — 今日判断 enum */
 var OPS_JUDGMENT = {
   EXECUTE: '建议执行',

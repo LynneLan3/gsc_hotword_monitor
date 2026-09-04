@@ -47,11 +47,16 @@ function runOpsDailyReport_(options) {
   var queryBySite = options.queryBySite || loadQueryRowsBySite_();
   var pageBySite = options.pageBySite || loadPageRowsBySite_();
   var opportunityRows = options.opportunityRows || loadOpsOpportunityRows_();
+  var indexBySite = options.indexBySite || loadOpsIndexEvidenceBySite_();
+  var rules = options.rules || getDecisionRules_();
 
   var selected = selectOpsDailyActions_(historyRows, {
     queryBySite: queryBySite,
     pageBySite: pageBySite,
-    opportunityRows: opportunityRows
+    opportunityRows: opportunityRows,
+    indexBySite: indexBySite,
+    rules: rules,
+    asOfDate: reportDate
   });
   var selectedSites = {};
   for (var i = 0; i < selected.length; i++) {
@@ -226,6 +231,9 @@ function selectOpsDailyActions_(historyRows, ctx) {
   var queryBySite = ctx.queryBySite || {};
   var pageBySite = ctx.pageBySite || {};
   var opportunityRows = ctx.opportunityRows || [];
+  var indexBySite = ctx.indexBySite || {};
+  var rules = ctx.rules || {};
+  var asOfDate = normalizeKeyDate_(ctx.asOfDate) || todayStr_();
   var limit = OPS_DAILY_ACTION_LIMIT || 3;
 
   var candidates = [];
@@ -241,7 +249,10 @@ function selectOpsDailyActions_(historyRows, ctx) {
     var evidence = findOpsActionEvidence_(row, {
       queryRows: queryBySite[row.site] || [],
       pageRows: pageBySite[row.site] || [],
-      opportunityRows: opportunityRows
+      opportunityRows: opportunityRows,
+      indexEvidence: indexBySite[row.site] || null,
+      rules: rules,
+      asOfDate: asOfDate
     });
 
     if (
@@ -336,21 +347,12 @@ function findOpsActionEvidence_(row, ctx) {
   var seo = String(row.suggestedAction || '').trim();
 
   if (seo === 'CHECK_INDEX' || seo === 'INDEX_FIX') {
-    out.techOk =
-      row.siteStatus === 'INDEX_CHECK' ||
-      seo === 'CHECK_INDEX' ||
-      seo === 'INDEX_FIX';
+    // Never trust stale 站点状态 / history CHECK_INDEX alone.
+    var tech = evaluateOpsCurrentTechIssue_(ctx.indexEvidence, ctx.rules, ctx.asOfDate);
+    out.techOk = !!tech.ok;
     if (out.techOk) {
-      out.whyNow = '站点存在明确索引/技术问题，需优先修复可见性基础';
-      out.evidenceText =
-        '经营状态 ' +
-        row.opsStatus +
-        '；SEO动作 ' +
-        seo +
-        '；曝光 ' +
-        row.impressions +
-        '；' +
-        (row.reason || row.mainChange || '');
+      out.whyNow = '当前仍存在可验证的索引/技术异常，需优先修复';
+      out.evidenceText = tech.evidenceText || tech.reason || '';
     }
     return out;
   }
@@ -422,6 +424,173 @@ function findOpsActionEvidence_(row, ctx) {
   }
 
   return out;
+}
+
+/**
+ * Current index evidence per site from URL索引 + latest 每日快照.
+ * Does not use stale 站点状态 IndexedURLCount / RecommendedAction.
+ */
+function loadOpsIndexEvidenceBySite_() {
+  var out = {};
+  var snapshotBySite = loadLatestSnapshotBySite_() || {};
+  var names = Object.keys(snapshotBySite);
+  for (var i = 0; i < names.length; i++) {
+    var name = names[i];
+    var snap = snapshotBySite[name];
+    var sitemap = snap && snap[5] !== '' && snap[5] !== null && snap[5] !== undefined
+      ? Number(snap[5])
+      : NaN;
+    if (isNaN(sitemap)) sitemap = 0;
+
+    var snapIndexed = null;
+    if (snap && snap[6] !== '' && snap[6] !== null && snap[6] !== undefined) {
+      var n = Number(snap[6]);
+      if (!isNaN(n)) snapIndexed = n;
+    }
+
+    var audit = null;
+    try {
+      audit = getLatestKnownIndexStats_(name);
+    } catch (e) {
+      audit = null;
+    }
+    var auditDate = '';
+    try {
+      auditDate = getLatestUrlIndexAuditDate_(name) || '';
+    } catch (e2) {
+      auditDate = '';
+    }
+
+    var indexedCount = null;
+    var source = '';
+    if (audit && audit.indexedCount !== '' && audit.indexedCount !== null && audit.indexedCount !== undefined) {
+      indexedCount = Number(audit.indexedCount);
+      if (isNaN(indexedCount)) indexedCount = null;
+      else source = 'URL索引';
+    } else if (snapIndexed !== null) {
+      indexedCount = snapIndexed;
+      source = '每日快照';
+    }
+
+    var indexRate = null;
+    if (indexedCount !== null && sitemap > 0) {
+      indexRate = indexedCount / sitemap;
+    }
+
+    out[name] = {
+      sitemapCount: sitemap,
+      indexedCount: indexedCount,
+      indexRate: indexRate,
+      urlCount: audit && audit.urlCount != null ? audit.urlCount : null,
+      auditDate: auditDate || (snap ? normalizeKeyDate_(snap[0]) : ''),
+      source: source,
+      snapshotStatus: snap ? String(snap[17] || '').trim() : '',
+      snapshotError: snap ? String(snap[18] || '').trim() : ''
+    };
+  }
+  return out;
+}
+
+/** Latest RunDate present in URL索引 for a site. */
+function getLatestUrlIndexAuditDate_(siteName) {
+  var sheet = getSpreadsheet_().getSheetByName(SHEET_NAMES.URL_INDEX);
+  if (!sheet || sheet.getLastRow() < 2) return '';
+  var rows = sheet.getRange(2, 1, sheet.getLastRow(), URL_INDEX_HEADERS.length).getValues();
+  var latest = '';
+  for (var i = 0; i < rows.length; i++) {
+    if (String(rows[i][1] || '').trim() !== siteName) continue;
+    var d = normalizeKeyDate_(rows[i][0]);
+    if (d && d > latest) latest = d;
+  }
+  return latest;
+}
+
+/**
+ * Current, verifiable tech issue only.
+ * null/missing IndexedURLCount is never an anomaly.
+ * Stale/expired audit without fresh numbers → insufficient.
+ */
+function evaluateOpsCurrentTechIssue_(evidence, rules, asOfDate) {
+  evidence = evidence || null;
+  rules = rules || {};
+  var warning =
+    rules.INDEX_RATE_WARNING !== undefined && rules.INDEX_RATE_WARNING !== null
+      ? Number(rules.INDEX_RATE_WARNING)
+      : 0.5;
+  var minIndexed =
+    rules.DOMAIN_MIN_INDEXED_URLS !== undefined && rules.DOMAIN_MIN_INDEXED_URLS !== null
+      ? Number(rules.DOMAIN_MIN_INDEXED_URLS)
+      : 2;
+  var maxAge =
+    typeof OPS_TECH_EVIDENCE_MAX_AGE_DAYS === 'number' ? OPS_TECH_EVIDENCE_MAX_AGE_DAYS : 14;
+  var asOf = normalizeKeyDate_(asOfDate) || todayStr_();
+
+  if (!evidence) {
+    return { ok: false, reason: '无当前索引证据，不生成技术修复' };
+  }
+
+  if (evidence.indexedCount === null || evidence.indexedCount === '' || evidence.indexedCount === undefined) {
+    return {
+      ok: false,
+      reason: 'IndexedURLCount 缺失/null，证据不足，不生成技术修复'
+    };
+  }
+
+  var sitemap = Number(evidence.sitemapCount || 0);
+  if (!sitemap || sitemap <= 0) {
+    return { ok: false, reason: 'Sitemap 分母未知，无法验证当前 IndexRate' };
+  }
+
+  var auditDate = normalizeKeyDate_(evidence.auditDate);
+  if (auditDate) {
+    var oldest = addDaysStr_(asOf, -maxAge);
+    if (oldest && auditDate < oldest) {
+      return {
+        ok: false,
+        reason: '最近技术检查日期 ' + auditDate + ' 已过期（>' + maxAge + ' 天），不生成技术修复'
+      };
+    }
+  } else {
+    return { ok: false, reason: '缺少最近技术检查日期，证据不足' };
+  }
+
+  var indexed = Number(evidence.indexedCount);
+  if (isNaN(indexed)) {
+    return { ok: false, reason: 'IndexedURLCount 不可解析，证据不足' };
+  }
+  var rate = indexed / sitemap;
+  var ratePct = Math.round(rate * 100);
+  var warnPct = Math.round(warning * 100);
+  var base =
+    'Indexed ' +
+    indexed +
+    '/' +
+    sitemap +
+    '；IndexRate ' +
+    ratePct +
+    '%；来源 ' +
+    (evidence.source || '') +
+    '；检查日 ' +
+    auditDate;
+
+  if (rate < warning) {
+    return {
+      ok: true,
+      reason: '当前 IndexRate ' + ratePct + '% 低于 ' + warnPct + '%',
+      evidenceText: base + '；仍低于警告阈值'
+    };
+  }
+  if (indexed < minIndexed) {
+    return {
+      ok: true,
+      reason: '当前 IndexedURLCount ' + indexed + ' 低于最小值 ' + minIndexed,
+      evidenceText: base + '；索引量仍过低'
+    };
+  }
+  return {
+    ok: false,
+    reason: '当前索引状态无明确未解决异常（' + base + '）'
+  };
 }
 
 function findBestOpsOpportunityForSite_(siteName, rows) {

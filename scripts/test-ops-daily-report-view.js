@@ -91,6 +91,8 @@ sandbox.addDaysStr_ = addDaysStr_;
 sandbox.latestDateInRows_ = latestDateInRows_;
 
 vm.createContext(sandbox);
+sandbox.OPS_TECH_EVIDENCE_MAX_AGE_DAYS = 14;
+sandbox.todayStr_ = function () { return '2026-09-04'; };
 vm.runInContext(
   extractFn(viewSrc, 'emptyOpsStatusCounts_') +
     extractFn(viewSrc, 'extractOpsGscCutoff_') +
@@ -98,6 +100,7 @@ vm.runInContext(
     extractFn(viewSrc, 'isOpsActionPriorityEligible_') +
     extractFn(viewSrc, 'normalizeOpsActionPriority_') +
     extractFn(viewSrc, 'opsPriorityRank_') +
+    extractFn(viewSrc, 'evaluateOpsCurrentTechIssue_') +
     extractFn(viewSrc, 'findBestOpsOpportunityForSite_') +
     extractFn(viewSrc, 'findBestOpsQueryEvidence_') +
     extractFn(viewSrc, 'findBestOpsPageEvidence_') +
@@ -121,6 +124,76 @@ assert(sandbox.decideOpsTodayJudgment_({ opsStatus: '暂停投入' }, false) ===
 assert(sandbox.decideOpsTodayJudgment_({ opsStatus: '增长' }, true) === '建议执行', 'selected');
 assert(sandbox.decideOpsTodayJudgment_({ opsStatus: '稳定', suggestedAction: 'WAIT' }, false) === '继续观察',
   'watch');
+
+var rules = { INDEX_RATE_WARNING: 0.5, DOMAIN_MIN_INDEXED_URLS: 2 };
+
+// Current evidence validation (do not trust stale CHECK_INDEX label alone).
+var brigTech = sandbox.evaluateOpsCurrentTechIssue_(
+  {
+    sitemapCount: 26,
+    indexedCount: null,
+    indexRate: null,
+    auditDate: '',
+    source: ''
+  },
+  rules,
+  '2026-09-04'
+);
+assert(!brigTech.ok, 'Brigandine null indexed → no tech');
+assert(brigTech.reason.indexOf('null') >= 0 || brigTech.reason.indexOf('缺失') >= 0, 'brig reason');
+
+var pittTech = sandbox.evaluateOpsCurrentTechIssue_(
+  {
+    sitemapCount: 23,
+    indexedCount: null,
+    auditDate: '',
+    source: ''
+  },
+  rules,
+  '2026-09-04'
+);
+assert(!pittTech.ok, 'PITT null indexed → no tech');
+
+var ageTech = sandbox.evaluateOpsCurrentTechIssue_(
+  {
+    sitemapCount: 13,
+    indexedCount: 6,
+    indexRate: 6 / 13,
+    auditDate: '2026-09-04',
+    source: 'URL索引',
+    urlCount: 15
+  },
+  rules,
+  '2026-09-04'
+);
+assert(ageTech.ok, 'Agefield low IndexRate still holds');
+assert(ageTech.reason.indexOf('IndexRate') >= 0, 'age reason mentions rate');
+
+var recovered = sandbox.evaluateOpsCurrentTechIssue_(
+  {
+    sitemapCount: 13,
+    indexedCount: 10,
+    indexRate: 10 / 13,
+    auditDate: '2026-09-04',
+    source: 'URL索引'
+  },
+  rules,
+  '2026-09-04'
+);
+assert(!recovered.ok, 'recovered index → no tech');
+
+var expired = sandbox.evaluateOpsCurrentTechIssue_(
+  {
+    sitemapCount: 13,
+    indexedCount: 3,
+    indexRate: 3 / 13,
+    auditDate: '2026-08-01',
+    source: 'URL索引'
+  },
+  rules,
+  '2026-09-04'
+);
+assert(!expired.ok, 'expired audit → no tech');
 
 var history = [
   {
@@ -150,10 +223,10 @@ var history = [
     trend7d: '上升 161%',
     siteStatus: 'INDEX_CHECK',
     opsStatus: '增长',
-    mainChange: '7日趋势 上升 161%；数据截止 2026-09-01；SEO动作 CHECK_INDEX',
+    mainChange: 'SEO动作 CHECK_INDEX；数据截止 2026-09-01',
     suggestedAction: 'CHECK_INDEX',
     priority: 'P0',
-    reason: '增长站索引问题'
+    reason: 'stale CHECK_INDEX'
   },
   {
     date: '2026-09-04',
@@ -166,10 +239,10 @@ var history = [
     trend7d: '上升 128%',
     siteStatus: 'INDEX_CHECK',
     opsStatus: '增长',
-    mainChange: '7日趋势 上升 128%；数据截止 2026-09-01',
+    mainChange: 'SEO动作 CHECK_INDEX；数据截止 2026-09-01',
     suggestedAction: 'CHECK_INDEX',
     priority: 'P0',
-    reason: '增长站索引问题'
+    reason: 'stale CHECK_INDEX'
   },
   {
     date: '2026-09-04',
@@ -185,7 +258,7 @@ var history = [
     mainChange: '样本不足；数据截止 2026-09-01',
     suggestedAction: 'CHECK_INDEX',
     priority: 'P0',
-    reason: '小样本'
+    reason: 'low index'
   },
   {
     date: '2026-09-04',
@@ -221,7 +294,29 @@ var history = [
   }
 ];
 
-// MS2 decline with scattered query opportunities must NOT enter top actions as 新增页面.
+var indexBySite = {
+  'BRIGANDINE ABYSS': {
+    sitemapCount: 26,
+    indexedCount: null,
+    auditDate: '',
+    source: ''
+  },
+  'Project P.I.T.T.': {
+    sitemapCount: 23,
+    indexedCount: null,
+    auditDate: '',
+    source: ''
+  },
+  'Agefield High: Rock the School': {
+    sitemapCount: 13,
+    indexedCount: 6,
+    indexRate: 6 / 13,
+    auditDate: '2026-09-04',
+    source: 'URL索引',
+    urlCount: 15
+  }
+};
+
 var ms2QueryRows = [];
 for (var d = 0; d < 7; d++) {
   var day = addDaysStr_('2026-09-01', -d);
@@ -234,61 +329,45 @@ sandbox.writeOpsDailyReportSheet_ = function (view) {
   written = view;
 };
 sandbox.ensureSheet_ = function () {};
-sandbox.loadOpsDailyHistoryLatestRows_ = function () {
-  return history;
-};
-sandbox.loadQueryRowsBySite_ = function () {
-  return { 'Mortal Shell II': ms2QueryRows };
-};
-sandbox.loadPageRowsBySite_ = function () {
-  return {};
-};
-sandbox.loadOpsOpportunityRows_ = function () {
-  return [
-    [
-      '', '2026-08-24', 'Mortal Shell II', '', 'mortal shell 2 seed bearers scripture',
-      'https://x/seed', '/mortal-shell-ii/seedbearers-scripture/', 0, 45, 0, 8
-    ]
-  ];
-};
 
 var selected = sandbox.selectOpsDailyActions_(history, {
   queryBySite: { 'Mortal Shell II': ms2QueryRows },
   pageBySite: {},
-  opportunityRows: sandbox.loadOpsOpportunityRows_()
+  opportunityRows: [],
+  indexBySite: indexBySite,
+  rules: rules,
+  asOfDate: '2026-09-04'
 });
 assert(selected.length <= 3, 'max 3 actions');
-assert(selected.length >= 2, 'at least growth tech fixes');
+assert(!selected.some(function (a) { return a.site === 'BRIGANDINE ABYSS'; }),
+  'Brigandine stale CHECK_INDEX excluded');
+assert(!selected.some(function (a) { return a.site === 'Project P.I.T.T.'; }),
+  'PITT stale CHECK_INDEX excluded');
+assert(selected.some(function (a) { return a.site === 'Agefield High: Rock the School'; }),
+  'Agefield current low index kept');
 assert(!selected.some(function (a) { return a.site === 'Mortal Shell II'; }),
   'MS2 not in execute list');
-assert(!selected.some(function (a) { return a.site === 'Approximately Up'; }),
-  'decline content site not selected');
-assert(selected.every(function (a) {
-  return a.action === '技术修复' || a.action === '更新页面' || a.action === '新增页面';
-}), 'only allowed actions');
-assert(selected.every(function (a) {
-  return a.action !== '继续观察' && a.action !== '无需操作';
-}), 'observation does not consume slots');
+assert(selected.length === 1, 'only Agefield tech remains from fixture');
+assert(selected[0].action === '技术修复', 'agefield tech fix');
 
 var result = sandbox.runOpsDailyReport_({
   historyRows: history,
   queryBySite: { 'Mortal Shell II': ms2QueryRows },
   pageBySite: {},
-  opportunityRows: sandbox.loadOpsOpportunityRows_(),
+  opportunityRows: [],
+  indexBySite: indexBySite,
+  rules: rules,
   writeSheet: true
 });
 assert(result.overview.activeSites === 6, 'overview active');
-assert(result.overview.decline === 2, 'overview decline');
-assert(result.overview.pause === 1, 'overview pause');
 assert(result.overview.gscCutoff === '2026-09-01', 'gsc cutoff parsed');
-assert(result.actionCount === result.actions.length, 'action count');
-assert(result.actionCount <= 3, 'action cap');
+assert(result.actionCount === 1, 'one verified tech action');
 assert(result.ms2Judgment === '无需操作', 'MS2 judgment 无需操作');
-assert(written && written.siteRows.length === 6, 'sheet site rows');
-assert(written.actions.length === result.actionCount, 'sheet actions');
+assert(written.actions.length === 1, 'sheet actions');
+assert(written.actions[0].site.indexOf('Agefield') === 0, 'sheet agefield only');
 
-var ms2Row = written.siteRows.find(function (r) { return r.site === 'Mortal Shell II'; });
-assert(ms2Row.judgment === '无需操作', 'MS2 sheet judgment');
+var brigRow = written.siteRows.find(function (r) { return r.site === 'BRIGANDINE ABYSS'; });
+assert(brigRow.judgment === '继续观察', 'Brigandine becomes 继续观察 when not selected');
 
 console.log('PASS scripts/test-ops-daily-report-view.js');
 console.log('actions', result.actions.map(function (a) {
