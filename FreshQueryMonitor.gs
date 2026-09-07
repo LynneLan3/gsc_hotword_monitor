@@ -79,6 +79,10 @@ function runFreshQueryMonitorUnlocked_() {
   writeFreshRealtimeSnapshotRows_(SHEET_NAMES.FRESH_QUERY_MONITOR, FRESH_QUERY_MONITOR_HEADERS, queryRows, completedSites);
   writeFreshRealtimeSnapshotRows_(SHEET_NAMES.FRESH_PAGE_MONITOR, FRESH_PAGE_MONITOR_HEADERS, pageRows, completedSites);
   updateRealtimeSiteStatusRows_(statusRecords, generatedAt);
+  // Realtime queries are facts for Intent Coverage; this engine owns clustering/routing only.
+  try { runLaunchIntentCoverage_(); } catch (e) {
+    writeLog_('WARN', '', 'Launch Intent Coverage realtime refresh failed: ' + e.message);
+  }
 
   var summary =
     'runFreshQueryMonitor 完成 | sites=' +

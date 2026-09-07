@@ -77,6 +77,7 @@ var RUNTIME_REQUIRED_SHEET_NAMES = [
   SHEET_NAMES.FRESH_SITE_MONITOR,
   SHEET_NAMES.FRESH_QUERY_MONITOR,
   SHEET_NAMES.FRESH_PAGE_MONITOR,
+  SHEET_NAMES.INTENT_OPPORTUNITIES,
   SHEET_NAMES.RESEARCH_JOBS,
   SHEET_NAMES.RESEARCH_REVIEW,
   SHEET_NAMES.DEVELOPMENT_TASKS,
@@ -375,6 +376,12 @@ var INTENT_OPPORTUNITY_HEADERS = [
   'AbsoluteSignalReason', 'RoutingDecision',
   'AdjacentCaptureCandidates', 'AdjacentCaptureReason'
 ];
+
+// Additive fields for Launch Intent Coverage. Existing Intent机会 columns stay put.
+var LAUNCH_INTENT_COVERAGE_HEADERS = INTENT_OPPORTUNITY_HEADERS.concat([
+  'PlayerTask', 'LocalOwnerURL', 'AnswerGap', 'CompetitorIntentStatus',
+  'CompetitorIntentURLs', 'SignalScore', 'SignalReason'
+]);
 
 /** Hidden additive state for Goal 2 previous/current observations. */
 var EARLY_FOLLOWUP_STATE_HEADERS = [

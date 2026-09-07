@@ -246,6 +246,8 @@ function runDailyFinalizerUnlocked_(sites, runDate) {
     sortMonitoringSheetsNewestFirst_();
     runDecisionEngine();
     runContentOpportunityEngine();
+    runLaunchIntentCoverage_();
+    createLaunchIntentResearchJobs_();
     refreshDemandRadar_(sites, runDate);
     refreshUnifiedActionQueue_(runDate);
     syncDevelopmentTasksFromApprovedDecisions();
