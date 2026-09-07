@@ -58,7 +58,11 @@ function buildLaunchIntentRows_(site, queryRows, freshRows) {
     var f = freshRows[j];
     add(f[2], f[3], f[4], f[5], f[7], normalizeKeyDate_(f[18]) || normalizeKeyDate_(f[0]), f[11], 'fresh');
   }
-  var competitors = loadCompetitorIntentSignals_(site);
+  var competitorIntents = Object.keys(byKey).map(function (key) {
+    var c = byKey[key];
+    return { clusterKey: c.key, playerTask: c.task, queries: c.queries, localOwnedUrls: Object.keys(c.pages) };
+  });
+  var competitors = loadCompetitorIntentSignals_(site, competitorIntents);
   var launch = isLaunchSite_(site);
   var competitorKeys = Object.keys(competitors);
   for (var ci = 0; ci < competitorKeys.length; ci++) {
@@ -108,16 +112,25 @@ function launchIntentCluster_(query, site) {
   return { key: key, label: label, task: task };
 }
 
-function loadCompetitorIntentSignals_(site) {
+function loadCompetitorIntentSignals_(site, intents) {
   var out = {}, url = PropertiesService.getScriptProperties().getProperty('HOTWORD_ENGINE_INTENT_GAP_URL');
   if (!url) return out;
   try {
-    var endpoint = url + (url.indexOf('?') >= 0 ? '&' : '?') + 'game=' + encodeURIComponent(site.name);
-    var data = JSON.parse(UrlFetchApp.fetch(endpoint, { muteHttpExceptions: true }).getContentText() || '{}');
+    var localOwnedUrls = [], playerTasks = [];
+    for (var i = 0; i < intents.length; i++) {
+      localOwnedUrls = localOwnedUrls.concat(intents[i].localOwnedUrls || []);
+      if (intents[i].playerTask) playerTasks.push(intents[i].playerTask);
+    }
+    var data = JSON.parse(UrlFetchApp.fetch(url, {
+      method: 'post', contentType: 'application/json', muteHttpExceptions: true,
+      payload: JSON.stringify({ game: site.name, lifecycle: site.lifecyclePhase || site.lifecycle || '',
+        localOwnedUrls: localOwnedUrls, playerTasks: playerTasks, intents: intents })
+    }).getContentText() || '{}');
     var list = data.signals || data.intents || [];
-    for (var i = 0; i < list.length; i++) {
-      var x = list[i] || {}, key = String(x.clusterKey || x.intentKey || '').trim();
-      if (key) out[key] = { status: 'COMPETITOR_OWNED', urls: x.urls || (x.url ? [x.url] : []) };
+    for (var j = 0; j < list.length; j++) {
+      var x = list[j] || {}, key = String(x.clusterKey || x.intentKey || '').trim();
+      if (key) out[key] = { status: 'COMPETITOR_OWNED', urls: x.urls || (x.url ? [x.url] : []),
+        evidence: x.evidence || [], source: x.source || '', confidence: x.confidence || '' };
     }
   } catch (e) { writeLog_('WARN', site.name, 'competitor intent signal unavailable: ' + e.message); }
   return out;
@@ -193,7 +206,7 @@ function launchIntentRow_(site, c, owner, share, competitor, gap, decision, laun
   values.PlayerTask = c.task; values.LocalOwnerURL = owner; values.AnswerGap = gap;
   values.CompetitorIntentStatus = competitor.status; values.CompetitorIntentURLs = competitor.urls.join(' | ');
   values.SignalScore = (c.impressions >= 20 ? 1 : 0) + (c.growth >= 0.5 ? 1 : 0) + (competitor.status === 'COMPETITOR_OWNED' ? 1 : 0) + (launch ? 1 : 0);
-  values.SignalReason = (launch ? 'LAUNCH_WEIGHTED;' : '') + (competitor.status === 'COMPETITOR_OWNED' ? 'COMPETITOR_OWNED;' : '') + (gap || 'LOCAL_OWNER');
+  values.SignalReason = (launch ? 'LAUNCH_WEIGHTED;' : '') + (competitor.status === 'COMPETITOR_OWNED' ? 'COMPETITOR_OWNED;' + (competitor.source || '') + ';' + (competitor.confidence || '') + ';' : '') + (gap || 'LOCAL_OWNER');
   for (var i = 0; i < h.length; i++) row.push(values[h[i]] === undefined ? '' : values[h[i]]);
   return row;
 }
@@ -221,4 +234,9 @@ function runLaunchIntentCoverage() {
       cutoff: cell_(values[i], c, 'DataCutoff'), competitor: cell_(values[i], c, 'CompetitorIntentStatus') });
   }
   return { rows: sheet.getLastRow() - 1, halloween: out };
+}
+
+/** Independent trigger-compatible entry; does not run the legacy finalizer. */
+function runLaunchIntentCoverageTrigger() {
+  return runLaunchIntentCoverage();
 }

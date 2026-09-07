@@ -249,9 +249,11 @@ function runDailyFinalizerUnlocked_(sites, runDate) {
     runLaunchIntentCoverage_();
     createLaunchIntentResearchJobs_();
     refreshDemandRadar_(sites, runDate);
-    refreshUnifiedActionQueue_(runDate);
+    if (typeof refreshUnifiedActionQueue_ === 'function') refreshUnifiedActionQueue_(runDate);
+    else writeLog_('WARN', '', '跳过缺失可选 hook: refreshUnifiedActionQueue_');
     syncDevelopmentTasksFromApprovedDecisions();
-    refreshImplementationHandoffs_();
+    if (typeof refreshImplementationHandoffs_ === 'function') refreshImplementationHandoffs_();
+    else writeLog_('WARN', '', '跳过缺失可选 hook: refreshImplementationHandoffs_');
     try {
       maintainExperimentLedger_();
       // Receipt observations run after all GSC collection and reuse this

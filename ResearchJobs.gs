@@ -2869,7 +2869,7 @@ function toIso8601_(date) {
 }
 
 function researchJobSheetRow_(job, site, createdAt) {
-  return [
+  var row = [
     job.job_id,
     createdAt || new Date(),
     site || job.game,
@@ -2902,6 +2902,8 @@ function researchJobSheetRow_(job, site, createdAt) {
     '',
     ''
   ];
+  while (row.length < RESEARCH_JOB_HEADERS.length) row.push('');
+  return row;
 }
 
 function writeOpportunityResearchFields_(sheet, col, updates) {
