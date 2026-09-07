@@ -59,6 +59,7 @@ function buildLaunchIntentRows_(site, queryRows, freshRows) {
     add(f[2], f[3], f[4], f[5], f[7], normalizeKeyDate_(f[18]) || normalizeKeyDate_(f[0]), f[11], 'fresh');
   }
   var competitors = loadCompetitorIntentSignals_(site);
+  var launch = isLaunchSite_(site);
   var competitorKeys = Object.keys(competitors);
   for (var ci = 0; ci < competitorKeys.length; ci++) {
     var ck = competitorKeys[ci];
@@ -76,7 +77,6 @@ function buildLaunchIntentRows_(site, queryRows, freshRows) {
     var ownerShare = c.impressions ? c.pages[owner] / c.impressions : 0;
     var competitor = competitors[c.key] || { status: 'NONE', urls: [] };
     var demand = c.impressions >= 20 || c.clicks > 0 || c.growth >= 0.5;
-    var launch = isLaunchSite_(site);
     var strongOwner = !!owner && ownerShare >= 0.6 && !isLaunchAnswerGap_(c, owner);
     var gap = !owner ? 'NO_LOCAL_OWNER' : (strongOwner ? '' : 'ANSWER_OR_COVERAGE_GAP');
     var decision = routeLaunchIntent_(c, { owner: owner, strongOwner: strongOwner, gap: gap,
