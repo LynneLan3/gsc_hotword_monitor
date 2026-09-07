@@ -2293,3 +2293,65 @@ function readAgent64ShortDomainStatus_() {
     runDate: runDate
   };
 }
+
+/**
+ * Registry-driven generic 站点配置 ensure.
+ * Replaces new per-game register<Game>Site() helpers going forward.
+ * Payload: {siteId, siteName, propertyUrl, sitemapUrl}
+ */
+function ensureLedgerSiteConfigRow(payload) {
+  payload = payload || {};
+  var SITE_ID = String(payload.siteId || '').trim();
+  var SITE_NAME = String(payload.siteName || payload.gameName || SITE_ID).trim();
+  var PROPERTY_URL = String(payload.propertyUrl || payload.gscProperty || payload.productionUrl || '').trim();
+  var SITEMAP_URL = String(payload.sitemapUrl || '').trim();
+  if (!SITE_ID) throw new Error('ensureLedgerSiteConfigRow: siteId is required');
+  if (!PROPERTY_URL) throw new Error('ensureLedgerSiteConfigRow: propertyUrl is required');
+  if (!SITEMAP_URL) {
+    SITEMAP_URL = PROPERTY_URL.replace(/\/?$/, '/') + 'sitemap-index.xml';
+  }
+
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  if (!ss) throw new Error('No active spreadsheet. Open the bound Sheet and run from editor/webapp.');
+  var sheet = ss.getSheetByName(SHEET_NAMES.SITES);
+  if (!sheet) throw new Error('找不到工作表：' + SHEET_NAMES.SITES);
+
+  var lastRow = sheet.getLastRow();
+  var values = lastRow >= 2
+    ? sheet.getRange(2, 1, lastRow - 1, SITE_HEADERS.length).getValues()
+    : [];
+  var rowIndex = -1;
+  var propertyNorm = PROPERTY_URL.replace(/\/+$/, '');
+  for (var i = 0; i < values.length; i++) {
+    var existingId = String(values[i][5] || '').trim();
+    var existingName = String(values[i][0] || '').trim();
+    var existingProperty = String(values[i][1] || '').trim().replace(/\/+$/, '');
+    if (existingId === SITE_ID || existingName === SITE_NAME || existingProperty === propertyNorm) {
+      rowIndex = i + 2;
+      break;
+    }
+  }
+
+  var row = [SITE_NAME, PROPERTY_URL, SITEMAP_URL, '', true, SITE_ID, '', '', '', '', PROPERTY_URL];
+  while (row.length < SITE_HEADERS.length) row.push('');
+  if (rowIndex < 0) {
+    rowIndex = Math.max(lastRow + 1, 2);
+  }
+  sheet.getRange(rowIndex, 1, 1, SITE_HEADERS.length).setValues([row]);
+  sheet.getRange(rowIndex, 5).insertCheckboxes();
+  SpreadsheetApp.flush();
+  var readBack = sheet.getRange(rowIndex, 1, 1, SITE_HEADERS.length).getValues()[0];
+  var result = {
+    action: values.length && rowIndex <= lastRow ? 'UPDATE_OR_REPAIR' : 'APPEND',
+    row: rowIndex,
+    siteName: String(readBack[0] || ''),
+    propertyUrl: String(readBack[1] || ''),
+    sitemapUrl: String(readBack[2] || ''),
+    day0: toDateStr_(readBack[3]),
+    enabled: readBack[4],
+    siteId: String(readBack[5] || ''),
+    productionUrl: String(readBack[10] || '')
+  };
+  Logger.log(JSON.stringify(result));
+  return result;
+}
