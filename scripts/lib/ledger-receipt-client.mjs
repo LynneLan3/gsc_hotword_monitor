@@ -855,3 +855,148 @@ export function exitCodeForCompletionStatus(status) {
 	if (status === PUBLISH_COMPLETION_STATUS.RECEIPT_FAILED) return EXIT.RECEIPT_FAILED;
 	return EXIT.LEDGER_FAILED;
 }
+
+/**
+ * Thin Apps Script Execution API / clasp-cli runner used by receipt writeback
+ * and external Development Task registration.
+ */
+export async function runAppsScriptFunction(functionName, parameters = [], options = {}) {
+	const name = String(functionName || '').trim();
+	if (!name) throw new Error('runAppsScriptFunction: functionName required');
+	const params = Array.isArray(parameters) ? parameters : [parameters];
+	const preferCli = process.env.HOTWORD_LEDGER_TRANSPORT?.trim() === 'clasp-cli';
+	if (preferCli) return runAppsScriptFunctionViaClaspCli_(name, params, options);
+	const apiResult = await runAppsScriptFunctionViaApi_(name, params, options);
+	if (apiResult.ok) return apiResult;
+	if (apiResult.status === 'FAILED' && !isRecoverableLedgerError(apiResult.error || apiResult.output)) {
+		return apiResult;
+	}
+	const cliResult = runAppsScriptFunctionViaClaspCli_(name, params, options);
+	if (cliResult.ok) return cliResult;
+	if (apiResult.status === 'PENDING' || cliResult.status === 'PENDING') {
+		return {
+			...cliResult,
+			status: 'PENDING',
+			output: `${apiResult.error || apiResult.output}; clasp-cli fallback: ${cliResult.error || cliResult.output}`,
+			error: cliResult.error || apiResult.error,
+		};
+	}
+	return cliResult;
+}
+
+function unwrapAppsScriptRunValue_(payload) {
+	if (!payload || typeof payload !== 'object') return payload;
+	if (payload.response || payload.result) return payload.response || payload.result;
+	return payload;
+}
+
+function runAppsScriptFunctionViaClaspCli_(functionName, parameters, options = {}) {
+	const user = claspUser(options);
+	const result = spawnSync(
+		'clasp',
+		['--json', 'run', functionName, '--user', user, '--params', JSON.stringify(parameters)],
+		{
+			cwd: options.cwd || GSC_ROOT,
+			encoding: 'utf8',
+			env: { ...process.env, HOTWORD_CLASP_USER: user },
+			timeout: options.timeoutMs || 120_000,
+		},
+	);
+	const stdout = String(result.stdout || '').trim();
+	const stderr = String(result.stderr || '').trim();
+	const output = `${stdout}\n${stderr}`.trim();
+	if (result.error || result.status !== 0) {
+		const message = result.error?.message || output;
+		return {
+			ok: false,
+			status: isRecoverableLedgerError(message) ? 'PENDING' : 'FAILED',
+			output,
+			error: message,
+			value: null,
+			transport: 'clasp-cli',
+		};
+	}
+	let parsed = null;
+	try {
+		parsed = JSON.parse(stdout);
+	} catch {
+		return {
+			ok: false,
+			status: 'FAILED',
+			output,
+			error: `clasp returned non-JSON output: ${stdout || stderr}`,
+			value: null,
+			transport: 'clasp-cli',
+		};
+	}
+	const value = unwrapAppsScriptRunValue_(parsed);
+	return {
+		ok: true,
+		status: 'OK',
+		output: stdout,
+		error: '',
+		value,
+		transport: 'clasp-cli',
+	};
+}
+
+async function runAppsScriptFunctionViaApi_(functionName, parameters, options = {}) {
+	const user = claspUser(options);
+	const preflight = options.skipPreflight
+		? { ok: true, accessToken: options.accessToken }
+		: await preflightClaspCredentials({ ...options, claspUser: user });
+	if (!preflight.ok) {
+		return {
+			ok: false,
+			status: 'PENDING',
+			output: preflight.message,
+			error: `${preflight.action} ${preflight.reason}`,
+			value: null,
+			preflight,
+			transport: 'apps-script-api',
+		};
+	}
+	try {
+		const response = await fetchWithTimeout(`https://script.googleapis.com/v1/scripts/${SCRIPT_ID}:run`, {
+			method: 'POST',
+			headers: {
+				Authorization: `Bearer ${preflight.accessToken}`,
+				'Content-Type': 'application/json',
+			},
+			body: JSON.stringify({
+				function: functionName,
+				parameters,
+				devMode: options.devMode !== false,
+			}),
+		});
+		const body = await response.json();
+		if (!response.ok || body.error) {
+			const errorText = JSON.stringify(body.error || body);
+			return {
+				ok: false,
+				status: isRecoverableLedgerError(errorText) ? 'PENDING' : 'FAILED',
+				output: errorText,
+				error: body.error?.message || errorText,
+				value: null,
+				transport: 'apps-script-api',
+			};
+		}
+		return {
+			ok: true,
+			status: 'OK',
+			output: JSON.stringify(body.response?.result ?? body),
+			error: '',
+			value: body.response?.result,
+			transport: 'apps-script-api',
+		};
+	} catch (error) {
+		return {
+			ok: false,
+			status: 'PENDING',
+			output: String(error.message || error),
+			error: String(error.message || error),
+			value: null,
+			transport: 'apps-script-api',
+		};
+	}
+}

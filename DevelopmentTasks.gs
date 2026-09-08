@@ -11,6 +11,254 @@ function createDevelopmentTasks() {
 }
 
 /**
+ * 外部已批准 Research Pack → 现有「开发任务」队列（最薄入口）。
+ * 不改 Research Job、不改菜单 createDevelopmentTasks 路径；只追加缺失任务。
+ * 幂等：同一 OpportunityID + DecisionID + ActionType + 页面路径 不重复写行。
+ *
+ * @param {Object} input
+ * @return {Object} 机器可读结果（created | existing）
+ */
+function registerExternalDevelopmentTask(input) {
+  var taskInput = normalizeExternalDevelopmentTaskInput_(input);
+  ensureDevelopmentTaskSheets_();
+  var sheet = ensureSheet_(SHEET_NAMES.DEVELOPMENT_TASKS, DEVELOPMENT_TASK_HEADERS);
+  var existing = loadExistingDevelopmentTaskKeys_(sheet);
+  var task = buildDevelopmentTaskFromExternalInput_(taskInput, new Date());
+
+  var prior = findExistingDevelopmentTaskRow_(sheet, task);
+  if (prior || developmentTaskAlreadyExists_(existing, task)) {
+    var existingResult = prior || {
+      development_task_id: task.development_task_id,
+      opportunity_id: task.opportunity_id,
+      decision_id: task.decision_id,
+      site_id: task.site_id,
+      action_type: task.action_type,
+      page_path: task.page_path,
+      handoff_status: task.handoff_status,
+      handoff_reference: task.handoff_reference,
+      source_reference: task.source_reference
+    };
+    var existingPayload = externalDevelopmentTaskResult_('existing', existingResult);
+    writeLog_('INFO', task.site_id || '', 'registerExternalDevelopmentTask existing ' + existingPayload.DevelopmentTaskID);
+    return existingPayload;
+  }
+
+  var start = Math.max(2, sheet.getLastRow() + 1);
+  sheet.getRange(start, 1, 1, DEVELOPMENT_TASK_HEADERS.length).setValues([developmentTaskSheetRow_(task)]);
+  markDevelopmentTaskExisting_(existing, task);
+  var createdPayload = externalDevelopmentTaskResult_('created', task);
+  writeLog_('INFO', task.site_id || '', 'registerExternalDevelopmentTask created ' + createdPayload.DevelopmentTaskID);
+  return createdPayload;
+}
+
+/**
+ * 只读查询「开发任务」；供 CLI / 验证用，不改 Sheet。
+ * @param {string} developmentTaskId
+ * @return {Object|null}
+ */
+function getDevelopmentTaskById(developmentTaskId) {
+  var wantId = String(developmentTaskId || '').trim();
+  if (!wantId) return null;
+  var sheet = getSpreadsheet_().getSheetByName(SHEET_NAMES.DEVELOPMENT_TASKS);
+  if (!sheet || sheet.getLastRow() < 2) return null;
+  var lastCol = Math.max(sheet.getLastColumn(), DEVELOPMENT_TASK_HEADERS.length);
+  var header = sheet.getRange(1, 1, 1, lastCol).getValues()[0];
+  var col = headerIndexMap_(header);
+  var values = sheet.getRange(2, 1, sheet.getLastRow() - 1, lastCol).getValues();
+  for (var i = 0; i < values.length; i++) {
+    var row = values[i];
+    var id = String(cell_(row, col, '开发任务ID') || '').trim();
+    if (id !== wantId) continue;
+    return externalDevelopmentTaskResult_('existing', {
+      development_task_id: id,
+      opportunity_id: String(cell_(row, col, 'OpportunityID') || '').trim(),
+      decision_id: String(cell_(row, col, 'DecisionID') || '').trim(),
+      site_id: String(cell_(row, col, 'SiteID') || '').trim(),
+      action_type: String(cell_(row, col, 'ActionType') || '').trim(),
+      page_path: String(cell_(row, col, '页面路径') || '').trim(),
+      handoff_status: String(cell_(row, col, 'HandoffStatus') || '').trim(),
+      handoff_reference: String(cell_(row, col, 'HandoffReference') || '').trim(),
+      source_reference: String(cell_(row, col, 'SourceReference') || '').trim()
+    });
+  }
+  return null;
+}
+
+function normalizeExternalDevelopmentTaskInput_(input) {
+  var raw = input || {};
+  var siteId = String(raw.siteId || raw.SiteID || '').trim();
+  var site = String(raw.site || raw.siteName || raw.Site || '').trim();
+  var game = String(raw.game || raw.Game || '').trim();
+  if (!site && !game) {
+    var siteOrGame = String(raw.siteOrGame || raw.gameOrSite || raw['site/game'] || '').trim();
+    site = siteOrGame;
+    game = siteOrGame;
+  }
+  if (!site) site = game;
+  if (!game) game = site;
+  var pagePath = normalizeExternalDevelopmentPagePath_(raw.pagePath || raw.page || raw.Page || raw['page path']);
+  var actionType = normalizeDevelopmentAction_(raw.actionType || raw.ActionType || '');
+  var taskType = String(raw.taskType || raw.TaskType || 'CONTENT_IMPLEMENTATION').trim() || 'CONTENT_IMPLEMENTATION';
+  var taskReason = String(raw.taskReason || raw.TaskReason || '').trim();
+  var sourceReference = String(
+    raw.sourceReference || raw.SourceReference || raw.researchPack || raw.ResearchPack || ''
+  ).trim();
+  var evidenceReference = String(
+    raw.evidenceReference || raw.EvidenceReference || raw.evidenceLink || ''
+  ).trim();
+  var opportunityId = String(raw.opportunityId || raw.OpportunityID || '').trim();
+  var decisionId = String(raw.decisionId || raw.DecisionID || '').trim();
+  var priority = String(raw.priority || raw.Priority || '').trim();
+
+  if (!siteId) throw new Error('registerExternalDevelopmentTask: siteId required');
+  if (!pagePath) throw new Error('registerExternalDevelopmentTask: pagePath required');
+  if (!actionType) throw new Error('registerExternalDevelopmentTask: actionType required (CREATE_PAGE|UPDATE_PAGE|CONTENT_OPTIMIZE|BUILD)');
+  if (!sourceReference) throw new Error('registerExternalDevelopmentTask: sourceReference / Research Pack required');
+  if (!taskReason) throw new Error('registerExternalDevelopmentTask: taskReason required');
+
+  if (!opportunityId) {
+    opportunityId = externalOpportunityIdFromInput_(siteId, pagePath, actionType, sourceReference);
+  }
+  if (!decisionId) {
+    decisionId = 'external-approval:' + sourceReference;
+  }
+  if (!evidenceReference) evidenceReference = sourceReference;
+
+  return {
+    siteId: siteId,
+    site: site,
+    game: game,
+    pagePath: pagePath,
+    actionType: actionType,
+    taskType: taskType,
+    taskReason: taskReason,
+    priority: priority,
+    sourceReference: sourceReference,
+    evidenceReference: evidenceReference,
+    opportunityId: opportunityId,
+    decisionId: decisionId
+  };
+}
+
+function normalizeExternalDevelopmentPagePath_(value) {
+  var raw = String(value || '').trim();
+  if (!raw) return '';
+  if (raw === '/') return '/';
+  if (raw.charAt(0) !== '/') raw = '/' + raw;
+  if (raw.charAt(raw.length - 1) !== '/') raw += '/';
+  return raw;
+}
+
+/** Deterministic OpportunityID when caller omits one. */
+function externalOpportunityIdFromInput_(siteId, pagePath, actionType, sourceReference) {
+  var pathToken = String(pagePath || '/').replace(/^\/+|\/+$/g, '') || 'root';
+  pathToken = pathToken.replace(/[^A-Za-z0-9._-]+/g, '-');
+  var packToken = String(sourceReference || '')
+    .replace(/\.md$/i, '')
+    .replace(/[^A-Za-z0-9._-]+/g, '-')
+    .replace(/^-+|-+$/g, '');
+  return ('opp-ext-' + [siteId, pathToken, actionType, packToken].join('-')).toLowerCase();
+}
+
+function buildDevelopmentTaskFromExternalInput_(input, createdAt) {
+  var opportunityId = String(input.opportunityId || '').trim();
+  var decisionId = String(input.decisionId || '').trim();
+  var actionType = String(input.actionType || '').trim();
+  var pagePath = String(input.pagePath || '').trim();
+  var siteId = String(input.siteId || '').trim();
+  var developmentTaskId = developmentTaskIdFromIdentity_(
+    opportunityId, decisionId, actionType, pagePath
+  );
+  return {
+    development_task_id: developmentTaskId,
+    created_at: createdAt || new Date(),
+    source_job_id: 'external:' + String(input.sourceReference || '').trim(),
+    site: String(input.site || '').trim(),
+    game: String(input.game || '').trim(),
+    page_path: pagePath,
+    goal: developmentGoalFromActionType_(actionType),
+    evidence_link: String(input.evidenceReference || '').trim(),
+    priority: developmentPriorityFromLevel_(input.priority),
+    status: siteId
+      ? DEVELOPMENT_TASK_STATUS_LABELS.READY_FOR_IMPLEMENTATION
+      : DEVELOPMENT_TASK_STATUS_LABELS.WAITING_SITE_CREATION,
+    completed_at: '',
+    note: '',
+    opportunity_id: opportunityId,
+    decision_id: decisionId,
+    site_id: siteId,
+    action_type: actionType,
+    task_type: String(input.taskType || 'CONTENT_IMPLEMENTATION').trim(),
+    task_reason: String(input.taskReason || '').trim(),
+    source_reference: String(input.sourceReference || '').trim(),
+    handoff_status: DEVELOPMENT_TASK_STATUS_LABELS.READY_FOR_IMPLEMENTATION,
+    handoff_reference: 'handoff:' + developmentTaskId
+  };
+}
+
+function developmentGoalFromActionType_(actionType) {
+  var action = String(actionType || '').trim().toUpperCase();
+  if (action === 'CREATE_PAGE') return DEVELOPMENT_GOAL_LABELS.NEW_PAGE;
+  if (action === 'BUILD') return '建站';
+  if (action === 'CONTENT_OPTIMIZE') return DEVELOPMENT_GOAL_LABELS.EXPAND_EXISTING;
+  return DEVELOPMENT_GOAL_LABELS.UPDATE_EXISTING;
+}
+
+function externalDevelopmentTaskResult_(status, task) {
+  return {
+    ok: true,
+    status: status,
+    created: status === 'created',
+    existing: status === 'existing',
+    DevelopmentTaskID: String(task.development_task_id || '').trim(),
+    OpportunityID: String(task.opportunity_id || '').trim(),
+    SiteID: String(task.site_id || '').trim(),
+    HandoffStatus: String(task.handoff_status || '').trim(),
+    HandoffReference: String(task.handoff_reference || '').trim(),
+    SourceReference: String(task.source_reference || '').trim(),
+    DecisionID: String(task.decision_id || '').trim(),
+    ActionType: String(task.action_type || '').trim(),
+    PagePath: String(task.page_path || '').trim()
+  };
+}
+
+/** @return {Object|null} task-shaped object from an existing sheet row */
+function findExistingDevelopmentTaskRow_(sheet, task) {
+  if (!sheet || sheet.getLastRow() < 2 || !task) return null;
+  var lastCol = Math.max(sheet.getLastColumn(), DEVELOPMENT_TASK_HEADERS.length);
+  var header = sheet.getRange(1, 1, 1, lastCol).getValues()[0];
+  var col = headerIndexMap_(header);
+  var values = sheet.getRange(2, 1, sheet.getLastRow() - 1, lastCol).getValues();
+  var wantKey = developmentTaskIdentityKey_(
+    task.opportunity_id, task.decision_id, task.action_type, task.page_path
+  );
+  var wantId = String(task.development_task_id || '').trim();
+  for (var i = 0; i < values.length; i++) {
+    var row = values[i];
+    var opportunityId = String(cell_(row, col, 'OpportunityID') || '').trim();
+    var decisionId = String(cell_(row, col, 'DecisionID') || '').trim();
+    var actionType = String(cell_(row, col, 'ActionType') || '').trim();
+    var pagePath = String(cell_(row, col, '页面路径') || '').trim();
+    var developmentTaskId = String(cell_(row, col, '开发任务ID') || '').trim();
+    var key = developmentTaskIdentityKey_(opportunityId, decisionId, actionType, pagePath);
+    if ((opportunityId && actionType && key === wantKey) || (wantId && developmentTaskId === wantId)) {
+      return {
+        development_task_id: developmentTaskId,
+        opportunity_id: opportunityId,
+        decision_id: decisionId,
+        site_id: String(cell_(row, col, 'SiteID') || '').trim(),
+        action_type: actionType,
+        page_path: pagePath,
+        handoff_status: String(cell_(row, col, 'HandoffStatus') || '').trim(),
+        handoff_reference: String(cell_(row, col, 'HandoffReference') || '').trim(),
+        source_reference: String(cell_(row, col, 'SourceReference') || '').trim()
+      };
+    }
+  }
+  return null;
+}
+
+/**
  * 从已批准的 GSC Research Approval 与 Steam BUILD Decision 追加任务。
  * Sheet 是事实源；本函数只追加缺失任务，不更新或删除已有任务。
  * @return {string}
@@ -454,12 +702,17 @@ function developmentGoalFromResearchResult_(resultLabel) {
   return DEVELOPMENT_GOAL_LABELS.UPDATE_EXISTING;
 }
 
-/** 机会等级 → 高 / 中 / 低 */
+/** 机会等级 → 高 / 中 / 低（兼容 high / HIGH / 高） */
 function developmentPriorityFromLevel_(levelLabel) {
   var raw = String(levelLabel || '').trim();
+  var upper = raw.toUpperCase();
   var levelEnum = enumFromLabel_(OPPORTUNITY_LEVEL_LABELS, raw);
-  if (levelEnum === OPPORTUNITY_LEVELS.HIGH || raw === '高') return DEVELOPMENT_PRIORITY_LABELS.HIGH;
-  if (levelEnum === OPPORTUNITY_LEVELS.MEDIUM || raw === '中') return DEVELOPMENT_PRIORITY_LABELS.MEDIUM;
+  if (levelEnum === OPPORTUNITY_LEVELS.HIGH || raw === '高' || upper === 'HIGH') {
+    return DEVELOPMENT_PRIORITY_LABELS.HIGH;
+  }
+  if (levelEnum === OPPORTUNITY_LEVELS.MEDIUM || raw === '中' || upper === 'MEDIUM') {
+    return DEVELOPMENT_PRIORITY_LABELS.MEDIUM;
+  }
   return DEVELOPMENT_PRIORITY_LABELS.LOW;
 }
 
@@ -530,6 +783,36 @@ function debugDevelopmentTasksSelfCheck() {
   assert(implementationActionFromResearchRow_(row, col) === '', 'research-only excluded');
 
   assert(developmentTaskSheetRow_(task).length === DEVELOPMENT_TASK_HEADERS.length, 'sheet row length');
+
+  var externalInput = normalizeExternalDevelopmentTaskInput_({
+    siteId: 'withering-realms',
+    site: 'Withering Realms Guide',
+    game: 'Withering Realms Guide',
+    pagePath: '/category/',
+    actionType: 'UPDATE_PAGE',
+    taskType: 'CONTENT_IMPLEMENTATION',
+    taskReason: 'Launch Intent Hub upgrade from verified launch research',
+    priority: 'high',
+    sourceReference: 'withering_realms_research_pack_2026-09-08.md',
+    evidenceReference: 'withering_realms_research_pack_2026-09-08.md'
+  });
+  assert(externalInput.opportunityId.indexOf('opp-ext-withering-realms-category-update_page') === 0, 'external OpportunityID rule');
+  assert(externalInput.decisionId === 'external-approval:withering_realms_research_pack_2026-09-08.md', 'external DecisionID');
+  var externalTask = buildDevelopmentTaskFromExternalInput_(externalInput, new Date('2026-09-08T00:00:00Z'));
+  assert(externalTask.site_id === 'withering-realms', 'external SiteID');
+  assert(externalTask.action_type === 'UPDATE_PAGE', 'external ActionType');
+  assert(externalTask.task_type === 'CONTENT_IMPLEMENTATION', 'external TaskType');
+  assert(externalTask.handoff_status === 'READY_FOR_IMPLEMENTATION', 'external HandoffStatus');
+  assert(externalTask.handoff_reference.indexOf('handoff:dev-') === 0, 'external HandoffReference');
+  assert(externalTask.development_task_id === developmentTaskIdFromIdentity_(
+    externalTask.opportunity_id, externalTask.decision_id, externalTask.action_type, externalTask.page_path
+  ), 'external DevelopmentTaskID from identity');
+  var externalResult = externalDevelopmentTaskResult_('created', externalTask);
+  assert(externalResult.ok === true && externalResult.created === true && externalResult.existing === false, 'external result flags');
+  assert(externalResult.DevelopmentTaskID === externalTask.development_task_id, 'external result ID');
+  assert(typeof createDevelopmentTasks === 'function', 'menu createDevelopmentTasks preserved');
+  assert(typeof registerExternalDevelopmentTask === 'function', 'external registration entry present');
+
   if (fails.length) throw new Error('DevelopmentTasks self-check failed: ' + fails.join('; '));
   return 'PASS DevelopmentTasks self-check';
 }
