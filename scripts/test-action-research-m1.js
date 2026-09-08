@@ -69,7 +69,7 @@ var actionJob = {
 };
 var actionRow = context.researchJobSheetRow_(actionJob, 'Mortal Shell II', new Date('2026-08-23T00:00:00Z'));
 assert(actionRow.length === headers.length, 'action research row matches RESEARCH_JOB_HEADERS');
-assert(headers.length === 48, 'M1 research job schema remains 48 columns');
+assert(headers.length === 56, 'G036 research job schema appends stage/routing columns');
 assert(actionRow[col['SourceAction']] === 'OPTIMIZE_EXISTING', 'SourceAction column is aligned');
 assert(JSON.parse(actionRow[col['ActionContext']]).pageImpressions === 158, 'ActionContext column is aligned');
 assert(actionRow[col['DecisionID']] === '', 'DecisionID placeholder is aligned');
@@ -148,6 +148,7 @@ assert(pageDecision.primaryDecision === 'EXPAND_EXISTING', 'page decision primar
 assert(pageDecision.pagePath === pageContext.pagePath, 'page decision target');
 assert(pageDecision.targetQueries.length === 3, 'page decision carries query context');
 assert(context.isContentDecisionImplementationEligible_(pageDecision), 'high-confidence actionable decision is eligible');
+assert(pageDecision.publishState === 'READY_FOR_WRITER', 'high-confidence decision is writer-ready');
 
 var newRow = jobRow('NEW_INTENT_RESEARCH', { clusterKey: 'NEW_INTENT', clusterQueries: ['new intent'] });
 var newDecision = context.buildContentDecisionFromResearchPayload_(
@@ -156,6 +157,9 @@ var newDecision = context.buildContentDecisionFromResearchPayload_(
 );
 assert(newDecision.primaryDecision === 'CREATE_NEW_PAGE', 'new intent decision');
 assert(context.isContentDecisionImplementationEligible_(newDecision), 'new page decision is eligible');
+assert(newDecision.publishState === 'READY_FOR_WRITER', 'new page decision is writer-ready');
+assert(!context.isContentDecisionImplementationEligible_({ primaryDecision: 'CREATE_NEW_PAGE', confidence: 'HIGH', publishState: 'RESEARCH_REQUIRED' }), 'research-required blocks development task');
+assert(!context.isContentDecisionImplementationEligible_({ primaryDecision: 'CREATE_NEW_PAGE', confidence: 'HIGH', publishState: 'WATCH' }), 'watch blocks development task');
 
 var cannibalRow = jobRow('CANNIBALIZATION_RESEARCH', {
   clusterKey: 'CRASHING', competingPages: [{ page: '/a/' }, { page: '/b/' }]

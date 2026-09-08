@@ -63,7 +63,7 @@ vm.runInContext(identitySrc, sandbox);
 vm.runInContext(utilsSrc, sandbox);
 vm.runInContext(researchSrc, sandbox);
 
-var ms2 = { name: 'Mortal Shell II', siteId: 'mortal-shell-ii', propertyUrl: 'https://mortal-shell-ii.vercel.app/', enabled: true };
+var ms2 = { name: 'Mortal Shell II', siteId: 'mortal-shell-ii', propertyUrl: 'https://mortal-shell-ii.vercel.app/', enabled: true, lifecycle: 'PUBLISHED' };
 var ms2Legacy = { name: 'Mortal Shell II', propertyUrl: 'https://mortal-shell-ii.vercel.app/', enabled: true };
 var inactive = { name: 'Archived Site', siteId: 'archived-site', propertyUrl: 'https://archived.example/', enabled: true, status: 'ARCHIVED' };
 var runDate = '2026-08-22';
@@ -81,6 +81,9 @@ assert(first.contracts[0].discovery_scope.scope === 'GAME_WIDE', 'game-wide scop
 assert(first.contracts[0].discovery_scope.lookback_hours === 24, '24h lookback');
 assert(first.contracts[0].source_families_requested.join(',') === 'COMMUNITY,VIDEO', 'source families');
 assert(first.contracts[0].seed_terms.join(',') === 'Mortal Shell II,Mortal Shell 2', 'existing seed alias rule');
+assert(first.contracts[0].site_id === 'mortal-shell-ii', 'site identity is carried');
+assert(first.contracts[0].site_lifecycle === 'PUBLISHED', 'site lifecycle is carried');
+assert(first.contracts[0].site_context.gsc_context.property_url.indexOf('mortal-shell-ii') >= 0, 'GSC context is carried');
 
 var prior = [{ site: ms2, job_id: first.contracts[0].job_id, trigger_type: DAILY_GAME_WIDE_TRIGGER, discovery_cycle_date: runDate }];
 var second = sandbox.planDailyGameWideDiscoveryJobs_([ms2], prior, runDate, new Date('2026-08-22T02:00:00Z'));
@@ -100,6 +103,9 @@ assert(api.aliases[0] === 'Mortal Shell 2', 'API aliases');
 assert(api.trigger_type === DAILY_GAME_WIDE_TRIGGER, 'API trigger');
 assert(api.discovery_cycle_date === runDate, 'API cycle date');
 assert(api.source_families_requested.join(',') === 'COMMUNITY,VIDEO', 'API source families');
+assert(api.site_id === 'mortal-shell-ii', 'API site identity');
+assert(api.site_lifecycle === 'PUBLISHED', 'API site lifecycle');
+assert(api.site_context.gsc_context.property_url.indexOf('mortal-shell-ii') >= 0, 'API GSC context');
 
 assert(/runDailyFinalizerUnlocked_/.test(fs.readFileSync(path.join(root, 'Code.gs'), 'utf8')), 'daily finalizer remains entry');
 assert(/createGameWideDiscoveryJobForSite_/.test(researchSrc), 'manual GAME_WIDE creator remains intact');

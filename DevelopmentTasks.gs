@@ -148,6 +148,7 @@ function createDevelopmentTaskFromContentDecision_(jobRow, jobCol, decision, cre
 
 function isContentDecisionImplementationEligible_(decision) {
   if (!decision || String(decision.confidence || '').toUpperCase() !== 'HIGH') return false;
+  if (String(decision.publishState || decision.publish_state || '').toUpperCase() !== 'READY_FOR_WRITER') return false;
   var primary = String(decision.primaryDecision || '').toUpperCase();
   return primary === CONTENT_DECISION_PRIMARY_ACTIONS.CREATE_NEW_PAGE ||
     primary === CONTENT_DECISION_PRIMARY_ACTIONS.EXPAND_EXISTING ||

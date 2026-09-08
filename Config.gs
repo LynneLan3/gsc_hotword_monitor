@@ -981,7 +981,11 @@ var RESEARCH_JOB_HEADERS = [
   'SourceAction', 'ActionContext', 'DecisionID', 'PrimaryDecision',
   'SecondaryActions', 'DecisionReason', 'EvidenceSummary', 'TargetQueries',
   'RecommendedSections', 'RecommendedTitleChange', 'RecommendedInternalLinks',
-  'Confidence', 'DecisionCreatedAt'
+  'Confidence', 'DecisionCreatedAt',
+  // G036 Stage-Aware GAME_WIDE result (append-only)
+  'SiteID', 'SiteLifecycle', 'SiteContext', 'ContentStage',
+  'ContentStageReason', 'ContentStageEvidence', 'ContentRoutingReceipt',
+  'PublishState'
 ];
 
 /** 研究任务来源类型（单元格写英文；旧行空值视为 CONTENT_RESEARCH） */

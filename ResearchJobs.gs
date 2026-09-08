@@ -426,6 +426,8 @@ function buildGameWideDiscoveryJobContract_(siteName, gameName, createdAt, opts)
     source_families_requested: DAILY_GAME_WIDE_SOURCE_FAMILIES.slice(),
     discovery_cycle_date: cycleDate,
     site_id: String(opts.siteId || '').trim(),
+    site_lifecycle: String(opts.siteLifecycle || '').trim(),
+    site_context: opts.siteContext && typeof opts.siteContext === 'object' ? opts.siteContext : {},
     created_at: createdAtIso
   };
 }
@@ -464,7 +466,11 @@ function gameWideDiscoveryResearchJobSheetRow_(contract, site, createdAt) {
     String(contract.discovery_cycle_date || '').trim(),                   // 发现周期日期
     String(contract.opportunity_id || '').trim(),                          // OpportunityID
     '', '', '', '',                                                        // Recommendation linkage
-    '', '', '', '', '', '', '', '', '', '', '', '', ''                     // M1 action context + ContentDecision
+    '', '', '', '', '', '', '', '', '', '', '', '', '',                     // M1 action context + ContentDecision
+    String(contract.site_id || '').trim(),
+    String(contract.site_lifecycle || '').trim(),
+    JSON.stringify(contract.site_context || {}),
+    '', '', '', '', ''                                                     // G036 callback fields
   ];
 }
 
@@ -585,6 +591,22 @@ function dailyGameWideAliasesForSite_(site) {
   return aliases;
 }
 
+function gameWideGscContextForSite_(site) {
+  var context = { property_url: String(site && site.propertyUrl || '').trim() };
+  if (typeof loadLatestSnapshotBySite_ !== 'function') return context;
+  var snapshots = loadLatestSnapshotBySite_();
+  var row = snapshots && snapshots[String(site && site.name || '').trim()];
+  if (!row) return context;
+  context.latest_run_date = String(row[0] || '').trim();
+  context.latest_gsc_data_date = String(row[1] || '').trim();
+  context.impressions = Number(row[8] || 0) || 0;
+  context.clicks = Number(row[9] || 0) || 0;
+  context.ctr = row[10] === '' ? '' : Number(row[10]);
+  context.average_position = row[11] === '' ? '' : Number(row[11]);
+  context.source = 'GSC日数据/每日快照';
+  return context;
+}
+
 /** Pure planning layer used by the Sheet writer and local M0 tests. */
 function planDailyGameWideDiscoveryJobs_(sites, existingJobs, runDate, createdAt) {
   sites = sites || [];
@@ -625,7 +647,17 @@ function planDailyGameWideDiscoveryJobs_(sites, existingJobs, runDate, createdAt
       triggerType: DAILY_GAME_WIDE_TRIGGER,
       discoveryCycleDate: runDate,
       jobId: jobId,
-      siteId: resolveDailyGameWideSiteId_(site)
+      siteId: resolveDailyGameWideSiteId_(site),
+      siteLifecycle: site.lifecycle || site.status || '',
+      siteContext: {
+        site_id: resolveDailyGameWideSiteId_(site),
+        property_url: String(site.propertyUrl || '').trim(),
+        site_lifecycle: String(site.lifecycle || '').trim(),
+        site_status: String(site.status || '').trim(),
+        release_status: String(site.releaseStatus || '').trim(),
+        live_status: String(site.liveStatus || '').trim(),
+        gsc_context: gameWideGscContextForSite_(site)
+      }
     });
     existingKeys[key] = contract.job_id;
     existingJobIds[contract.job_id] = true;
@@ -748,6 +780,7 @@ function gameWideDiscoveryRowToApi_(row, col) {
   var jobId = String(cell_(row, col, '任务ID') || '').trim();
   var discoveryScope = safeJsonParse_(cell_(row, col, '发现范围') || '', {});
   var seedTerms = safeJsonParse_(cell_(row, col, '种子词') || '', []);
+  var siteContext = safeJsonParse_(cell_(row, col, 'SiteContext') || '', {});
   var cycleDate = normalizeDiscoveryCycleDate_(cell_(row, col, '发现周期日期')) ||
     discoveryCycleDateFromJobId_(jobId);
   var lookbackHours = Number(discoveryScope && discoveryScope.lookback_hours) || DAILY_GAME_WIDE_LOOKBACK_HOURS;
@@ -770,6 +803,10 @@ function gameWideDiscoveryRowToApi_(row, col) {
     discovery_scope: discoveryScope && typeof discoveryScope === 'object' ? discoveryScope : {},
     seed_terms: Array.isArray(seedTerms) ? seedTerms : [],
     source_families_requested: safeJsonParse_(cell_(row, col, '来源族请求') || '', []),
+    site_id: String(cell_(row, col, 'SiteID') || '').trim(),
+    site_lifecycle: String(cell_(row, col, 'SiteLifecycle') || '').trim(),
+    site_context: siteContext,
+    gsc_context: siteContext && siteContext.gsc_context ? siteContext.gsc_context : {},
     created_at: createdAt
   };
 }
@@ -824,6 +861,24 @@ function handleGameWideDiscoveryCallback_(payload) {
       row[col['研究结果']] = summary;
     }
     if (col['错误信息'] !== undefined) row[col['错误信息']] = '';
+    if (col['SiteID'] !== undefined) row[col['SiteID']] = String(payload.site_id || cell_(jobRow, col, 'SiteID') || '').trim();
+    if (col['SiteLifecycle'] !== undefined) row[col['SiteLifecycle']] = String(payload.site_lifecycle || cell_(jobRow, col, 'SiteLifecycle') || '').trim();
+    if (col['SiteContext'] !== undefined) {
+      var callbackSiteContext = payload.site_context;
+      if (!callbackSiteContext || typeof callbackSiteContext !== 'object') {
+        callbackSiteContext = safeJsonParse_(cell_(jobRow, col, 'SiteContext') || '', {});
+      }
+      row[col['SiteContext']] = JSON.stringify(callbackSiteContext);
+    }
+    if (col['ContentStage'] !== undefined) row[col['ContentStage']] = String(payload.content_stage || '').trim();
+    if (col['ContentStageReason'] !== undefined) row[col['ContentStageReason']] = String(payload.content_stage_reason || '').trim();
+    if (col['ContentStageEvidence'] !== undefined) row[col['ContentStageEvidence']] = JSON.stringify(payload.content_stage_evidence || {});
+    if (col['ContentRoutingReceipt'] !== undefined) row[col['ContentRoutingReceipt']] = JSON.stringify(payload.content_routing_receipts || []);
+    var receipts = Array.isArray(payload.content_routing_receipts) ? payload.content_routing_receipts : [];
+    var publishState = receipts.some(function (receipt) {
+      return String(receipt && receipt.publish_state || '').trim() === 'READY_FOR_WRITER';
+    }) ? 'READY_FOR_WRITER' : 'RESEARCH_REQUIRED';
+    if (col['PublishState'] !== undefined) row[col['PublishState']] = publishState;
   }
 
   jobSheet.getRange(found.sheetRow, 1, 1, lastCol).setValues([row]);
@@ -837,7 +892,24 @@ function handleGameWideDiscoveryCallback_(payload) {
       writeLog_('WARN', '', 'GAME_WIDE Opportunity Merge M0 skipped: ' + merge.error);
     }
   }
-  return { ok: true, job_id: jobId, status: executionStatus, opportunity_merge: merge };
+  var developmentTasks = [];
+  if (executionStatus === 'COMPLETED' && Array.isArray(payload.content_decisions)) {
+    for (var d = 0; d < payload.content_decisions.length; d++) {
+      var receipt = payload.content_decisions[d] || {};
+      var decision = {
+        decisionId: String(receipt.decision_id || '').trim(),
+        primaryDecision: String(receipt.primary_decision || '').trim().toUpperCase(),
+        confidence: String(receipt.confidence || '').trim().toUpperCase(),
+        publishState: String(receipt.publish_state || '').trim().toUpperCase(),
+        decisionReason: String(receipt.routing_reason || '').trim(),
+        pagePath: String(receipt.page_path || '').trim()
+      };
+      if (decision.decisionId && typeof createDevelopmentTaskFromContentDecision_ === 'function') {
+        developmentTasks.push(createDevelopmentTaskFromContentDecision_(jobRow, col, decision, completedAt));
+      }
+    }
+  }
+  return { ok: true, job_id: jobId, status: executionStatus, opportunity_merge: merge, development_tasks: developmentTasks };
 }
 
 // ---------------------------------------------------------------------------
@@ -1398,6 +1470,13 @@ function buildContentDecisionFromResearchPayload_(jobRow, col, body, statusEnum,
   }
   var decisionId = String(raw.decision_id || raw.decisionId || '').trim();
   if (!decisionId) decisionId = contentDecisionIdFromJob_(String(cell_(jobRow, col, '任务ID') || '').trim());
+  var publishState = String(raw.publish_state || raw.publishState || '').trim().toUpperCase();
+  if (publishState !== 'READY_FOR_WRITER' && publishState !== 'RESEARCH_REQUIRED') {
+    publishState = confidence === 'HIGH' && primary !== CONTENT_DECISION_PRIMARY_ACTIONS.WATCH &&
+      primary !== CONTENT_DECISION_PRIMARY_ACTIONS.NO_CHANGE && primary !== CONTENT_DECISION_PRIMARY_ACTIONS.REJECT_NOISE &&
+      primary !== CONTENT_DECISION_PRIMARY_ACTIONS.KEEP_BOTH
+      ? 'READY_FOR_WRITER' : 'RESEARCH_REQUIRED';
+  }
   return {
     decisionId: decisionId,
     site: String(cell_(jobRow, col, '站点') || '').trim(),
@@ -1415,6 +1494,7 @@ function buildContentDecisionFromResearchPayload_(jobRow, col, body, statusEnum,
     recommendedTitleChange: String(raw.recommended_title_change || raw.recommendedTitleChange || '').trim(),
     recommendedInternalLinks: normalizeContentDecisionList_(raw.recommended_internal_links || raw.recommendedInternalLinks),
     confidence: confidence,
+    publishState: publishState,
     createdAt: createdAt || new Date()
   };
 }
@@ -1492,6 +1572,7 @@ function writeContentDecisionToResearchJobRow_(sheet, sheetRow, col, decision) {
   setCellIf_(sheet, sheetRow, col, 'RecommendedTitleChange', decision.recommendedTitleChange);
   setCellIf_(sheet, sheetRow, col, 'RecommendedInternalLinks', JSON.stringify(decision.recommendedInternalLinks || []));
   setCellIf_(sheet, sheetRow, col, 'Confidence', decision.confidence);
+  setCellIf_(sheet, sheetRow, col, 'PublishState', decision.publishState);
   setCellIf_(sheet, sheetRow, col, 'DecisionCreatedAt', decision.createdAt);
 }
 
@@ -2295,7 +2376,8 @@ function demandDiscoveryResearchJobSheetRow_(contract, site, createdAt) {
     String(contract.discovery_cycle_date || '').trim(),
     String(contract.opportunity_id || '').trim(),
     '', '', '', '', // Recommendation linkage
-    '', '', '', '', '', '', '', '', '', '', '', '', '' // M1 action context + ContentDecision
+    '', '', '', '', '', '', '', '', '', '', '', '', '', // M1 action context + ContentDecision
+    '', '', '', '', '', '', '', '', // G036 fields
   ];
 }
 
@@ -2489,7 +2571,8 @@ function searchDemandResearchJobSheetRow_(contract, site, createdAt) {
     String(contract.search_cycle_date || '').trim(),
     String(contract.opportunity_id || '').trim(),
     '', '', '', '', // Recommendation linkage
-    '', '', '', '', '', '', '', '', '', '', '', '', '' // M1 action context + ContentDecision
+    '', '', '', '', '', '', '', '', '', '', '', '', '', // M1 action context + ContentDecision
+    '', '', '', '', '', '', '', '', // G036 fields
   ];
 }
 
@@ -3950,7 +4033,8 @@ function researchJobSheetRow_(job, site, createdAt) {
     '', '', '', '', // Recommendation linkage
     job.source_action || '',
     job.action_context ? JSON.stringify(job.action_context) : '',
-    '', '', '', '', '', '', '', '', '', '', '' // DecisionID ... DecisionCreatedAt
+    '', '', '', '', '', '', '', '', '', '', '', // DecisionID ... DecisionCreatedAt
+    '', '', '', '', '', '', '', '' // G036 fields
   ];
 }
 
