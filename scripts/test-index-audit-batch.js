@@ -60,7 +60,8 @@ assert(/noteGscPropertyPermissionOnce_/.test(utilsSrc), 'once-per-run permission
 assert(/resolveAccessibleGscProperty_/.test(extractFn(codeSrc, 'processSiteDaily_')), 'daily resolves property');
 assert(/resolveAccessibleGscProperty_/.test(extractFn(leanSrc, 'processSiteDailyLean_')), 'lean resolves property');
 assert(/resolveFreshRealtimePropertyUrls_/.test(freshSrc), 'fresh monitor resolves property');
-assert(/site\.siteId \|\| ''/.test(extractFn(codeSrc, 'runDailyUnlocked_')), 'daily error snapshot has site_id');
+assert(/recordDailySiteError_/.test(extractFn(codeSrc, 'runDailyUnlocked_')), 'daily errors use isolated recorder');
+assert(/site\.siteId \|\| ''/.test(extractFn(codeSrc, 'recordDailySiteError_')), 'daily error snapshot has site_id');
 
 assert(/EarlySignalStatus/.test(extractFn(decisionSrc, 'writeDecisionSiteStatusRows_')), 'owned fields from schema');
 assert(/alignRowToHeaders_/.test(extractFn(decisionSrc, 'replaceSheetDataRows_')), 'replace pads to schema');

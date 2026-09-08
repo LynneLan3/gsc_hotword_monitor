@@ -124,14 +124,14 @@ function runDailyUnlocked_(isContinuation) {
   var startedAt = Date.now();
   isContinuation = !!isContinuation;
   assertRuntimePrerequisites_();
+  if (!isContinuation) setupSheets();
 
   var sites = getEnabledSites();
   var runDate = todayStr_();
-  ensureDailyRunDay_(runDate, isContinuation);
+  ensureDailyRunDay_(runDate);
 
   var phase = getDailyRunPhase_();
-  var doneNames = getDailyDoneSiteNames_();
-  var pending = nextDailyPendingSites_(sites, doneNames);
+  var cursor = getDailyCursor_(sites);
 
   writeLog_(
     'INFO',
@@ -149,58 +149,43 @@ function runDailyUnlocked_(isContinuation) {
       phase +
       ' continuation=' +
       (isContinuation ? 'yes' : 'no') +
-      ' done=' +
-      doneNames.length +
-      ' pending=' +
-      pending.length +
-      ' sites=' +
-      formatDailySiteList_(sites)
+      ' cursor=' +
+      cursor +
+      '/' +
+      sites.length
   );
 
   var processedThisRun = 0;
 
   if (phase === 'collect') {
-    if (!sites.length) {
-      writeLog_('INFO', '', 'runDaily 采集结束：无启用站点');
-      setDailyRunPhase_('engines');
-      phase = 'engines';
-    } else {
-      for (var i = 0; i < sites.length; i++) {
-        var site = sites[i];
-        if (doneNames.indexOf(site.name) >= 0) continue;
-        if (shouldPauseDailyRun_(processedThisRun, startedAt)) {
-          scheduleDailyContinuation_();
-          var pauseMsg =
-            'runDaily 分批暂停 ' +
-            doneNames.length +
-            '/' +
-            sites.length +
-            ' 待续=' +
-            formatDailySiteList_(nextDailyPendingSites_(sites, doneNames));
-          writeLog_('INFO', '', pauseMsg);
-          Logger.log(pauseMsg);
-          return pauseMsg;
-        }
-        try {
-          processSiteDaily_(site, runDate);
-        } catch (e) {
-          var errMsg = String(e.message || e);
-          writeLog_('ERROR', site.name, errMsg);
-          appendSnapshotRow_([
-            runDate, '', site.name, site.propertyUrl, '',
-            '', '', '', '', '', '', '', '', '',
-            '', '', '', '🔴 需要检查', errMsg,
-            site.siteId || ''
-          ]);
-        }
-        markDailySiteDone_(site.name);
-        doneNames.push(site.name);
-        processedThisRun += 1;
+    while (cursor < sites.length) {
+      if (
+        processedThisRun >= DAILY_MAX_SITES_PER_EXECUTION ||
+        shouldPauseDailyRun_(processedThisRun, startedAt)
+      ) {
+        setDailyCursor_(cursor);
+        scheduleDailyContinuation_();
+        var pauseMsg =
+          'runDaily 分批暂停 cursor=' + cursor + '/' + sites.length;
+        writeLog_('INFO', '', pauseMsg);
+        Logger.log(pauseMsg);
+        return pauseMsg;
       }
-      writeLog_('INFO', '', 'runDaily 采集结束');
-      setDailyRunPhase_('engines');
-      phase = 'engines';
+
+      var site = sites[cursor];
+      try {
+        processSiteDaily_(site, runDate);
+      } catch (e) {
+        recordDailySiteError_(site, runDate, e);
+      }
+      cursor += 1;
+      setDailyCursor_(cursor);
+      processedThisRun += 1;
     }
+
+    writeLog_('INFO', '', 'runDaily 采集结束 cursor=' + cursor + '/' + sites.length);
+    setDailyRunPhase_('engines');
+    phase = 'engines';
   }
 
   if (phase === 'engines') {
@@ -298,40 +283,36 @@ function runDailyFinalizerUnlocked_(sites, runDate) {
   }
 }
 
-function nextDailyPendingSites_(sites, doneNames) {
-  var pending = [];
-  var done = doneNames || [];
-  for (var i = 0; i < (sites || []).length; i++) {
-    if (done.indexOf(sites[i].name) < 0) pending.push(sites[i]);
+function recordDailySiteError_(site, runDate, error) {
+  var errMsg = String(error && error.message ? error.message : error);
+  try {
+    writeLog_('ERROR', site.name, errMsg);
+    appendSnapshotRow_([
+      runDate, '', site.name, site.propertyUrl, '',
+      '', '', '', '', '', '', '', '', '',
+      '', '', '', '🔴 需要检查', errMsg,
+      site.siteId || ''
+    ]);
+  } catch (recordError) {
+    Logger.log(
+      'DAILY_SITE_ERROR_RECORD_FAILED | ' +
+        site.name + ' | ' +
+        String(recordError && recordError.message ? recordError.message : recordError)
+    );
   }
-  return pending;
-}
-
-function formatDailySiteList_(sites) {
-  var parts = [];
-  for (var i = 0; i < (sites || []).length; i++) {
-    parts.push(sites[i].name + '|' + sites[i].propertyUrl);
-  }
-  return parts.join(', ');
 }
 
 function shouldPauseDailyRun_(processedThisRun, startedAt, nowMs, maxMs) {
   var now = nowMs == null ? Date.now() : nowMs;
   var limit = maxMs == null ? DAILY_RUN_MAX_MS : maxMs;
-  return processedThisRun > 0 && now - startedAt > limit;
+  return processedThisRun > 0 && now - startedAt >= limit;
 }
 
-function ensureDailyRunDay_(today, isContinuation) {
+function ensureDailyRunDay_(today) {
   var props = PropertiesService.getScriptProperties();
-  var stored = props.getProperty(DAILY_RUN_DATE_PROP);
-  if (stored !== today) {
+  if (props.getProperty(DAILY_RUN_DATE_PROP) !== today) {
     props.setProperty(DAILY_RUN_DATE_PROP, today);
-    props.setProperty(DAILY_DONE_SITES_PROP, '[]');
-    props.setProperty(DAILY_RUN_PHASE_PROP, 'collect');
-    return;
-  }
-  if (!isContinuation && getDailyRunPhase_() === 'done') {
-    props.setProperty(DAILY_DONE_SITES_PROP, '[]');
+    props.setProperty(DAILY_CURSOR_PROP, '0');
     props.setProperty(DAILY_RUN_PHASE_PROP, 'collect');
   }
 }
@@ -346,30 +327,37 @@ function setDailyRunPhase_(phase) {
   PropertiesService.getScriptProperties().setProperty(DAILY_RUN_PHASE_PROP, phase);
 }
 
-function getDailyDoneSiteNames_() {
-  var raw = PropertiesService.getScriptProperties().getProperty(DAILY_DONE_SITES_PROP);
-  if (!raw) return [];
-  try {
-    var parsed = JSON.parse(raw);
-    if (!parsed || !parsed.length) return [];
-    var names = [];
-    for (var i = 0; i < parsed.length; i++) {
-      var name = String(parsed[i] || '').trim();
-      if (name) names.push(name);
+function getDailyCursor_(sites) {
+  var props = PropertiesService.getScriptProperties();
+  var raw = props.getProperty(DAILY_CURSOR_PROP);
+  var cursor = parseInt(raw || '0', 10);
+  if (isNaN(cursor) || cursor < 0) cursor = 0;
+  if (raw === null) {
+    var legacyRaw = props.getProperty(DAILY_DONE_SITES_PROP);
+    if (legacyRaw) {
+      try {
+        var legacyDone = JSON.parse(legacyRaw) || [];
+        cursor = 0;
+        while (
+          cursor < (sites || []).length &&
+          legacyDone.indexOf(sites[cursor].name) >= 0
+        ) {
+          cursor += 1;
+        }
+      } catch (e) {
+        cursor = 0;
+      }
     }
-    return names;
-  } catch (e) {
-    return [];
+    props.setProperty(DAILY_CURSOR_PROP, String(cursor));
   }
+  if (cursor > (sites || []).length) cursor = (sites || []).length;
+  return cursor;
 }
 
-function markDailySiteDone_(siteName) {
-  var names = getDailyDoneSiteNames_();
-  if (names.indexOf(siteName) >= 0) return;
-  names.push(siteName);
+function setDailyCursor_(cursor) {
   PropertiesService.getScriptProperties().setProperty(
-    DAILY_DONE_SITES_PROP,
-    JSON.stringify(names)
+    DAILY_CURSOR_PROP,
+    String(cursor)
   );
 }
 

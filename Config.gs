@@ -2002,14 +2002,17 @@ var INDEX_AUDIT_TRIGGER_HOURS = [9, 12, 15, 20];
 
 /**
  * runDaily 分批续跑：Apps Script 单次约 6 分钟上限，预留收尾时间。
- * 续跑状态只存站点名称与 phase，不存 Property URL；
+ * 续跑状态只存日期、站点 cursor 与 phase，不存 Property URL；
  * 每次 execution 都从当前「站点配置」重读短域名。
  */
 var DAILY_RUN_MAX_MS = 4.5 * 60 * 1000;
+var DAILY_MAX_SITES_PER_EXECUTION = 4;
 var DAILY_CONTINUE_AFTER_MS = 30 * 1000;
 var DAILY_CONTINUE_HANDLER = 'runDailyContinuation_';
 var DAILY_RUN_DATE_PROP = 'DAILY_RUN_DATE';
+var DAILY_CURSOR_PROP = 'DAILY_CURSOR';
 var DAILY_RUN_PHASE_PROP = 'DAILY_RUN_PHASE';
+/** Legacy state retained only to migrate an in-flight pre-cursor daily run. */
 var DAILY_DONE_SITES_PROP = 'DAILY_DONE_SITES';
 
 /**

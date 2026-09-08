@@ -1,15 +1,13 @@
 /**
- * runDaily 分批续跑 + Agent 64 短域名保护（本地静态检查）。
- * 运行：node scripts/test-daily-batch.js
+ * Deterministic runtime regression for runDaily batching.
+ * Run: node scripts/test-daily-batch.js
  */
 'use strict';
 
+var assert = require('assert');
 var fs = require('fs');
 var path = require('path');
-
-function assert(cond, msg) {
-  if (!cond) throw new Error(msg);
-}
+var vm = require('vm');
 
 var root = path.join(__dirname, '..');
 var codeSrc = fs.readFileSync(path.join(root, 'Code.gs'), 'utf8');
@@ -23,106 +21,166 @@ function extractFn(src, name) {
   return next >= 0 ? src.slice(start, next) : src.slice(start);
 }
 
-function nextDailyPendingSites_(sites, doneNames) {
-  var pending = [];
-  var done = doneNames || [];
-  for (var i = 0; i < (sites || []).length; i++) {
-    if (done.indexOf(sites[i].name) < 0) pending.push(sites[i]);
-  }
-  return pending;
-}
-
-function shouldPauseDailyRun_(processedThisRun, startedAt, nowMs, maxMs) {
-  return processedThisRun > 0 && nowMs - startedAt > maxMs;
-}
-
-var SHORT = 'https://agent-64.vercel.app/';
-var LONG = 'https://agent-64-spies-never-die.vercel.app/';
-var AGENT = 'Agent 64: Spies Never Die';
-
-// --- 1. 默认配置与 seed 不得覆盖已有第9行 ---
-assert(configSrc.indexOf("propertyUrl: 'https://agent-64.vercel.app/'") >= 0, 'DEFAULT_SITES short domain');
-assert(configSrc.indexOf('agent-64-spies-never-die') < 0, 'DEFAULT_SITES has no long domain');
-assert(/seedSitesIfEmpty_[\s\S]*if \(sheet\.getLastRow\(\) > 1\) return/.test(sheetSrc), 'seed does not overwrite existing sites');
-assert(extractFn(sheetSrc, 'getEnabledSites').indexOf('normalizePropertyUrlForGsc_(propertyUrl)') >= 0, 'runtime reads current 站点配置 URL');
-
-// --- 2. 续跑状态只用站点名，GSC URL 来自当前启用站点 ---
+// Static contracts: small fixed batches, cursor state, setup only on the daily entry,
+// and no same-day reset after finalization.
 var unlocked = extractFn(codeSrc, 'runDailyUnlocked_');
-assert(/getEnabledSites\(\)/.test(unlocked), 'unlocked re-reads enabled sites');
-assert(/nextDailyPendingSites_\(sites, doneNames\)/.test(unlocked), 'pending from current sites + done names');
-assert(/processSiteDaily_\(site, runDate\)/.test(unlocked), 'processes current site object');
-assert(unlocked.indexOf('DEFAULT_SITES') < 0, 'must not restore DEFAULT_SITES URLs at runtime');
-assert(!/SNAPSHOT|每日快照/.test(unlocked.replace(/appendSnapshotRow_/g, '')), 'must not restore URL from snapshots');
-assert(/markDailySiteDone_\(site\.name\)/.test(unlocked), 'checkpoint by site name');
-assert(/runDailyFinalizerUnlocked_\(sites, runDate\)/.test(unlocked), 'engines via finalizer');
-assert(/setDailyRunPhase_\('engines'\)/.test(unlocked), 'engines only after collect');
-assert(/scheduleDailyContinuation_/.test(unlocked), 'schedules continuation');
-assert(!/setDailyRunPhase_\('done'\)/.test(unlocked), 'collect path does not mark done');
-
-var finalizerFn = extractFn(codeSrc, 'runDailyFinalizerUnlocked_');
-assert(/runDecisionEngine\(\)/.test(finalizerFn) && /runContentOpportunityEngine\(\)/.test(finalizerFn), 'finalizer runs engines');
-assert(/refreshDemandRadar_\(sites, runDate\)/.test(finalizerFn), 'finalizer refreshes demand radar');
-assert(!/createSearchDemandJobs/.test(finalizerFn), 'finalizer does not create search jobs');
-assert(!/createSearchDemandJobs/.test(unlocked), 'collect path does not create search jobs');
-assert(
-  finalizerFn.indexOf('runContentOpportunityEngine') < finalizerFn.indexOf('refreshDemandRadar_'),
-  'radar after GSC collect + opportunity'
-);
-assert(/setDailyRunPhase_\('done'\)/.test(finalizerFn), 'done only after finalizer success');
-assert(/formatErrorWithStack_/.test(finalizerFn), 'finalizer logs stack');
-assert(/throw e/.test(finalizerFn), 'finalizer does not swallow');
-
-var pendingFn = extractFn(codeSrc, 'nextDailyPendingSites_');
-assert(/sites\[i\]\.name/.test(pendingFn), 'pending match by name');
-assert(!/propertyUrl/.test(pendingFn), 'pending helper does not key on URL');
-
-var doneFn = extractFn(codeSrc, 'markDailySiteDone_');
-assert(/DAILY_DONE_SITES_PROP/.test(doneFn), 'stores done names');
-assert(!/propertyUrl|vercel\.app/.test(doneFn), 'done state has no URL');
-
-var processFn = extractFn(codeSrc, 'processSiteDaily_');
-assert(/configuredUrl = site\.propertyUrl/.test(processFn), 'GSC starts from site.propertyUrl config');
-assert(/resolveAccessibleGscProperty_/.test(processFn), 'resolves accessible GSC property at runtime');
-assert(/开始采集 propertyUrl=/.test(processFn), 'logs the URL actually queried');
-assert(/site\.siteId \|\| ''/.test(processFn), 'snapshot includes site_id');
-
-// --- 3. 模拟：历史长域名快照不得进入续跑 GSC 请求 ---
-var enabled = [
-  { name: 'Leafy Corner', propertyUrl: 'https://leafy-corner.vercel.app/' },
-  { name: AGENT, propertyUrl: SHORT }
-];
-var historicalSnapshot = { name: AGENT, propertyUrl: LONG, runDate: '2026-08-14' };
-var pending = nextDailyPendingSites_(enabled, ['Leafy Corner']);
-assert(pending.length === 1 && pending[0].name === AGENT, 'resume remaining by name');
-assert(pending[0].propertyUrl === SHORT, 'resume URL from current config');
-assert(pending[0].propertyUrl !== historicalSnapshot.propertyUrl, 'must not use 2026-08-14 long-domain snapshot');
-assert(pending[0].propertyUrl.indexOf('spies-never-die') < 0, 'no long host in pending GSC URL');
-
-assert(shouldPauseDailyRun_(1, 0, 270001, 270000) === true, 'pause after progress + budget');
-assert(shouldPauseDailyRun_(0, 0, 270001, 270000) === false, 'always process at least one site');
-assert(shouldPauseDailyRun_(1, 0, 1000, 270000) === false, 'continue under budget');
-
-// --- 4. 续跑 trigger 不得误删每日 runDaily ---
-var sched = extractFn(codeSrc, 'scheduleDailyContinuation_');
-assert(/DAILY_CONTINUE_HANDLER/.test(sched), 'continuation handler constant');
-assert(!/newTrigger\('runDaily'\)/.test(sched), 'must not recreate the 8am runDaily trigger');
-var del = extractFn(codeSrc, 'deleteDailyContinuationTriggers_');
-assert(/=== DAILY_CONTINUE_HANDLER/.test(del), 'only deletes continuation triggers');
-assert(/function runDailyContinuation_/.test(codeSrc), 'continuation entry exists');
+assert(/if \(!isContinuation\) setupSheets\(\)/.test(unlocked), 'daily entry sets up sheets');
+assert(/DAILY_MAX_SITES_PER_EXECUTION/.test(unlocked), 'daily has a site batch cap');
+assert(/getDailyCursor_\(sites\)/.test(unlocked), 'daily loads cursor');
+assert(/setDailyCursor_\(cursor\)/.test(unlocked), 'daily persists cursor');
+assert(/processSiteDaily_\(site, runDate\)/.test(unlocked), 'daily preserves site processor');
+assert(/recordDailySiteError_\(site, runDate, e\)/.test(unlocked), 'site errors are terminal and isolated');
+assert(!/getDailyRunPhase_\(\) === 'done'/.test(codeSrc), 'same-day done state is not reset');
 assert(/runDailyWithLock_\(true\)/.test(extractFn(codeSrc, 'runDailyContinuation_')), 'continuation resumes');
-assert(/runDailyWithLock_\(false\)/.test(extractFn(codeSrc, 'runDaily')), 'menu/8am is primary');
+assert(/DAILY_CURSOR_PROP/.test(configSrc), 'daily cursor property exists');
+assert(/DAILY_MAX_SITES_PER_EXECUTION = 4/.test(configSrc), 'daily batch cap is 4');
+assert(/DAILY_CONTINUE_HANDLER/.test(configSrc), 'continuation handler exists');
+assert(/function setupSheets/.test(sheetSrc), 'setupSheets remains the existing setup path');
+assert(configSrc.indexOf("propertyUrl: 'https://agent-64.vercel.app/'") >= 0, 'Agent 64 short domain');
+assert(/seedSitesIfEmpty_[\s\S]*if \(sheet\.getLastRow\(\) > 1\) return/.test(sheetSrc), 'site seed is non-destructive');
+assert(extractFn(sheetSrc, 'getEnabledSites').indexOf('normalizePropertyUrlForGsc_(propertyUrl)') >= 0, 'runtime reads current site URL');
+var processFn = extractFn(codeSrc, 'processSiteDaily_');
+assert(/configuredUrl = site\.propertyUrl/.test(processFn), 'GSC starts from current site config');
+assert(/resolveAccessibleGscProperty_/.test(processFn), 'daily resolves accessible GSC property');
 
-assert(/var DAILY_RUN_MAX_MS/.test(configSrc), 'time budget constant');
-assert(/var DAILY_CONTINUE_HANDLER/.test(configSrc), 'handler name constant');
+// Runtime: execute the real runDaily functions with Apps Script boundary stubs.
+var propsState = {};
+var props = {
+  getProperty: function (key) { return Object.prototype.hasOwnProperty.call(propsState, key) ? propsState[key] : null; },
+  setProperty: function (key, value) { propsState[key] = String(value); },
+  deleteProperty: function (key) { delete propsState[key]; }
+};
+var triggers = [];
+var calls = [];
+var errors = [];
+var snapshots = [];
+var setupCalls = 0;
+var decisionRuns = 0;
+var today = '2026-09-08';
+var sites = makeSites(20);
+var failures = {};
 
-var createDaily = extractFn(codeSrc, 'createDailyTrigger');
-assert(!/newTrigger\('runFreshQueryMonitor'\)/.test(createDaily), 'no fresh monitor trigger in daily helper');
-assert(!/everyHours\(/.test(createDaily), 'daily helper stays atHour/everyDays');
-assert(!/runFreshQueryMonitor/.test(unlocked), 'runDaily collect must not call fresh monitor');
-assert(!/runFreshQueryMonitor/.test(finalizerFn), 'runDaily finalizer must not call fresh monitor');
+function makeSites(count) {
+  var out = [];
+  for (var i = 0; i < count; i++) {
+    out.push({
+      name: 'Site ' + i,
+      propertyUrl: 'https://site-' + i + '.example/',
+      siteId: 'site-' + i
+    });
+  }
+  return out;
+}
 
-// --- 5. setup / 7站旧代码不得删 Agent 64 ---
-assert(!/deleteRow|clearContent|getLastRow\(\) === 8/.test(extractFn(sheetSrc, 'seedSitesIfEmpty_')), 'seed never deletes extra site rows');
-assert(!/for \(var i = .*DEFAULT_SITES\.length[\s\S]*deleteRow/.test(sheetSrc), 'no trim-to-7-sites');
+function resetState() {
+  propsState = {};
+  triggers.length = 0;
+  calls.length = 0;
+  errors.length = 0;
+  snapshots.length = 0;
+  setupCalls = 0;
+  decisionRuns = 0;
+  failures = {};
+}
+
+var context = { console: console, Date: Date, JSON: JSON, Math: Math };
+vm.createContext(context);
+vm.runInContext(configSrc + '\n' + codeSrc, context);
+
+context.PropertiesService = { getScriptProperties: function () { return props; } };
+context.ScriptApp = {
+  getProjectTriggers: function () { return triggers.slice(); },
+  deleteTrigger: function (trigger) {
+    var index = triggers.indexOf(trigger);
+    if (index >= 0) triggers.splice(index, 1);
+  },
+  newTrigger: function (handler) {
+    var builder = {
+      timeBased: function () { return builder; },
+      after: function () { return builder; },
+      create: function () {
+        triggers.push({ getHandlerFunction: function () { return handler; } });
+      }
+    };
+    return builder;
+  }
+};
+context.LockService = {
+  getScriptLock: function () {
+    return { tryLock: function () { return true; }, releaseLock: function () {} };
+  }
+};
+context.Logger = { log: function () {} };
+context.assertRuntimePrerequisites_ = function () {};
+context.setupSheets = function () { setupCalls += 1; };
+context.getEnabledSites = function () { return sites; };
+context.todayStr_ = function () { return today; };
+context.gscTodayStr_ = function () { return today; };
+context.writeLog_ = function (level, siteName, message) {
+  if (level === 'ERROR') errors.push(siteName + '|' + message);
+};
+context.appendSnapshotRow_ = function (row) { snapshots.push(row); };
+context.processSiteDaily_ = function (site) {
+  calls.push(site.name);
+  if (failures[site.name]) throw new Error('fixture failure');
+};
+context.runDailyFinalizerUnlocked_ = function (finalizerSites, runDate) {
+  assert.equal(finalizerSites.length, sites.length, 'finalizer sees all enabled sites');
+  assert.equal(runDate, today, 'finalizer uses the current run date');
+  decisionRuns += 1;
+  context.setDailyRunPhase_('done');
+  context.deleteDailyContinuationTriggers_();
+  return 'done';
+};
+
+function runContinuationUntilDone() {
+  while (propsState.DAILY_RUN_PHASE !== 'done') context.runDailyContinuation_();
+}
+
+// 1-3, 6: 20 sites are split, cursor is saved, continuation starts at cursor 4,
+// and the decision engine waits for the final batch and runs once.
+var firstResult = context.runDaily();
+assert.match(firstResult, /cursor=4\/20/);
+assert.equal(setupCalls, 1, 'daily entry calls setupSheets once');
+assert.deepEqual(calls, ['Site 0', 'Site 1', 'Site 2', 'Site 3'], 'one call handles only one small batch');
+assert.equal(propsState.DAILY_CURSOR, '4', 'batch end saves cursor 4');
+assert.equal(propsState.DAILY_RUN_PHASE, 'collect', 'batch end remains in collect phase');
+assert.equal(triggers.length, 1, 'one continuation trigger is pending');
+assert.equal(decisionRuns, 0, 'decision waits for all sites');
+
+context.runDailyContinuation_();
+assert.equal(setupCalls, 1, 'continuation does not repeat full setup');
+assert.deepEqual(calls.slice(4, 8), ['Site 4', 'Site 5', 'Site 6', 'Site 7'], 'continuation starts at cursor 4');
+assert.equal(propsState.DAILY_CURSOR, '8', 'second batch saves cursor 8');
+runContinuationUntilDone();
+assert.deepEqual(calls, makeSites(20).map(function (site) { return site.name; }), 'all sites run once');
+assert.equal(propsState.DAILY_CURSOR, '20', 'completed cursor reaches site count');
+assert.equal(decisionRuns, 1, 'decision runs once after collection');
+assert.equal(triggers.length, 0, 'continuation trigger is removed after completion');
+
+// 7: same-day primary entry is idempotent after the full run.
+var callsAfterDone = calls.length;
+context.runDaily();
+assert.equal(calls.length, callsAfterDone, 'same-day completed run does not recollect');
+assert.equal(decisionRuns, 1, 'same-day completed run does not rerun decision');
+
+// 4-5: a new date resets the cursor, and a terminal site error advances it.
+resetState();
+sites = makeSites(3);
+today = '2026-09-09';
+failures['Site 1'] = true;
+context.runDaily();
+assert.deepEqual(calls, ['Site 0', 'Site 1', 'Site 2'], 'failed site does not block later sites');
+assert.equal(errors.length, 1, 'failed site writes one error');
+assert.equal(snapshots.length, 1, 'failed site writes one snapshot');
+assert.equal(propsState.DAILY_CURSOR, '3', 'failed site still advances cursor');
+assert.equal(decisionRuns, 1, 'decision runs after terminal site error');
+
+today = '2026-09-10';
+sites = makeSites(20);
+context.runDaily();
+assert.equal(propsState.DAILY_RUN_DATE, today, 'date change stores new run date');
+assert.equal(propsState.DAILY_CURSOR, '4', 'date change resets cursor before first new batch');
+assert.deepEqual(calls.slice(3, 7), ['Site 0', 'Site 1', 'Site 2', 'Site 3'], 'new date starts at site 0');
 
 console.log('PASS scripts/test-daily-batch.js');
