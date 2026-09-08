@@ -13,7 +13,8 @@ function createDevelopmentTasks() {
 /**
  * 外部已批准 Research Pack → 现有「开发任务」队列（最薄入口）。
  * 不改 Research Job、不改菜单 createDevelopmentTasks 路径；只追加缺失任务。
- * 幂等：同一 OpportunityID + DecisionID + ActionType + 页面路径 不重复写行。
+ * 幂等：无正式 DecisionID 时用 OpportunityID + ActionType + PagePath；
+ * 有正式 DecisionID 时仍用完整 identity。不发明 DecisionID。
  *
  * @param {Object} input
  * @return {Object} 机器可读结果（created | existing）
@@ -25,19 +26,21 @@ function registerExternalDevelopmentTask(input) {
   var existing = loadExistingDevelopmentTaskKeys_(sheet);
   var task = buildDevelopmentTaskFromExternalInput_(taskInput, new Date());
 
-  var prior = findExistingDevelopmentTaskRow_(sheet, task);
-  if (prior || developmentTaskAlreadyExists_(existing, task)) {
-    var existingResult = prior || {
-      development_task_id: task.development_task_id,
-      opportunity_id: task.opportunity_id,
-      decision_id: task.decision_id,
-      site_id: task.site_id,
-      action_type: task.action_type,
-      page_path: task.page_path,
-      handoff_status: task.handoff_status,
-      handoff_reference: task.handoff_reference,
-      source_reference: task.source_reference
-    };
+  var priorHit = findExternalDevelopmentTaskHit_(sheet, task);
+  if (priorHit || externalDevelopmentTaskAlreadyExists_(existing, task)) {
+    var existingResult = priorHit
+      ? repairFabricatedExternalDecisionIdInPlace_(sheet, priorHit, task)
+      : {
+        development_task_id: task.development_task_id,
+        opportunity_id: task.opportunity_id,
+        decision_id: task.decision_id,
+        site_id: task.site_id,
+        action_type: task.action_type,
+        page_path: task.page_path,
+        handoff_status: task.handoff_status,
+        handoff_reference: task.handoff_reference,
+        source_reference: task.source_reference
+      };
     var existingPayload = externalDevelopmentTaskResult_('existing', existingResult);
     writeLog_('INFO', task.site_id || '', 'registerExternalDevelopmentTask existing ' + existingPayload.DevelopmentTaskID);
     return existingPayload;
@@ -45,7 +48,7 @@ function registerExternalDevelopmentTask(input) {
 
   var start = Math.max(2, sheet.getLastRow() + 1);
   sheet.getRange(start, 1, 1, DEVELOPMENT_TASK_HEADERS.length).setValues([developmentTaskSheetRow_(task)]);
-  markDevelopmentTaskExisting_(existing, task);
+  markExternalDevelopmentTaskExisting_(existing, task);
   var createdPayload = externalDevelopmentTaskResult_('created', task);
   writeLog_('INFO', task.site_id || '', 'registerExternalDevelopmentTask created ' + createdPayload.DevelopmentTaskID);
   return createdPayload;
@@ -107,7 +110,10 @@ function normalizeExternalDevelopmentTaskInput_(input) {
     raw.evidenceReference || raw.EvidenceReference || raw.evidenceLink || ''
   ).trim();
   var opportunityId = String(raw.opportunityId || raw.OpportunityID || '').trim();
+  // Canonical attribution: blank unless Decision owner already recorded a formal ID.
+  // Never invent external-approval:* / synthetic DecisionIDs.
   var decisionId = String(raw.decisionId || raw.DecisionID || '').trim();
+  if (isFabricatedExternalDecisionId_(decisionId)) decisionId = '';
   var priority = String(raw.priority || raw.Priority || '').trim();
 
   if (!siteId) throw new Error('registerExternalDevelopmentTask: siteId required');
@@ -118,9 +124,6 @@ function normalizeExternalDevelopmentTaskInput_(input) {
 
   if (!opportunityId) {
     opportunityId = externalOpportunityIdFromInput_(siteId, pagePath, actionType, sourceReference);
-  }
-  if (!decisionId) {
-    decisionId = 'external-approval:' + sourceReference;
   }
   if (!evidenceReference) evidenceReference = sourceReference;
 
@@ -222,8 +225,27 @@ function externalDevelopmentTaskResult_(status, task) {
   };
 }
 
-/** @return {Object|null} task-shaped object from an existing sheet row */
-function findExistingDevelopmentTaskRow_(sheet, task) {
+/** Fabricated DecisionIDs invented by the first external-registration build. */
+function isFabricatedExternalDecisionId_(decisionId) {
+  return /^external-approval:/i.test(String(decisionId || '').trim());
+}
+
+/** External idempotency without a formal DecisionID. */
+function externalDevelopmentTaskMatchKey_(opportunityId, actionType, targetPath) {
+  return [opportunityId, actionType, targetPath].map(function (value) {
+    return String(value || '').trim();
+  }).join('\u001f');
+}
+
+function ledgerAttributionModeForDecisionId_(decisionId) {
+  return String(decisionId || '').trim() ? 'FORMAL_DECISION_LINKED' : 'OBSERVATIONAL_ONLY';
+}
+
+/**
+ * @return {{rowIndex:number, task:Object, col:Object}|null}
+ * rowIndex is 1-based Sheet row.
+ */
+function findExternalDevelopmentTaskHit_(sheet, task) {
   if (!sheet || sheet.getLastRow() < 2 || !task) return null;
   var lastCol = Math.max(sheet.getLastColumn(), DEVELOPMENT_TASK_HEADERS.length);
   var header = sheet.getRange(1, 1, 1, lastCol).getValues()[0];
@@ -232,7 +254,12 @@ function findExistingDevelopmentTaskRow_(sheet, task) {
   var wantKey = developmentTaskIdentityKey_(
     task.opportunity_id, task.decision_id, task.action_type, task.page_path
   );
+  var wantExternalKey = externalDevelopmentTaskMatchKey_(
+    task.opportunity_id, task.action_type, task.page_path
+  );
   var wantId = String(task.development_task_id || '').trim();
+  var allowExternalMatch = !String(task.decision_id || '').trim();
+
   for (var i = 0; i < values.length; i++) {
     var row = values[i];
     var opportunityId = String(cell_(row, col, 'OpportunityID') || '').trim();
@@ -241,21 +268,74 @@ function findExistingDevelopmentTaskRow_(sheet, task) {
     var pagePath = String(cell_(row, col, '页面路径') || '').trim();
     var developmentTaskId = String(cell_(row, col, '开发任务ID') || '').trim();
     var key = developmentTaskIdentityKey_(opportunityId, decisionId, actionType, pagePath);
-    if ((opportunityId && actionType && key === wantKey) || (wantId && developmentTaskId === wantId)) {
+    var externalKey = externalDevelopmentTaskMatchKey_(opportunityId, actionType, pagePath);
+    var exact = opportunityId && actionType && key === wantKey;
+    var byId = !!(wantId && developmentTaskId === wantId);
+    var externalSame = allowExternalMatch && opportunityId && actionType &&
+      externalKey === wantExternalKey &&
+      (!decisionId || isFabricatedExternalDecisionId_(decisionId));
+    if (exact || byId || externalSame) {
       return {
-        development_task_id: developmentTaskId,
-        opportunity_id: opportunityId,
-        decision_id: decisionId,
-        site_id: String(cell_(row, col, 'SiteID') || '').trim(),
-        action_type: actionType,
-        page_path: pagePath,
-        handoff_status: String(cell_(row, col, 'HandoffStatus') || '').trim(),
-        handoff_reference: String(cell_(row, col, 'HandoffReference') || '').trim(),
-        source_reference: String(cell_(row, col, 'SourceReference') || '').trim()
+        rowIndex: i + 2,
+        col: col,
+        task: {
+          development_task_id: developmentTaskId,
+          opportunity_id: opportunityId,
+          decision_id: decisionId,
+          site_id: String(cell_(row, col, 'SiteID') || '').trim(),
+          action_type: actionType,
+          page_path: pagePath,
+          handoff_status: String(cell_(row, col, 'HandoffStatus') || '').trim(),
+          handoff_reference: String(cell_(row, col, 'HandoffReference') || '').trim(),
+          source_reference: String(cell_(row, col, 'SourceReference') || '').trim()
+        }
       };
     }
   }
   return null;
+}
+
+/** @return {Object|null} task-shaped object from an existing sheet row */
+function findExistingDevelopmentTaskRow_(sheet, task) {
+  var hit = findExternalDevelopmentTaskHit_(sheet, task);
+  return hit ? hit.task : null;
+}
+
+/**
+ * Clear fabricated external-approval DecisionID in place.
+ * Keeps DevelopmentTaskID / OpportunityID / HandoffReference unchanged.
+ */
+function repairFabricatedExternalDecisionIdInPlace_(sheet, hit, incomingTask) {
+  var task = hit.task || {};
+  var incomingDecision = String((incomingTask && incomingTask.decision_id) || '').trim();
+  if (isFabricatedExternalDecisionId_(task.decision_id) && !incomingDecision) {
+    var decisionCol = hit.col && hit.col['DecisionID'];
+    if (decisionCol !== undefined && hit.rowIndex >= 2) {
+      sheet.getRange(hit.rowIndex, decisionCol + 1).setValue('');
+    }
+    task.decision_id = '';
+  }
+  return task;
+}
+
+function externalDevelopmentTaskAlreadyExists_(existing, task) {
+  if (developmentTaskAlreadyExists_(existing, task)) return true;
+  if (!task || !task.opportunity_id || !task.action_type) return false;
+  if (String(task.decision_id || '').trim()) return false;
+  return !!(existing && existing.external &&
+    existing.external[externalDevelopmentTaskMatchKey_(
+      task.opportunity_id, task.action_type, task.page_path
+    )]);
+}
+
+function markExternalDevelopmentTaskExisting_(existing, task) {
+  markDevelopmentTaskExisting_(existing, task);
+  if (!existing.external) existing.external = {};
+  if (task && task.opportunity_id && task.action_type) {
+    existing.external[externalDevelopmentTaskMatchKey_(
+      task.opportunity_id, task.action_type, task.page_path
+    )] = true;
+  }
 }
 
 /**
@@ -451,9 +531,9 @@ function loadExistingDevelopmentSourceIds_(sheet) {
   return loadExistingDevelopmentTaskKeys_(sheet).sourceIds;
 }
 
-/** @return {{identity:Object<string, boolean>, sourceIds:Object<string, boolean>}} */
+/** @return {{identity:Object<string, boolean>, sourceIds:Object<string, boolean>, external:Object<string, boolean>}} */
 function loadExistingDevelopmentTaskKeys_(sheet) {
-  var result = { identity: {}, sourceIds: {} };
+  var result = { identity: {}, sourceIds: {}, external: {} };
   if (!sheet || sheet.getLastRow() < 2) return result;
   var lastCol = Math.max(sheet.getLastColumn(), DEVELOPMENT_TASK_HEADERS.length);
   var header = sheet.getRange(1, 1, 1, lastCol).getValues()[0];
@@ -470,6 +550,11 @@ function loadExistingDevelopmentTaskKeys_(sheet) {
       result.identity[developmentTaskIdentityKey_(
         opportunityId, decisionId, actionType, targetPath
       )] = true;
+      if (!decisionId || isFabricatedExternalDecisionId_(decisionId)) {
+        result.external[externalDevelopmentTaskMatchKey_(
+          opportunityId, actionType, targetPath
+        )] = true;
+      }
     } else if (sourceId) {
       // Only legacy rows without a Phase 7E identity use source-job fallback.
       result.sourceIds[sourceId] = true;
@@ -797,19 +882,52 @@ function debugDevelopmentTasksSelfCheck() {
     evidenceReference: 'withering_realms_research_pack_2026-09-08.md'
   });
   assert(externalInput.opportunityId.indexOf('opp-ext-withering-realms-category-update_page') === 0, 'external OpportunityID rule');
-  assert(externalInput.decisionId === 'external-approval:withering_realms_research_pack_2026-09-08.md', 'external DecisionID');
+  assert(externalInput.decisionId === '', 'external DecisionID stays blank');
+  assert(isFabricatedExternalDecisionId_('external-approval:pack.md') === true, 'fabricated DecisionID detected');
+  var stripped = normalizeExternalDevelopmentTaskInput_({
+    siteId: 'withering-realms',
+    site: 'Withering Realms Guide',
+    pagePath: '/category/',
+    actionType: 'UPDATE_PAGE',
+    taskType: 'CONTENT_IMPLEMENTATION',
+    taskReason: 'x',
+    priority: 'high',
+    sourceReference: 'pack.md',
+    decisionId: 'external-approval:pack.md'
+  });
+  assert(stripped.decisionId === '', 'fabricated DecisionID stripped');
   var externalTask = buildDevelopmentTaskFromExternalInput_(externalInput, new Date('2026-09-08T00:00:00Z'));
   assert(externalTask.site_id === 'withering-realms', 'external SiteID');
   assert(externalTask.action_type === 'UPDATE_PAGE', 'external ActionType');
   assert(externalTask.task_type === 'CONTENT_IMPLEMENTATION', 'external TaskType');
+  assert(externalTask.decision_id === '', 'external task DecisionID blank');
   assert(externalTask.handoff_status === 'READY_FOR_IMPLEMENTATION', 'external HandoffStatus');
   assert(externalTask.handoff_reference.indexOf('handoff:dev-') === 0, 'external HandoffReference');
   assert(externalTask.development_task_id === developmentTaskIdFromIdentity_(
-    externalTask.opportunity_id, externalTask.decision_id, externalTask.action_type, externalTask.page_path
-  ), 'external DevelopmentTaskID from identity');
+    externalTask.opportunity_id, '', externalTask.action_type, externalTask.page_path
+  ), 'external DevelopmentTaskID from blank-decision identity');
+  assert(ledgerAttributionModeForDecisionId_(externalTask.decision_id) === 'OBSERVATIONAL_ONLY', 'no DecisionID → observational');
+  var existingKeys = { identity: {}, sourceIds: {}, external: {} };
+  markExternalDevelopmentTaskExisting_(existingKeys, externalTask);
+  assert(externalDevelopmentTaskAlreadyExists_(existingKeys, externalTask) === true, 'external idempotent key');
+  var legacyTaskId = developmentTaskIdFromIdentity_(
+    externalTask.opportunity_id,
+    'external-approval:withering_realms_research_pack_2026-09-08.md',
+    externalTask.action_type,
+    externalTask.page_path
+  );
+  assert(legacyTaskId !== externalTask.development_task_id, 'legacy fabricated ID differs from blank-decision ID');
+  assert(
+    externalDevelopmentTaskMatchKey_(externalTask.opportunity_id, externalTask.action_type, externalTask.page_path) ===
+      externalDevelopmentTaskMatchKey_(
+        externalTask.opportunity_id, 'UPDATE_PAGE', '/category/'
+      ),
+    'legacy row shares external match key'
+  );
   var externalResult = externalDevelopmentTaskResult_('created', externalTask);
   assert(externalResult.ok === true && externalResult.created === true && externalResult.existing === false, 'external result flags');
   assert(externalResult.DevelopmentTaskID === externalTask.development_task_id, 'external result ID');
+  assert(externalResult.DecisionID === '', 'external result DecisionID blank');
   assert(typeof createDevelopmentTasks === 'function', 'menu createDevelopmentTasks preserved');
   assert(typeof registerExternalDevelopmentTask === 'function', 'external registration entry present');
 

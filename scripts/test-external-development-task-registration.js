@@ -1,5 +1,5 @@
 /**
- * Local pure-logic checks for external Development Task registration.
+ * Regression: external Research Pack registration attribution.
  * Mirrors DevelopmentTasks.gs helpers; does not write production Sheets.
  * Run: node scripts/test-external-development-task-registration.js
  */
@@ -69,6 +69,20 @@ function developmentTaskIdFromIdentity_(opportunityId, decisionId, actionType, t
   return 'dev-' + encodeURIComponent(raw).replace(/%/g, '_');
 }
 
+function isFabricatedExternalDecisionId_(decisionId) {
+  return /^external-approval:/i.test(String(decisionId || '').trim());
+}
+
+function externalDevelopmentTaskMatchKey_(opportunityId, actionType, targetPath) {
+  return [opportunityId, actionType, targetPath].map(function (value) {
+    return String(value || '').trim();
+  }).join('\u001f');
+}
+
+function ledgerAttributionModeForDecisionId_(decisionId) {
+  return String(decisionId || '').trim() ? 'FORMAL_DECISION_LINKED' : 'OBSERVATIONAL_ONLY';
+}
+
 function developmentPriorityFromLevel_(levelLabel) {
   var raw = String(levelLabel || '').trim();
   var upper = raw.toUpperCase();
@@ -102,10 +116,10 @@ function normalizeExternalDevelopmentTaskInput_(input) {
   var sourceReference = String(raw.sourceReference || '').trim();
   var opportunityId = String(raw.opportunityId || '').trim();
   var decisionId = String(raw.decisionId || '').trim();
+  if (isFabricatedExternalDecisionId_(decisionId)) decisionId = '';
   if (!opportunityId) {
     opportunityId = externalOpportunityIdFromInput_(siteId, pagePath, actionType, sourceReference);
   }
-  if (!decisionId) decisionId = 'external-approval:' + sourceReference;
   return {
     siteId: siteId,
     site: site,
@@ -150,11 +164,58 @@ function developmentTaskAlreadyExists_(existing, task) {
   return !!(task.opportunity_id && task.action_type && existing.identity[key]);
 }
 
+function externalDevelopmentTaskAlreadyExists_(existing, task) {
+  if (developmentTaskAlreadyExists_(existing, task)) return true;
+  if (!task || !task.opportunity_id || !task.action_type) return false;
+  if (String(task.decision_id || '').trim()) return false;
+  return !!(existing && existing.external &&
+    existing.external[externalDevelopmentTaskMatchKey_(
+      task.opportunity_id, task.action_type, task.page_path
+    )]);
+}
+
+function markExternalDevelopmentTaskExisting_(existing, task) {
+  if (!existing.identity) existing.identity = {};
+  if (!existing.external) existing.external = {};
+  if (task.opportunity_id && task.action_type) {
+    existing.identity[developmentTaskIdentityKey_(
+      task.opportunity_id, task.decision_id, task.action_type, task.page_path
+    )] = true;
+    existing.external[externalDevelopmentTaskMatchKey_(
+      task.opportunity_id, task.action_type, task.page_path
+    )] = true;
+  }
+}
+
+/** Simulate in-place repair of a legacy external-approval row. */
+function simulateLegacyExternalRepair_(legacyRow, incomingTask) {
+  var rows = [Object.assign({}, legacyRow)];
+  var matchKey = externalDevelopmentTaskMatchKey_(
+    incomingTask.opportunity_id, incomingTask.action_type, incomingTask.page_path
+  );
+  var hit = null;
+  for (var i = 0; i < rows.length; i++) {
+    var row = rows[i];
+    var rowKey = externalDevelopmentTaskMatchKey_(row.opportunity_id, row.action_type, row.page_path);
+    if (rowKey === matchKey &&
+        (!row.decision_id || isFabricatedExternalDecisionId_(row.decision_id))) {
+      hit = row;
+      break;
+    }
+  }
+  if (!hit) return { status: 'created', row: incomingTask, rows: rows.concat([incomingTask]) };
+  if (isFabricatedExternalDecisionId_(hit.decision_id) && !incomingTask.decision_id) {
+    hit.decision_id = '';
+  }
+  return { status: 'existing', row: hit, rows: rows };
+}
+
 var fails = [];
 function assert(cond, msg) {
   if (!cond) fails.push(msg);
 }
 
+// 1) external Research Pack without DecisionID → blank DecisionID
 var input = normalizeExternalDevelopmentTaskInput_({
   siteId: 'withering-realms',
   site: 'Withering Realms Guide',
@@ -167,23 +228,18 @@ var input = normalizeExternalDevelopmentTaskInput_({
   sourceReference: 'withering_realms_research_pack_2026-09-08.md',
   evidenceReference: 'withering_realms_research_pack_2026-09-08.md'
 });
-
 assert(input.pagePath === '/category/', 'page path normalized');
-assert(input.actionType === 'UPDATE_PAGE', 'action normalized');
+assert(input.decisionId === '', 'blank DecisionID when omitted');
 assert(input.opportunityId.indexOf('opp-ext-withering-realms-category-update_page-') === 0, 'opportunity id');
-assert(input.decisionId === 'external-approval:withering_realms_research_pack_2026-09-08.md', 'decision id');
 
 var task = buildDevelopmentTaskFromExternalInput_(input);
+assert(task.decision_id === '', 'built task DecisionID blank');
 assert(task.priority === '高', 'priority high');
-assert(task.goal === '更新现有页面', 'goal from UPDATE_PAGE');
-assert(task.handoff_reference === 'handoff:' + task.development_task_id, 'handoff ref');
+assert(ledgerAttributionModeForDecisionId_(task.decision_id) === 'OBSERVATIONAL_ONLY', 'observational attribution');
 
-var existing = { identity: {}, sourceIds: {} };
-existing.identity[developmentTaskIdentityKey_(
-  task.opportunity_id, task.decision_id, task.action_type, task.page_path
-)] = true;
-assert(developmentTaskAlreadyExists_(existing, task) === true, 'idempotent identity hit');
-
+// 2) repeat registration → same DevelopmentTaskID, no duplicate
+var existing = { identity: {}, sourceIds: {}, external: {} };
+markExternalDevelopmentTaskExisting_(existing, task);
 var second = buildDevelopmentTaskFromExternalInput_(
   normalizeExternalDevelopmentTaskInput_({
     siteId: 'withering-realms',
@@ -197,9 +253,49 @@ var second = buildDevelopmentTaskFromExternalInput_(
   })
 );
 assert(second.development_task_id === task.development_task_id, 'same inputs → same DevelopmentTaskID');
+assert(externalDevelopmentTaskAlreadyExists_(existing, second) === true, 'repeat is idempotent');
+
+// 3) legacy external-approval:* row → in-place repair, same TaskID
+var legacyDecision = 'external-approval:withering_realms_research_pack_2026-09-08.md';
+var legacyTaskId = developmentTaskIdFromIdentity_(
+  task.opportunity_id, legacyDecision, task.action_type, task.page_path
+);
+var legacyHandoff = 'handoff:' + legacyTaskId;
+var legacyRow = {
+  development_task_id: legacyTaskId,
+  opportunity_id: task.opportunity_id,
+  decision_id: legacyDecision,
+  site_id: 'withering-realms',
+  action_type: 'UPDATE_PAGE',
+  page_path: '/category/',
+  handoff_reference: legacyHandoff,
+  source_reference: 'withering_realms_research_pack_2026-09-08.md'
+};
+var repaired = simulateLegacyExternalRepair_(legacyRow, second);
+assert(repaired.status === 'existing', 'legacy repair returns existing');
+assert(repaired.rows.length === 1, 'legacy repair does not add a second row');
+assert(repaired.row.development_task_id === legacyTaskId, 'legacy DevelopmentTaskID preserved');
+assert(repaired.row.opportunity_id === task.opportunity_id, 'legacy OpportunityID preserved');
+assert(repaired.row.handoff_reference === legacyHandoff, 'legacy HandoffReference preserved');
+assert(repaired.row.decision_id === '', 'legacy DecisionID cleared');
+assert(ledgerAttributionModeForDecisionId_(repaired.row.decision_id) === 'OBSERVATIONAL_ONLY', 'repaired observational');
+
+// fabricated input DecisionID is stripped
+var stripped = normalizeExternalDevelopmentTaskInput_({
+  siteId: 'withering-realms',
+  site: 'Withering Realms Guide',
+  pagePath: '/category/',
+  actionType: 'UPDATE_PAGE',
+  taskType: 'CONTENT_IMPLEMENTATION',
+  taskReason: 'x',
+  priority: 'high',
+  sourceReference: 'pack.md',
+  decisionId: 'external-approval:pack.md'
+});
+assert(stripped.decisionId === '', 'fabricated DecisionID input stripped');
 
 if (fails.length) {
   console.error('FAIL ' + fails.join('; '));
   process.exit(1);
 }
-console.log('PASS external development task registration logic');
+console.log('PASS external development task registration attribution regressions');
