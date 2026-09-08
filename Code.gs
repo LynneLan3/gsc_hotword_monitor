@@ -237,8 +237,7 @@ function runDailyFinalizerUnlocked_(sites, runDate) {
     if (typeof refreshUnifiedActionQueue_ === 'function') refreshUnifiedActionQueue_(runDate);
     else writeLog_('WARN', '', '跳过缺失可选 hook: refreshUnifiedActionQueue_');
     syncDevelopmentTasksFromApprovedDecisions();
-    if (typeof refreshImplementationHandoffs_ === 'function') refreshImplementationHandoffs_();
-    else writeLog_('WARN', '', '跳过缺失可选 hook: refreshImplementationHandoffs_');
+    refreshImplementationHandoffs_();
     try {
       maintainExperimentLedger_();
       // Receipt observations run after all GSC collection and reuse this

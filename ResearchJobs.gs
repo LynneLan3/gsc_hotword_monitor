@@ -27,6 +27,16 @@ function doGet(e) {
   if (action === 'pendingSearchDemandJobs') {
     return jsonOutput_({ jobs: loadSearchDemandReadyJobs_() });
   }
+  if (action === 'pendingImplementationHandoffs') {
+    return jsonOutput_({ ok: true, handoffs: loadPendingImplementationHandoffs_() });
+  }
+  if (action === 'implementationHandoff') {
+    var taskId = e && e.parameter ? String(e.parameter.task_id || '').trim() : '';
+    var handoff = getImplementationHandoffByTaskId_(taskId);
+    return jsonOutput_(handoff
+      ? { ok: true, handoff: handoff }
+      : { ok: false, error: taskId ? 'not_found' : 'task_id_required' });
+  }
   if (action === 'initResearchWriteToken') {
     return jsonOutput_(initResearchWriteToken_());
   }
