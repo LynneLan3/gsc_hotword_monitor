@@ -15,6 +15,7 @@ var root = path.join(__dirname, '..');
 var codeSrc = fs.readFileSync(path.join(root, 'Code.gs'), 'utf8');
 var configSrc = fs.readFileSync(path.join(root, 'Config.gs'), 'utf8');
 var sheetSrc = fs.readFileSync(path.join(root, 'SheetManager.gs'), 'utf8');
+var leanSrc = fs.readFileSync(path.join(root, 'TimeoutRetentionHotfix.gs'), 'utf8');
 
 function extractFn(src, name) {
   var start = src.indexOf('function ' + name + '(');
@@ -121,6 +122,8 @@ assert(!/newTrigger\('runFreshQueryMonitor'\)/.test(createDaily), 'no fresh moni
 assert(!/everyHours\(/.test(createDaily), 'daily helper stays atHour/everyDays');
 assert(!/runFreshQueryMonitor/.test(unlocked), 'runDaily collect must not call fresh monitor');
 assert(!/runFreshQueryMonitor/.test(finalizerFn), 'runDaily finalizer must not call fresh monitor');
+assert(/function runDailyLean\(\)/.test(leanSrc), 'production daily handler remains available');
+assert(/enqueueDailyGameWideDiscovery_\(sites, runDate\)/.test(extractFn(leanSrc, 'runDailyLeanUnlocked_')), 'lean daily reaches GAME_WIDE enqueue');
 
 // --- 5. setup / 7站旧代码不得删 Agent 64 ---
 assert(!/deleteRow|clearContent|getLastRow\(\) === 8/.test(extractFn(sheetSrc, 'seedSitesIfEmpty_')), 'seed never deletes extra site rows');

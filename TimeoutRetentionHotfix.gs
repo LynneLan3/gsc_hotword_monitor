@@ -141,6 +141,7 @@ function runDailyLeanUnlocked_(isContinuation) {
     runDecisionEngine();
     runContentOpportunityEngine();
     refreshDemandRadar_(sites, runDate);
+    enqueueDailyGameWideDiscovery_(sites, runDate);
   } catch (e) {
     writeLog_('ERROR', '', 'LEAN_DAILY_FINALIZER_FAILED | ' + String(e && e.message ? e.message : e));
   }
