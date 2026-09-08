@@ -36,6 +36,7 @@ function doGet(e) {
     return jsonOutput_(handoff
       ? { ok: true, handoff: handoff }
       : { ok: false, error: taskId ? 'not_found' : 'task_id_required' });
+  }
   if (action === 'pendingGameWideDiscoveryJobs') {
     return jsonOutput_({ jobs: loadGameWideDiscoveryReadyJobs_() });
   }
