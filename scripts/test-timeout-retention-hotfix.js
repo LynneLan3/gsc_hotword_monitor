@@ -35,6 +35,16 @@ assert(/handler === 'runDaily'/.test(installer), 'installer removes legacy daily
 assert(/handler === HOTFIX_DAILY_HANDLER/.test(installer), 'installer removes duplicate lean trigger');
 assert(/handler === HOTFIX_CONTINUE_HANDLER/.test(installer), 'installer removes stale continuation');
 assert(/atHour\(8\)/.test(installer) && /everyDays\(1\)/.test(installer), 'installer creates 08:00 daily trigger');
+
+// createDailyTrigger must reconcile to the same lean collector and never recreate runDaily.
+const codeSrc = fs.readFileSync(path.join(root, 'Code.gs'), 'utf8');
+const createDailyStart = codeSrc.indexOf('function createDailyTrigger(');
+assert(createDailyStart >= 0, 'createDailyTrigger exists');
+const createDailyEnd = codeSrc.indexOf('\nfunction removeDailyTrigger(', createDailyStart);
+const createDaily = codeSrc.slice(createDailyStart, createDailyEnd);
+assert(/runDailyLean/.test(createDaily), 'createDailyTrigger targets runDailyLean');
+assert(!/newTrigger\(['"]runDaily['"]\)/.test(createDaily), 'createDailyTrigger does not recreate runDaily');
+assert(/fn === 'runDaily'/.test(createDaily) && /deleteTrigger\(legacyDailyTriggers/.test(createDaily), 'createDailyTrigger deletes legacy runDaily');
 assert(/HOTFIX_LOG_RETENTION_DAYS = 30/.test(hotfix), 'logs retain 30 days');
 assert(/HOTFIX_URL_INDEX_ACTIVE_DAYS = 90/.test(hotfix), 'URL index hot data retains 90 days');
 assert(/GSC_RAW_ARCHIVE_PROOF_DATES_V1/.test(hotfix) && /pruneUrlIndexAfterRawProof_\(urlCutoff\)/.test(cleanup), 'URL index requires local RAW proof');
