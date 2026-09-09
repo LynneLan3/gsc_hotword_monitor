@@ -203,7 +203,8 @@ function runDailyFinalizerUnlocked_(sites, runDate) {
     runContentOpportunityEngine();
     refreshDemandRadar_(sites, runDate);
     enqueueDailyGameWideDiscovery_(sites, runDate);
-    refreshUnifiedActionQueue_(runDate);
+    // 今日行动 remains the GSC Decision Engine human-action view only.
+    // Do not rebuild it from Steam/Radar unified-queue background rows.
     syncDevelopmentTasksFromApprovedDecisions();
     refreshImplementationHandoffs_();
     try {
@@ -1210,38 +1211,68 @@ function backfillPageDetailsForSite_(site, startDate, endDate) {
 
 /**
  * 幂等创建自动任务：
- * - runDaily：每天 1 个（约早上 8 点）
+ * - runDailyLean：每天 1 个（约早上 8 点）—— production daily collector
  * - runIndexAuditBatch：每天 4 个（上午/中午/下午/晚上）
- * 重复执行不会重复创建。
+ * 重复执行不会重复创建；不会重新创建 legacy runDaily。
  * 不创建 runFreshQueryMonitor：该 trigger helper 独立，需确认后再启用。
  */
 function createDailyTrigger() {
   var triggers = ScriptApp.getProjectTriggers();
-  var runDailyTriggers = [];
+  var leanDailyTriggers = [];
+  var legacyDailyTriggers = [];
+  var legacyContinueTriggers = [];
+  var leanContinueTriggers = [];
   var indexAuditTriggers = [];
+  var leanHandler = typeof HOTFIX_DAILY_HANDLER === 'string' ? HOTFIX_DAILY_HANDLER : 'runDailyLean';
+  var leanContinueHandler =
+    typeof HOTFIX_CONTINUE_HANDLER === 'string' ? HOTFIX_CONTINUE_HANDLER : 'runDailyLeanContinuation_';
 
   for (var i = 0; i < triggers.length; i++) {
     var fn = triggers[i].getHandlerFunction();
-    if (fn === 'runDaily') runDailyTriggers.push(triggers[i]);
-    if (fn === 'runIndexAuditBatch') indexAuditTriggers.push(triggers[i]);
+    if (fn === leanHandler) leanDailyTriggers.push(triggers[i]);
+    else if (fn === 'runDaily') legacyDailyTriggers.push(triggers[i]);
+    else if (fn === DAILY_CONTINUE_HANDLER) legacyContinueTriggers.push(triggers[i]);
+    else if (fn === leanContinueHandler) leanContinueTriggers.push(triggers[i]);
+    else if (fn === 'runIndexAuditBatch') indexAuditTriggers.push(triggers[i]);
   }
 
   var messages = [];
 
-  // 保证恰好 1 个 runDaily
-  if (runDailyTriggers.length === 0) {
-    ScriptApp.newTrigger('runDaily')
+  // Never recreate legacy runDaily / its continuation; remove if present.
+  for (var ld = 0; ld < legacyDailyTriggers.length; ld++) {
+    ScriptApp.deleteTrigger(legacyDailyTriggers[ld]);
+  }
+  for (var lc = 0; lc < legacyContinueTriggers.length; lc++) {
+    ScriptApp.deleteTrigger(legacyContinueTriggers[lc]);
+  }
+  if (legacyDailyTriggers.length || legacyContinueTriggers.length) {
+    messages.push(
+      '已移除 legacy runDaily×' +
+        legacyDailyTriggers.length +
+        ' / 续跑×' +
+        legacyContinueTriggers.length
+    );
+  }
+
+  // Continuation triggers are scheduled on demand by the lean collector.
+  for (var lcc = 0; lcc < leanContinueTriggers.length; lcc++) {
+    ScriptApp.deleteTrigger(leanContinueTriggers[lcc]);
+  }
+
+  // 保证恰好 1 个 runDailyLean
+  if (leanDailyTriggers.length === 0) {
+    ScriptApp.newTrigger(leanHandler)
       .timeBased()
       .atHour(8)
       .everyDays(1)
       .inTimezone('Asia/Shanghai')
       .create();
-    messages.push('已创建 runDaily（约早上 8 点）');
+    messages.push('已创建 ' + leanHandler + '（约早上 8 点）');
   } else {
-    for (var d = 1; d < runDailyTriggers.length; d++) {
-      ScriptApp.deleteTrigger(runDailyTriggers[d]);
+    for (var d = 1; d < leanDailyTriggers.length; d++) {
+      ScriptApp.deleteTrigger(leanDailyTriggers[d]);
     }
-    messages.push('runDaily 已存在，未重复创建');
+    messages.push(leanHandler + ' 已存在，未重复创建');
   }
 
   // 保证恰好 4 个 runIndexAuditBatch
@@ -1269,18 +1300,21 @@ function createDailyTrigger() {
   SpreadsheetApp.getUi().alert(messages.join('\n') + '\n时区 Asia/Shanghai');
 }
 
-/** 删除 runDaily、续跑与 runIndexAuditBatch 的全部 trigger */
+/** 删除 runDailyLean、legacy runDaily、续跑与 runIndexAuditBatch 的全部 trigger */
 function removeDailyTrigger() {
   var triggers = ScriptApp.getProjectTriggers();
   var removedDaily = 0;
   var removedAudit = 0;
   var removedContinue = 0;
+  var leanHandler = typeof HOTFIX_DAILY_HANDLER === 'string' ? HOTFIX_DAILY_HANDLER : 'runDailyLean';
+  var leanContinueHandler =
+    typeof HOTFIX_CONTINUE_HANDLER === 'string' ? HOTFIX_CONTINUE_HANDLER : 'runDailyLeanContinuation_';
   for (var i = 0; i < triggers.length; i++) {
     var fn = triggers[i].getHandlerFunction();
-    if (fn === 'runDaily') {
+    if (fn === 'runDaily' || fn === leanHandler) {
       ScriptApp.deleteTrigger(triggers[i]);
       removedDaily++;
-    } else if (fn === DAILY_CONTINUE_HANDLER) {
+    } else if (fn === DAILY_CONTINUE_HANDLER || fn === leanContinueHandler) {
       ScriptApp.deleteTrigger(triggers[i]);
       removedContinue++;
     } else if (fn === 'runIndexAuditBatch') {
@@ -1293,7 +1327,7 @@ function removeDailyTrigger() {
     return;
   }
   SpreadsheetApp.getUi().alert(
-    '已删除：runDaily×' +
+    '已删除：daily collector×' +
       removedDaily +
       '，续跑×' +
       removedContinue +

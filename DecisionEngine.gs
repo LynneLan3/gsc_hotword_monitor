@@ -148,7 +148,7 @@ function runDecisionEngine(opts) {
   refreshTodayActions_(runDate, actionRows);
   appendDecisionHistoryRows_(historyRows);
   applyTodayActionValidation_();
-  refreshUnifiedActionQueue_(runDate);
+  // 今日行动 is owned by GSC Decision Engine only; do not rebuild from unified Steam/Radar queue.
 
   try {
     runPortfolioEngine();
@@ -1319,6 +1319,7 @@ function refreshTodayActions_(runDate, actionRows) {
 /**
  * 刷新今日行动：保留历史行；同一 Date+Site+RecommendedAction 若已是 DONE/SKIP，
  * 不恢复成 TODO，并保留人工备注与 DecisionID。当天过期 TODO 会被新建议替换掉。
+ * 非 GSC Decision Engine 的 background 行（Steam / Radar 等 SourceSystem）不保留、不写入。
  */
 function mergeTodayActionRows_(runDate, existing, actionRows) {
   var preserved = [];
@@ -1327,6 +1328,7 @@ function mergeTodayActionRows_(runDate, existing, actionRows) {
 
   for (var i = 0; i < existing.length; i++) {
     var row = padTodayActionRow_(existing[i]);
+    if (!isGscDecisionTodayActionRow_(row)) continue;
     var date = normalizeKeyDate_(row[0]);
     var site = String(row[2] || '').trim();
     var action = String(row[4] || '').trim();
@@ -1379,6 +1381,40 @@ function mergeTodayActionRows_(runDate, existing, actionRows) {
     return String(left[2] || '').localeCompare(String(right[2] || ''));
   });
   return preserved;
+}
+
+/**
+ * 「今日行动」只保留 GSC Decision Engine 人工行动视图。
+ * blank SourceSystem / OpportunityType = legacy Decision Engine rows。
+ * 排除 Steam 候选，以及 unified-queue 写入的 Radar DISCOVERED / Research PENDING 等 background 行。
+ */
+function isGscDecisionTodayActionRow_(row) {
+  var sourceIdx = TODAY_ACTION_HEADERS.indexOf('SourceSystem');
+  var typeIdx = TODAY_ACTION_HEADERS.indexOf('OpportunityType');
+  var source = sourceIdx >= 0
+    ? String((row && row[sourceIdx]) || '').trim().toUpperCase()
+    : '';
+  var opportunityType = typeIdx >= 0
+    ? String((row && row[typeIdx]) || '').trim().toUpperCase()
+    : '';
+  var stage = String((row && row[3]) || '').trim().toUpperCase();
+  var currentState = '';
+  var stateIdx = TODAY_ACTION_HEADERS.indexOf('CurrentState');
+  if (stateIdx >= 0) currentState = String((row && row[stateIdx]) || '').trim().toUpperCase();
+
+  if (source && source !== 'GSC') return false;
+  if (
+    opportunityType === 'STEAM_CANDIDATE' ||
+    opportunityType === 'GSC_RESEARCH' ||
+    opportunityType === 'GSC_DEVELOPMENT'
+  ) {
+    return false;
+  }
+  if (stage === 'RADAR' || stage === 'RESEARCH' || stage === 'DEVELOPMENT') return false;
+  if (currentState === 'DISCOVERED' || currentState === 'PENDING' || currentState === '待处理') {
+    return false;
+  }
+  return true;
 }
 
 function padTodayActionRow_(row) {
