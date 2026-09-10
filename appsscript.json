@@ -11,7 +11,7 @@
     "access": "ANYONE_ANONYMOUS"
   },
   "oauthScopes": [
-    "https://www.googleapis.com/auth/webmasters.readonly",
+    "https://www.googleapis.com/auth/webmasters",
     "https://www.googleapis.com/auth/spreadsheets.currentonly",
     "https://www.googleapis.com/auth/spreadsheets.readonly",
     "https://www.googleapis.com/auth/script.external_request",

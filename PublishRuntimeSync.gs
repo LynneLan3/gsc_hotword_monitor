@@ -5,6 +5,9 @@
  * Ledger records the launch, the same receipt idempotently enrolls the site in
  * GSC monitoring and marks the Steam site project as LIVE. siteId is consumed
  * from the receipt; it is never regenerated from the game name here.
+ *
+ * All real Production receipts also run indexing follow-up: sitemap submit,
+ * then URL Inspection of changed canonical URLs compared against deployedAt.
  */
 var PUBLISH_RUNTIME_STEAM_SPREADSHEET_ID = '1WVg2p_Vero3MB2JN4yxmtHkLQRgkWO2mz95X4ms9nLE';
 var PUBLISH_RUNTIME_GSC_CONFIG_SHEET = '站点配置';
@@ -15,29 +18,37 @@ var PUBLISH_RUNTIME_GSC_BINDING_SHEET = '项目GSC关联';
 function recordPublishedBatchWithRuntimeSync(payload) {
   var receipt = parsePublishRuntimeReceipt_(payload);
   var launch = publishRuntimeLaunchEntry_(receipt);
-  if (!launch) return recordPublishedBatch(payload);
-
-  validatePublishRuntimeLaunch_(receipt, launch);
-  if (typeof LEDGER_ACTIONS === 'object' && LEDGER_ACTIONS) LEDGER_ACTIONS.SITE_LAUNCH = true;
 
   var ledgerReceipt = receipt;
-  if (receipt.dryRun === true && receipt.common && receipt.common.decisionId) {
-    ledgerReceipt = JSON.parse(JSON.stringify(receipt));
-    ledgerReceipt.common.decisionId = '';
-    ledgerReceipt.interventions = ledgerReceipt.interventions.map(function (entry) {
-      var copy = JSON.parse(JSON.stringify(entry || {}));
-      copy.decisionId = '';
-      return copy;
-    });
-  }
-  var ledgerResult = recordPublishedBatch(ledgerReceipt);
-  if (receipt.dryRun === true) {
-    ledgerResult.runtimeSync = {ok: true, dryRun: true, siteId: String(receipt.common.siteId || '').trim()};
-    return ledgerResult;
+  if (launch) {
+    validatePublishRuntimeLaunch_(receipt, launch);
+    if (typeof LEDGER_ACTIONS === 'object' && LEDGER_ACTIONS) LEDGER_ACTIONS.SITE_LAUNCH = true;
+    if (receipt.dryRun === true && receipt.common && receipt.common.decisionId) {
+      ledgerReceipt = JSON.parse(JSON.stringify(receipt));
+      ledgerReceipt.common.decisionId = '';
+      ledgerReceipt.interventions = ledgerReceipt.interventions.map(function (entry) {
+        var copy = JSON.parse(JSON.stringify(entry || {}));
+        copy.decisionId = '';
+        return copy;
+      });
+    }
   }
 
-  var syncResult = syncPublishedSiteRuntime_(receipt, launch);
-  ledgerResult.runtimeSync = syncResult;
+  var ledgerResult = recordPublishedBatch(ledgerReceipt);
+
+  if (launch) {
+    if (receipt.dryRun === true) {
+      ledgerResult.runtimeSync = {
+        ok: true,
+        dryRun: true,
+        siteId: String(receipt.common.siteId || '').trim()
+      };
+    } else {
+      ledgerResult.runtimeSync = syncPublishedSiteRuntime_(receipt, launch);
+    }
+  }
+
+  ledgerResult.indexingSync = syncPublishedIndexingFollowUp_(receipt);
   return ledgerResult;
 }
 
@@ -242,4 +253,290 @@ function writePublishRuntimeRow_(sheet, rowNumber, values) {
   var row = rowNumber || (sheet.getLastRow() + 1);
   sheet.getRange(row, 1, 1, values.length).setValues([values]);
   return row;
+}
+
+/**
+ * Production indexing follow-up for any publish receipt.
+ * Order: sitemap submit → inspect changed canonical URLs → compare lastCrawlTime vs deployedAt.
+ * dryRun never performs real GSC write/inspect calls.
+ */
+function syncPublishedIndexingFollowUp_(receipt) {
+  var common = receipt.common || {};
+  var deployedAt = String(common.deployedAt || '').trim();
+  var siteId = String(common.siteId || '').trim();
+  var empty = emptyPublishIndexingSync_(deployedAt);
+
+  var inspectedUrls = extractPublishIndexingUrls_(receipt);
+  empty.inspectedUrls = inspectedUrls.slice();
+
+  if (receipt.dryRun === true) {
+    empty.ok = true;
+    empty.dryRun = true;
+    empty.sitemapStatus = { ok: true, dryRun: true, skipped: true };
+    return empty;
+  }
+
+  var siteConfig = lookupPublishIndexingSiteConfig_(siteId);
+  if (!siteConfig || !siteConfig.propertyUrl || !siteConfig.sitemapUrl) {
+    empty.ok = false;
+    empty.sitemapStatus = {
+      ok: false,
+      error: 'GSC site config not found for site_id=' + siteId
+    };
+    return empty;
+  }
+
+  var sitemapStatus = submitSitemap(siteConfig.propertyUrl, siteConfig.sitemapUrl);
+  empty.sitemapStatus = sitemapStatus;
+  if (!sitemapStatus || sitemapStatus.ok !== true) {
+    empty.ok = false;
+    return empty;
+  }
+
+  var currentUrls = [];
+  var manualRequestUrls = [];
+  var needsFixUrls = [];
+  var inspectionErrors = [];
+
+  for (var i = 0; i < inspectedUrls.length; i++) {
+    var pageUrl = inspectedUrls[i];
+    var insp = inspectUrl(pageUrl, siteConfig.propertyUrl);
+    if (!insp || insp.ok !== true) {
+      inspectionErrors.push({
+        url: pageUrl,
+        error: insp && insp.error ? insp.error : 'URL Inspection failed'
+      });
+      continue;
+    }
+    var status = extractIndexStatus_(insp.data);
+    var classification = classifyPublishIndexingStatus_(status, deployedAt);
+    if (classification === 'CURRENT') {
+      currentUrls.push(pageUrl);
+    } else if (classification === 'NEEDS_FIX') {
+      needsFixUrls.push({
+        url: pageUrl,
+        verdict: status.verdict || '',
+        coverageState: status.coverageState || '',
+        robotsTxtState: status.robotsTxtState || '',
+        indexingState: status.indexingState || '',
+        pageFetchState: status.pageFetchState || '',
+        googleCanonical: status.googleCanonical || '',
+        userCanonical: status.userCanonical || '',
+        lastCrawlTime: status.lastCrawlTime || ''
+      });
+    } else {
+      manualRequestUrls.push({
+        url: pageUrl,
+        verdict: status.verdict || '',
+        coverageState: status.coverageState || '',
+        lastCrawlTime: status.lastCrawlTime || '',
+        reason: classification === 'NEEDS_MANUAL_REQUEST'
+          ? 'indexable_but_not_current_crawl'
+          : classification
+      });
+    }
+  }
+
+  empty.ok = true;
+  empty.currentUrls = currentUrls;
+  empty.manualRequestUrls = manualRequestUrls;
+  empty.needsFixUrls = needsFixUrls;
+  empty.inspectionErrors = inspectionErrors;
+  if (typeof writeLog_ === 'function') {
+    writeLog_(
+      'INFO',
+      String(common.game || common.site || siteId || ''),
+      'publish indexing sync siteId=' +
+        siteId +
+        ' inspected=' +
+        inspectedUrls.length +
+        ' current=' +
+        currentUrls.length +
+        ' manual=' +
+        manualRequestUrls.length +
+        ' needsFix=' +
+        needsFixUrls.length +
+        ' errors=' +
+        inspectionErrors.length
+    );
+  }
+  return empty;
+}
+
+function emptyPublishIndexingSync_(deployedAt) {
+  return {
+    ok: false,
+    sitemapStatus: null,
+    deployedAt: String(deployedAt || '').trim(),
+    inspectedUrls: [],
+    currentUrls: [],
+    manualRequestUrls: [],
+    needsFixUrls: [],
+    inspectionErrors: []
+  };
+}
+
+/**
+ * Collect intervention primaryUrl + affectedUrls as absolute same-origin
+ * canonical candidates. Homepage is included only when the receipt explicitly
+ * lists "/" (or an absolute homepage URL).
+ */
+function extractPublishIndexingUrls_(receipt) {
+  var common = (receipt && receipt.common) || {};
+  var productionUrl = String(common.productionUrl || '').trim();
+  if (!productionUrl) return [];
+
+  var rawValues = [];
+  var interventions = (receipt && receipt.interventions) || [];
+  for (var i = 0; i < interventions.length; i++) {
+    var entry = interventions[i] || {};
+    if (entry.primaryUrl !== undefined && entry.primaryUrl !== null && entry.primaryUrl !== '') {
+      rawValues.push(entry.primaryUrl);
+    }
+    var affected = Array.isArray(entry.affectedUrls) ? entry.affectedUrls : [];
+    for (var j = 0; j < affected.length; j++) {
+      if (affected[j] !== undefined && affected[j] !== null && affected[j] !== '') {
+        rawValues.push(affected[j]);
+      }
+    }
+  }
+
+  var seen = {};
+  var out = [];
+  for (var k = 0; k < rawValues.length; k++) {
+    var absolute = resolvePublishIndexingUrl_(productionUrl, rawValues[k]);
+    if (!absolute) continue;
+    if (!isSameOriginPublishUrl_(productionUrl, absolute)) continue;
+    if (seen[absolute]) continue;
+    seen[absolute] = true;
+    out.push(absolute);
+  }
+  return out;
+}
+
+function resolvePublishIndexingUrl_(productionUrl, value) {
+  var raw = String(value || '').trim();
+  if (!raw) return '';
+  var absolute = '';
+  if (/^https?:\/\//i.test(raw)) {
+    absolute = raw;
+  } else {
+    var origin = publishIndexingOrigin_(productionUrl);
+    if (!origin) return '';
+    var path = raw.charAt(0) === '/' ? raw : '/' + raw;
+    absolute = origin + path;
+  }
+  return canonicalizePublishIndexingUrl_(absolute);
+}
+
+function canonicalizePublishIndexingUrl_(value) {
+  var raw = String(value || '').trim();
+  if (!raw) return '';
+  raw = raw.split('#')[0].split('?')[0];
+  if (!/^https?:\/\//i.test(raw)) return '';
+  // Preserve root "/" and trailing-slash style already present in receipt paths.
+  if (/^https?:\/\/[^/]+$/i.test(raw)) return raw + '/';
+  return raw;
+}
+
+function publishIndexingOrigin_(value) {
+  var match = String(value || '').trim().match(/^(https?:\/\/[^/]+)/i);
+  return match ? match[1] : '';
+}
+
+function isSameOriginPublishUrl_(productionUrl, absoluteUrl) {
+  var a = publishIndexingOrigin_(productionUrl).toLowerCase();
+  var b = publishIndexingOrigin_(absoluteUrl).toLowerCase();
+  return !!(a && b && a === b);
+}
+
+function lookupPublishIndexingSiteConfig_(siteId) {
+  siteId = String(siteId || '').trim();
+  if (!siteId) return null;
+
+  var ss = typeof getSpreadsheet_ === 'function' ? getSpreadsheet_() : SpreadsheetApp.getActiveSpreadsheet();
+  if (!ss) return null;
+  var sheet = ss.getSheetByName(PUBLISH_RUNTIME_GSC_CONFIG_SHEET);
+  if (!sheet || sheet.getLastRow() < 2) return null;
+
+  var columns =
+    typeof getSiteConfigColumns_ === 'function'
+      ? getSiteConfigColumns_(sheet)
+      : { name: 0, propertyUrl: 1, sitemapUrl: 2, siteId: 5, readWidth: 6 };
+  var width = columns.readWidth || Math.max(sheet.getLastColumn(), 6);
+  var values = sheet.getRange(2, 1, sheet.getLastRow(), width).getValues();
+
+  for (var i = 0; i < values.length; i++) {
+    var row = values[i];
+    if (String(row[columns.siteId] || '').trim() !== siteId) continue;
+    var propertyUrl = String(row[columns.propertyUrl] || '').trim();
+    var sitemapUrl = String(row[columns.sitemapUrl] || '').trim();
+    if (!sitemapUrl && propertyUrl && typeof defaultSitemapUrl_ === 'function') {
+      sitemapUrl = defaultSitemapUrl_(propertyUrl);
+    }
+    if (!propertyUrl || !sitemapUrl) return null;
+    return {
+      siteId: siteId,
+      name: String(row[columns.name] || '').trim(),
+      propertyUrl:
+        typeof normalizePropertyUrlForGsc_ === 'function'
+          ? normalizePropertyUrlForGsc_(propertyUrl)
+          : propertyUrl,
+      sitemapUrl: sitemapUrl
+    };
+  }
+  return null;
+}
+
+/**
+ * Classification for one inspected URL.
+ * CURRENT: verdict PASS and lastCrawlTime >= deployedAt
+ * NEEDS_MANUAL_REQUEST: indexable / no hard blocker, but not crawled this version yet
+ * NEEDS_FIX: clear robots / indexing / fetch / canonical blocker
+ */
+function classifyPublishIndexingStatus_(status, deployedAt) {
+  status = status || {};
+  var verdict = String(status.verdict || '').toUpperCase();
+  var robots = String(status.robotsTxtState || '').toUpperCase();
+  var indexing = String(status.indexingState || '').toUpperCase();
+  var fetchState = String(status.pageFetchState || '').toUpperCase();
+  var lastCrawlTime = String(status.lastCrawlTime || '').trim();
+  var googleCanonical = String(status.googleCanonical || '').trim();
+  var userCanonical = String(status.userCanonical || '').trim();
+
+  if (robots === 'DISALLOWED') return 'NEEDS_FIX';
+  if (indexing.indexOf('BLOCKED') >= 0) return 'NEEDS_FIX';
+  if (
+    fetchState === 'SOFT_404' ||
+    fetchState === 'NOT_FOUND' ||
+    fetchState === 'ACCESS_DENIED' ||
+    fetchState === 'SERVER_ERROR' ||
+    fetchState === 'REDIRECT_ERROR'
+  ) {
+    return 'NEEDS_FIX';
+  }
+  if (verdict === 'FAIL') return 'NEEDS_FIX';
+  if (googleCanonical && userCanonical) {
+    var g = canonicalizePublishIndexingUrl_(googleCanonical).replace(/\/+$/, '');
+    var u = canonicalizePublishIndexingUrl_(userCanonical).replace(/\/+$/, '');
+    if (g && u && g !== u) return 'NEEDS_FIX';
+  }
+
+  if (verdict === 'PASS') {
+    if (lastCrawlTime && deployedAt && publishIndexingTimeMs_(lastCrawlTime) >= publishIndexingTimeMs_(deployedAt)) {
+      return 'CURRENT';
+    }
+    return 'NEEDS_MANUAL_REQUEST';
+  }
+
+  // PARTIAL / NEUTRAL / empty verdict with no hard blocker → still needs attention,
+  // but not a completed CURRENT state.
+  return 'NEEDS_MANUAL_REQUEST';
+}
+
+function publishIndexingTimeMs_(value) {
+  var raw = String(value || '').trim();
+  if (!raw) return NaN;
+  var ms = new Date(raw).getTime();
+  return ms;
 }

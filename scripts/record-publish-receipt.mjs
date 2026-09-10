@@ -73,4 +73,45 @@ if (isSiteLaunch && (!value.runtimeSync || value.runtimeSync.ok !== true)) {
 const ids = (value.interventions || []).map((item) => item.interventionId).filter(Boolean).join(',');
 const baseline = (value.interventions || []).map((item) => item.baselineDataDate || '(blank)').join(',');
 const runtime = value.runtimeSync?.ok ? ` runtime=PASS siteId=${value.runtimeSync.siteId || common.siteId}` : '';
-console.log(`PASS ledger writeback batch=${value.batchId || ''} interventions=${ids || '(none)'} baseline=${baseline}${runtime}`);
+
+const indexing = value.indexingSync;
+let indexingSummary = '';
+if (indexing) {
+  const inspected = Array.isArray(indexing.inspectedUrls) ? indexing.inspectedUrls.length : 0;
+  const current = Array.isArray(indexing.currentUrls) ? indexing.currentUrls.length : 0;
+  const manual = Array.isArray(indexing.manualRequestUrls) ? indexing.manualRequestUrls.length : 0;
+  const needsFix = Array.isArray(indexing.needsFixUrls) ? indexing.needsFixUrls.length : 0;
+  const errors = Array.isArray(indexing.inspectionErrors) ? indexing.inspectionErrors.length : 0;
+  const sitemap = indexing.sitemapStatus?.ok === true ? 'PASS' : indexing.dryRun ? 'DRY_RUN' : 'FAIL';
+  indexingSummary =
+    ` indexing=${indexing.ok === true ? 'PASS' : 'FAIL'}` +
+    ` sitemap=${sitemap}` +
+    ` inspected=${inspected}` +
+    ` current=${current}` +
+    ` manual=${manual}` +
+    ` needsFix=${needsFix}` +
+    ` inspectErrors=${errors}`;
+  if (indexing.dryRun === true) indexingSummary += ' dryRun=1';
+}
+
+console.log(
+  `PASS ledger writeback batch=${value.batchId || ''} interventions=${ids || '(none)'} baseline=${baseline}${runtime}${indexingSummary}`
+);
+
+if (indexing) {
+  console.log(
+    JSON.stringify({
+      indexingSync: {
+        ok: indexing.ok === true,
+        dryRun: indexing.dryRun === true || undefined,
+        sitemapStatus: indexing.sitemapStatus || null,
+        deployedAt: indexing.deployedAt || common.deployedAt || '',
+        inspectedUrls: indexing.inspectedUrls || [],
+        currentUrls: indexing.currentUrls || [],
+        manualRequestUrls: indexing.manualRequestUrls || [],
+        needsFixUrls: indexing.needsFixUrls || [],
+        inspectionErrors: indexing.inspectionErrors || []
+      }
+    })
+  );
+}

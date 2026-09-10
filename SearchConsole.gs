@@ -593,6 +593,38 @@ function inspectUrl(inspectionUrl, siteUrl) {
   }
 }
 
+/**
+ * Submit / refresh a sitemap for a GSC property.
+ * Uses webmasters (read/write) scope. Does not replace URL Inspection.
+ * @param {string} siteUrl GSC Property URL
+ * @param {string} sitemapUrl Absolute sitemap feed URL
+ * @return {{ok:boolean, siteUrl?:string, sitemapUrl?:string, error?:string}}
+ */
+function submitSitemap(siteUrl, sitemapUrl) {
+  siteUrl = String(siteUrl || '').trim();
+  sitemapUrl = String(sitemapUrl || '').trim();
+  if (!siteUrl || !sitemapUrl) {
+    return { ok: false, error: 'submitSitemap requires siteUrl and sitemapUrl', siteUrl: siteUrl, sitemapUrl: sitemapUrl };
+  }
+  try {
+    var encodedSite = encodeURIComponent(siteUrl);
+    var encodedFeed = encodeURIComponent(sitemapUrl);
+    var url = GSC_API_BASE + '/sites/' + encodedSite + '/sitemaps/' + encodedFeed;
+    gscFetch(url, {
+      method: 'put',
+      contextHint: 'siteUrl=' + siteUrl + ' sitemapUrl=' + sitemapUrl
+    });
+    return { ok: true, siteUrl: siteUrl, sitemapUrl: sitemapUrl };
+  } catch (e) {
+    return {
+      ok: false,
+      siteUrl: siteUrl,
+      sitemapUrl: sitemapUrl,
+      error: e && e.message ? e.message : String(e)
+    };
+  }
+}
+
 function extractIndexStatus_(inspectionResponse) {
   var empty = {
     verdict: '',
