@@ -356,7 +356,9 @@ function buildDevelopmentTaskFromResearchRow_(row, col, createdAt, refs) {
     action_type: actionType,
     task_type: hasPhase7EBinding ? 'CONTENT_IMPLEMENTATION' : '',
     task_reason: '已批准实施：' + (actionType || 'UPDATE_PAGE'),
-    source_reference: String(cell_(row, col, '审核链接') || '').trim() || '研究任务/' + sourceId
+    source_reference: String(cell_(row, col, '审核链接') || '').trim() || '研究任务/' + sourceId,
+    research_batch_id: String(cell_(row, col, 'ResearchBatchID') || '').trim(),
+    scheduler_run_id: String(cell_(row, col, 'SchedulerRunID') || '').trim()
   };
 }
 
@@ -472,7 +474,8 @@ function developmentTaskSheetRow_(task) {
     task.note || '', task.opportunity_id || '', task.decision_id || '',
     task.site_id || '', task.action_type || '', task.task_type || '',
     task.task_reason || '', task.source_reference || '',
-    task.handoff_status || '', task.handoff_reference || ''
+    task.handoff_status || '', task.handoff_reference || '',
+    task.research_batch_id || '', task.scheduler_run_id || ''
   ];
 }
 
@@ -480,7 +483,7 @@ function developmentTaskSheetRow_(task) {
 function debugDevelopmentTasksSelfCheck() {
   var fails = [];
   function assert(cond, msg) { if (!cond) fails.push(msg); }
-  assert(DEVELOPMENT_TASK_HEADERS.length === 21, '开发任务 headers append-only');
+  assert(DEVELOPMENT_TASK_HEADERS.length === 23, '开发任务 headers append-only');
   assert(DEVELOPMENT_TASK_HEADERS[0] === '开发任务ID' && DEVELOPMENT_TASK_HEADERS[11] === '备注', '旧列顺序保留');
   assert(DEVELOPMENT_TASK_HEADERS.indexOf('OpportunityID') > 11, 'OpportunityID appended');
   assert(DEVELOPMENT_TASK_HEADERS.indexOf('DecisionID') > 11, 'DecisionID appended');
