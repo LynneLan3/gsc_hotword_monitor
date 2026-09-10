@@ -203,8 +203,8 @@ function runDailyLeanUnlocked_(isContinuation) {
   try {
     saveGscMonitoringRaw_('gsc-daily-' + runDate, runDate);
   } catch (e) {
-    writeLog_('ERROR', '', 'HISTORY_SYNC_FAILED | ' + String(e && e.message ? e.message : e));
-    throw e;
+    // Raw Drive archive must not block lean completion / ops acceptance markers.
+    writeLog_('WARN', '', 'HISTORY_SYNC_FAILED | ' + String(e && e.message ? e.message : e));
   }
 
   try {
