@@ -7,6 +7,8 @@
  * - Still catch up Page明细 / Query页面明细 for the latest available GSC day
  *   via the existing single-day upsert helpers (prevents detail-source drift).
  * - Keep ScriptLock + cursor continuation.
+ * - Heartbeat + recovery watchdog so a killed slice cannot silently lose
+ *   the last continuation before a new recovery path exists.
  * - Keep GSC runtime logs for 30 days and archive URL Inspection history after 90 days.
  *
  * This file is additive: it does not delete or redefine the existing runDaily implementation.
@@ -15,11 +17,16 @@
 
 var HOTFIX_DAILY_HANDLER = 'runDailyLean';
 var HOTFIX_CONTINUE_HANDLER = 'runDailyLeanContinuation_';
+var HOTFIX_WATCHDOG_HANDLER = 'runDailyLeanRecoveryWatchdog_';
 var HOTFIX_RUN_DATE_PROP = 'HOTFIX_DAILY_RUN_DATE_V1';
 var HOTFIX_CURSOR_PROP = 'HOTFIX_DAILY_CURSOR_V1';
+var HOTFIX_HEARTBEAT_AT_PROP = 'HOTFIX_DAILY_HEARTBEAT_AT_V1';
+var HOTFIX_COMPLETED_DATE_PROP = 'HOTFIX_DAILY_COMPLETED_DATE_V1';
 var HOTFIX_CONTINUE_AFTER_MS = 60 * 1000;
 var HOTFIX_MAX_MS = 210 * 1000;
 var HOTFIX_MAX_SITES_PER_EXECUTION = 4;
+var HOTFIX_HEARTBEAT_STALE_MS = 10 * 60 * 1000;
+var HOTFIX_WATCHDOG_EVERY_MINUTES = 15;
 var HOTFIX_LOG_RETENTION_DAYS = 30;
 var HOTFIX_URL_INDEX_ACTIVE_DAYS = 90;
 var HOTFIX_URL_INDEX_ARCHIVE_SHEET = 'URL索引_Archive';
@@ -35,7 +42,8 @@ function installTimeoutRetentionHotfix() {
     if (
       handler === 'runDaily' ||
       handler === HOTFIX_DAILY_HANDLER ||
-      handler === HOTFIX_CONTINUE_HANDLER
+      handler === HOTFIX_CONTINUE_HANDLER ||
+      handler === HOTFIX_WATCHDOG_HANDLER
     ) {
       ScriptApp.deleteTrigger(triggers[i]);
     }
@@ -48,17 +56,26 @@ function installTimeoutRetentionHotfix() {
     .inTimezone('Asia/Shanghai')
     .create();
 
-  PropertiesService.getScriptProperties().deleteProperty(HOTFIX_RUN_DATE_PROP);
-  PropertiesService.getScriptProperties().deleteProperty(HOTFIX_CURSOR_PROP);
-  writeLog_('INFO', '', 'Timeout/retention hotfix installed: daily=runDailyLean, log=30d, urlIndex=90d+archive');
+  ensureDailyLeanRecoveryWatchdog_();
+
+  var props = PropertiesService.getScriptProperties();
+  props.deleteProperty(HOTFIX_RUN_DATE_PROP);
+  props.deleteProperty(HOTFIX_CURSOR_PROP);
+  props.deleteProperty(HOTFIX_HEARTBEAT_AT_PROP);
+  props.deleteProperty(HOTFIX_COMPLETED_DATE_PROP);
+  writeLog_('INFO', '', 'Timeout/retention hotfix installed: daily=runDailyLean, watchdog=15m, log=30d, urlIndex=90d+archive');
   return 'installed';
 }
 
 function runDailyLean() {
+  ensureDailyLeanRecoveryWatchdog_();
   return runDailyLeanWithLock_(false);
 }
 
 function runDailyLeanContinuation_() {
+  // Independent recovery must exist BEFORE clearing the firing continuation.
+  // Otherwise a mid-slice Apps Script kill leaves cursor incomplete with no next trigger.
+  ensureDailyLeanRecoveryWatchdog_();
   deleteDailyLeanContinuationTriggers_();
   return runDailyLeanWithLock_(true);
 }
@@ -81,12 +98,13 @@ function runDailyLeanWithLock_(isContinuation) {
 function runDailyLeanUnlocked_(isContinuation) {
   clearGscPropertyResolutionCache_();
   var startedAt = Date.now();
-  if (!isContinuation) setupSheets();
-
-  var sites = getEnabledSites();
   var runDate = todayStr_();
   var props = PropertiesService.getScriptProperties();
   var storedDate = props.getProperty(HOTFIX_RUN_DATE_PROP);
+  // New-day recovery via continuation still needs sheet setup.
+  if (!isContinuation || storedDate !== runDate) setupSheets();
+
+  var sites = getEnabledSites();
   var cursor = parseInt(props.getProperty(HOTFIX_CURSOR_PROP) || '0', 10);
   if (isNaN(cursor) || cursor < 0) cursor = 0;
 
@@ -94,11 +112,17 @@ function runDailyLeanUnlocked_(isContinuation) {
     cursor = 0;
     props.setProperty(HOTFIX_RUN_DATE_PROP, runDate);
     props.setProperty(HOTFIX_CURSOR_PROP, '0');
+    props.deleteProperty(HOTFIX_COMPLETED_DATE_PROP);
+    touchDailyLeanHeartbeat_(props, 0);
   } else if (!isContinuation && cursor >= sites.length) {
     // A manual rerun on the same day intentionally starts a fresh idempotent pass.
     cursor = 0;
     props.setProperty(HOTFIX_CURSOR_PROP, '0');
+    props.deleteProperty(HOTFIX_COMPLETED_DATE_PROP);
+    touchDailyLeanHeartbeat_(props, 0);
   }
+
+  ensureDailyLeanRecoveryWatchdog_();
 
   writeLog_(
     'INFO',
@@ -114,7 +138,7 @@ function runDailyLeanUnlocked_(isContinuation) {
       processed >= HOTFIX_MAX_SITES_PER_EXECUTION ||
       (processed > 0 && Date.now() - startedAt >= HOTFIX_MAX_MS)
     ) {
-      props.setProperty(HOTFIX_CURSOR_PROP, String(cursor));
+      touchDailyLeanHeartbeat_(props, cursor);
       scheduleDailyLeanContinuation_();
       writeLog_('INFO', '', 'runDailyLean 分批暂停 cursor=' + cursor + '/' + sites.length);
       return 'paused ' + cursor + '/' + sites.length;
@@ -136,9 +160,11 @@ function runDailyLeanUnlocked_(isContinuation) {
 
     cursor += 1;
     processed += 1;
-    props.setProperty(HOTFIX_CURSOR_PROP, String(cursor));
+    touchDailyLeanHeartbeat_(props, cursor);
   }
 
+  // Collection finished — heartbeat before long finalizer so watchdog can tell progress.
+  touchDailyLeanHeartbeat_(props, cursor);
   deleteDailyLeanContinuationTriggers_();
 
   // Existing downstream engines consume the latest finalized + fresh-monitor data.
@@ -151,9 +177,10 @@ function runDailyLeanUnlocked_(isContinuation) {
     writeLog_('ERROR', '', 'LEAN_DAILY_FINALIZER_FAILED | ' + String(e && e.message ? e.message : e));
   }
 
+  var opsOut = null;
   try {
     // G028 P3 — same ops pipeline as runDailyFinalizer; must not break GSC facts.
-    runOpsDailyPipelineSafe_(runDate);
+    opsOut = runOpsDailyPipelineSafe_(runDate);
   } catch (opsError) {
     var opsDetail =
       typeof formatErrorWithStack_ === 'function'
@@ -161,6 +188,11 @@ function runDailyLeanUnlocked_(isContinuation) {
         : String(opsError && opsError.message ? opsError.message : opsError);
     writeLog_('WARN', '', 'OPS_DAILY_PIPELINE_FAILED | ' + opsDetail);
     Logger.log('OPS_DAILY_PIPELINE_FAILED | ' + opsDetail);
+  }
+
+  if (opsOut && opsOut.ok) {
+    props.setProperty(HOTFIX_COMPLETED_DATE_PROP, runDate);
+    touchDailyLeanHeartbeat_(props, cursor);
   }
 
   try {
@@ -431,6 +463,8 @@ function leanDetailSheetHasSiteDate_(sheetName, siteName, dataDate) {
 }
 
 function scheduleDailyLeanContinuation_() {
+  // Watchdog is the independent recovery path; keep it before replacing continuation.
+  ensureDailyLeanRecoveryWatchdog_();
   deleteDailyLeanContinuationTriggers_();
   ScriptApp.newTrigger(HOTFIX_CONTINUE_HANDLER)
     .timeBased()
@@ -445,6 +479,139 @@ function deleteDailyLeanContinuationTriggers_() {
       ScriptApp.deleteTrigger(triggers[i]);
     }
   }
+}
+
+function countDailyLeanContinuationTriggers_() {
+  var triggers = ScriptApp.getProjectTriggers();
+  var count = 0;
+  for (var i = 0; i < triggers.length; i++) {
+    if (triggers[i].getHandlerFunction() === HOTFIX_CONTINUE_HANDLER) count += 1;
+  }
+  return count;
+}
+
+function touchDailyLeanHeartbeat_(props, cursor) {
+  props = props || PropertiesService.getScriptProperties();
+  if (cursor != null && cursor !== undefined) {
+    props.setProperty(HOTFIX_CURSOR_PROP, String(cursor));
+  }
+  props.setProperty(HOTFIX_HEARTBEAT_AT_PROP, String(Date.now()));
+}
+
+/**
+ * Exactly one lightweight recovery watchdog. Reuses ScriptApp time triggers and
+ * recovers lost lean continuations / unfinished OPS finalizer without stacking.
+ */
+function ensureDailyLeanRecoveryWatchdog_() {
+  var triggers = ScriptApp.getProjectTriggers();
+  var found = [];
+  for (var i = 0; i < triggers.length; i++) {
+    if (triggers[i].getHandlerFunction() === HOTFIX_WATCHDOG_HANDLER) {
+      found.push(triggers[i]);
+    }
+  }
+  for (var d = 1; d < found.length; d++) {
+    ScriptApp.deleteTrigger(found[d]);
+  }
+  if (found.length === 0) {
+    ScriptApp.newTrigger(HOTFIX_WATCHDOG_HANDLER)
+      .timeBased()
+      .everyMinutes(HOTFIX_WATCHDOG_EVERY_MINUTES)
+      .create();
+  }
+  return found.length === 0 ? 'created' : found.length === 1 ? 'exists' : 'deduped';
+}
+
+/**
+ * Recovery when continuation was deleted mid-slice or finalizer never finished.
+ * Idempotent: complete days no-op; does not stack continuation triggers.
+ */
+function runDailyLeanRecoveryWatchdog_() {
+  ensureDailyLeanRecoveryWatchdog_();
+
+  var runDate = todayStr_();
+  var props = PropertiesService.getScriptProperties();
+  var completed = props.getProperty(HOTFIX_COMPLETED_DATE_PROP);
+  if (completed === runDate) {
+    deleteDailyLeanContinuationTriggers_();
+    writeLog_('INFO', '', 'runDailyLean watchdog skip: already complete date=' + runDate);
+    return 'complete';
+  }
+
+  var sites = typeof getEnabledSites === 'function' ? getEnabledSites() : [];
+  var siteCount = sites && sites.length ? sites.length : 0;
+  var storedDate = props.getProperty(HOTFIX_RUN_DATE_PROP);
+  var cursor = parseInt(props.getProperty(HOTFIX_CURSOR_PROP) || '0', 10);
+  if (isNaN(cursor) || cursor < 0) cursor = 0;
+  var heartbeatAt = parseInt(props.getProperty(HOTFIX_HEARTBEAT_AT_PROP) || '0', 10);
+  if (isNaN(heartbeatAt) || heartbeatAt < 0) heartbeatAt = 0;
+  var stale = !heartbeatAt || Date.now() - heartbeatAt >= HOTFIX_HEARTBEAT_STALE_MS;
+  var hasContinuation = countDailyLeanContinuationTriggers_() > 0;
+  var dayStarted = storedDate === runDate;
+  var collectionDone = dayStarted && siteCount > 0 && cursor >= siteCount;
+
+  if (!stale) {
+    writeLog_(
+      'INFO',
+      '',
+      'runDailyLean watchdog skip: heartbeat fresh cursor=' + cursor + '/' + siteCount
+    );
+    return 'in-progress';
+  }
+
+  if (!collectionDone) {
+    scheduleDailyLeanContinuation_();
+    writeLog_(
+      'WARN',
+      '',
+      'runDailyLean watchdog recover continuation' +
+        ' dayStarted=' +
+        (dayStarted ? 'yes' : 'no') +
+        ' cursor=' +
+        cursor +
+        '/' +
+        siteCount +
+        ' hadContinuation=' +
+        (hasContinuation ? 'yes' : 'no')
+    );
+    return 'recover-continuation';
+  }
+
+  // Cursor finished but OPS / completed marker missing — resume finalizer via continuation.
+  scheduleDailyLeanContinuation_();
+  writeLog_(
+    'WARN',
+    '',
+    'runDailyLean watchdog recover finalizer cursor=' + cursor + '/' + siteCount
+  );
+  return 'recover-finalizer';
+}
+
+/**
+ * Headless read-only status for clasp / Execution API production recovery.
+ * Does not mutate cursor, heartbeat, completed date, or triggers.
+ */
+function inspectDailyLeanStatus() {
+  var props = PropertiesService.getScriptProperties();
+  var sites = typeof getEnabledSites === 'function' ? getEnabledSites() : [];
+  var handlers =
+    typeof listProjectTriggerHandlers === 'function' ? listProjectTriggerHandlers() : [];
+  var counts =
+    typeof summarizeDailyCollectorTriggers_ === 'function'
+      ? summarizeDailyCollectorTriggers_()
+      : null;
+  var cursor = parseInt(props.getProperty(HOTFIX_CURSOR_PROP) || '0', 10);
+  if (isNaN(cursor) || cursor < 0) cursor = 0;
+  return {
+    today: todayStr_(),
+    runDate: props.getProperty(HOTFIX_RUN_DATE_PROP),
+    cursor: cursor,
+    siteCount: sites.length,
+    heartbeatAt: props.getProperty(HOTFIX_HEARTBEAT_AT_PROP),
+    completedDate: props.getProperty(HOTFIX_COMPLETED_DATE_PROP),
+    triggerCounts: counts,
+    handlers: handlers
+  };
 }
 
 /**

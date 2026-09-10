@@ -21,6 +21,15 @@ assert(/HOTFIX_MAX_SITES_PER_EXECUTION = 4/.test(hotfix), 'daily batch cap is 4'
 assert(/HOTFIX_MAX_MS = 210 \* 1000/.test(hotfix), 'daily budget is 210 seconds');
 assert(/LockService\.getScriptLock\(\)/.test(hotfix), 'daily uses ScriptLock');
 assert(/HOTFIX_CURSOR_PROP/.test(hotfix) && /scheduleDailyLeanContinuation_\(\)/.test(hotfix), 'cursor continuation exists');
+assert(/HOTFIX_HEARTBEAT_AT_PROP/.test(hotfix) && /touchDailyLeanHeartbeat_/.test(hotfix), 'heartbeat progress state exists');
+assert(/HOTFIX_COMPLETED_DATE_PROP/.test(hotfix), 'completed date state exists');
+assert(/runDailyLeanRecoveryWatchdog_/.test(hotfix) && /ensureDailyLeanRecoveryWatchdog_/.test(hotfix), 'recovery watchdog exists');
+assert(
+  /ensureDailyLeanRecoveryWatchdog_\(\);[\s\S]*deleteDailyLeanContinuationTriggers_\(\);/.test(
+    hotfix.slice(hotfix.indexOf('function runDailyLeanContinuation_('), hotfix.indexOf('function runDailyLeanWithLock_'))
+  ),
+  'continuation keeps recovery path before deleting trigger'
+);
 assert(/runDecisionEngine\(\)/.test(hotfix) && /runContentOpportunityEngine\(\)/.test(hotfix), 'finalizer remains after collection');
 ['syncFreshQueryDetails_', 'syncFreshQueryPageDetails_', 'syncFreshPageDetails_'].forEach(name => {
   assert(!new RegExp('\\b' + name + '\\s*\\(').test(lean), 'lean collector does not call ' + name);
@@ -34,6 +43,8 @@ assert(!/listDatesInclusive_/.test(lean), 'lean does not iterate inclusive date 
 assert(/handler === 'runDaily'/.test(installer), 'installer removes legacy daily trigger');
 assert(/handler === HOTFIX_DAILY_HANDLER/.test(installer), 'installer removes duplicate lean trigger');
 assert(/handler === HOTFIX_CONTINUE_HANDLER/.test(installer), 'installer removes stale continuation');
+assert(/handler === HOTFIX_WATCHDOG_HANDLER/.test(installer) || /HOTFIX_WATCHDOG_HANDLER/.test(installer), 'installer manages watchdog');
+assert(/ensureDailyLeanRecoveryWatchdog_/.test(installer), 'installer ensures recovery watchdog');
 assert(/atHour\(8\)/.test(installer) && /everyDays\(1\)/.test(installer), 'installer creates 08:00 daily trigger');
 
 // createDailyTrigger must reconcile to the same lean collector and never recreate runDaily.

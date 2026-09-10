@@ -11,6 +11,74 @@ function ensureOpsDailyHistorySheet_() {
 }
 
 /**
+ * Read-only G028 acceptance check for a report date (clasp / Execution API).
+ * Does not rewrite history or the report view.
+ * @param {string=} reportDate YYYY-MM-DD
+ * @return {Object}
+ */
+function verifyOpsDailyAcceptanceForDate(reportDate) {
+  reportDate = normalizeKeyDate_(reportDate) || todayStr_();
+  var enabled = getEnabledSites();
+  var enabledIds = {};
+  for (var e = 0; e < enabled.length; e++) {
+    var id = String(enabled[e].siteId || '').trim();
+    if (id) enabledIds[id] = enabled[e].name || id;
+  }
+
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var hist = ss.getSheetByName(SHEET_NAMES.OPS_DAILY_HISTORY);
+  var rowsForDate = 0;
+  var uniqueSiteIds = {};
+  var duplicateKeys = 0;
+  var missingSiteIds = [];
+  if (hist && hist.getLastRow() >= 2) {
+    var width = Math.min(hist.getLastColumn(), OPS_DAILY_HISTORY_HEADERS.length);
+    var values = hist.getRange(2, 1, hist.getLastRow() - 1, width).getValues();
+    var seenKeys = {};
+    for (var i = 0; i < values.length; i++) {
+      var date = normalizeKeyDate_(values[i][0]);
+      if (date !== reportDate) continue;
+      rowsForDate += 1;
+      var siteId = String(values[i][1] || '').trim();
+      var key = date + '\u001f' + siteId;
+      if (seenKeys[key]) duplicateKeys += 1;
+      else seenKeys[key] = true;
+      if (siteId) uniqueSiteIds[siteId] = true;
+    }
+  }
+  for (var sid in enabledIds) {
+    if (enabledIds.hasOwnProperty(sid) && !uniqueSiteIds[sid]) missingSiteIds.push(sid);
+  }
+
+  var viewReportDate = '';
+  var view = ss.getSheetByName(SHEET_NAMES.OPS_DAILY_REPORT);
+  if (view && view.getLastRow() >= 1) {
+    var viewValues = view.getDataRange().getValues();
+    for (var r = 0; r < viewValues.length; r++) {
+      if (String(viewValues[r][0] || '').trim() === '报告日期') {
+        viewReportDate = normalizeKeyDate_(viewValues[r][1]) || String(viewValues[r][1] || '').trim();
+        break;
+      }
+    }
+  }
+
+  return {
+    reportDate: reportDate,
+    enabledCount: enabled.length,
+    historyRowsForDate: rowsForDate,
+    uniqueSiteIdsForDate: Object.keys(uniqueSiteIds).length,
+    duplicateDateSiteId: duplicateKeys,
+    missingSiteIds: missingSiteIds,
+    viewReportDate: viewReportDate,
+    ok:
+      rowsForDate >= enabled.length &&
+      duplicateKeys === 0 &&
+      missingSiteIds.length === 0 &&
+      viewReportDate === reportDate
+  };
+}
+
+/**
  * G028 P3 — safe pipeline for daily/finalizer hooks.
  * Runs P1 history then P2 view. Failures are logged and never rethrown so
  * core GSC collection / engines remain intact.

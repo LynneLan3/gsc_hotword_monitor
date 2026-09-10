@@ -1474,6 +1474,7 @@ function listProjectTriggerHandlers() {
 /**
  * 幂等创建自动任务：
  * - runDailyLean：每天 1 个（约早上 8 点）—— production daily collector
+ * - runDailyLeanRecoveryWatchdog_：至多 1 个（续跑丢失恢复）
  * - runIndexAuditBatch：每天 4 个（上午/中午/下午/晚上）
  * 重复执行不会重复创建；不会重新创建 legacy runDaily。
  * 不创建 runFreshQueryMonitor：该 trigger helper 独立，需确认后再启用。
@@ -1537,6 +1538,11 @@ function createDailyTrigger() {
     messages.push(leanHandler + ' 已存在，未重复创建');
   }
 
+  if (typeof ensureDailyLeanRecoveryWatchdog_ === 'function') {
+    var watchdogState = ensureDailyLeanRecoveryWatchdog_();
+    messages.push('lean recovery watchdog: ' + watchdogState);
+  }
+
   // 保证恰好 4 个 runIndexAuditBatch
   if (indexAuditTriggers.length === INDEX_AUDIT_TRIGGER_HOURS.length) {
     messages.push('runIndexAuditBatch×4 已存在，未重复创建');
@@ -1559,18 +1565,59 @@ function createDailyTrigger() {
     );
   }
 
-  SpreadsheetApp.getUi().alert(messages.join('\n') + '\n时区 Asia/Shanghai');
+  var summary = messages.join('\n') + '\n时区 Asia/Shanghai';
+  try {
+    SpreadsheetApp.getUi().alert(summary);
+  } catch (e) {
+    Logger.log(summary);
+  }
+  return summarizeDailyCollectorTriggers_();
 }
 
-/** 删除 runDailyLean、legacy runDaily、续跑与 runIndexAuditBatch 的全部 trigger */
+/**
+ * Headless-safe daily trigger inventory for clasp / Execution API verification.
+ */
+function summarizeDailyCollectorTriggers_() {
+  var leanHandler = typeof HOTFIX_DAILY_HANDLER === 'string' ? HOTFIX_DAILY_HANDLER : 'runDailyLean';
+  var leanContinueHandler =
+    typeof HOTFIX_CONTINUE_HANDLER === 'string' ? HOTFIX_CONTINUE_HANDLER : 'runDailyLeanContinuation_';
+  var leanWatchdogHandler =
+    typeof HOTFIX_WATCHDOG_HANDLER === 'string' ? HOTFIX_WATCHDOG_HANDLER : 'runDailyLeanRecoveryWatchdog_';
+  var counts = {
+    runDailyLean: 0,
+    runDaily: 0,
+    leanContinue: 0,
+    leanWatchdog: 0,
+    legacyContinue: 0,
+    runIndexAuditBatch: 0,
+    other: []
+  };
+  var triggers = ScriptApp.getProjectTriggers();
+  for (var i = 0; i < triggers.length; i++) {
+    var fn = triggers[i].getHandlerFunction();
+    if (fn === leanHandler) counts.runDailyLean++;
+    else if (fn === 'runDaily') counts.runDaily++;
+    else if (fn === leanContinueHandler) counts.leanContinue++;
+    else if (fn === leanWatchdogHandler) counts.leanWatchdog++;
+    else if (fn === DAILY_CONTINUE_HANDLER) counts.legacyContinue++;
+    else if (fn === 'runIndexAuditBatch') counts.runIndexAuditBatch++;
+    else counts.other.push(fn);
+  }
+  return counts;
+}
+
+/** 删除 runDailyLean、legacy runDaily、续跑、watchdog 与 runIndexAuditBatch 的全部 trigger */
 function removeDailyTrigger() {
   var triggers = ScriptApp.getProjectTriggers();
   var removedDaily = 0;
   var removedAudit = 0;
   var removedContinue = 0;
+  var removedWatchdog = 0;
   var leanHandler = typeof HOTFIX_DAILY_HANDLER === 'string' ? HOTFIX_DAILY_HANDLER : 'runDailyLean';
   var leanContinueHandler =
     typeof HOTFIX_CONTINUE_HANDLER === 'string' ? HOTFIX_CONTINUE_HANDLER : 'runDailyLeanContinuation_';
+  var leanWatchdogHandler =
+    typeof HOTFIX_WATCHDOG_HANDLER === 'string' ? HOTFIX_WATCHDOG_HANDLER : 'runDailyLeanRecoveryWatchdog_';
   for (var i = 0; i < triggers.length; i++) {
     var fn = triggers[i].getHandlerFunction();
     if (fn === 'runDaily' || fn === leanHandler) {
@@ -1579,12 +1626,15 @@ function removeDailyTrigger() {
     } else if (fn === DAILY_CONTINUE_HANDLER || fn === leanContinueHandler) {
       ScriptApp.deleteTrigger(triggers[i]);
       removedContinue++;
+    } else if (fn === leanWatchdogHandler) {
+      ScriptApp.deleteTrigger(triggers[i]);
+      removedWatchdog++;
     } else if (fn === 'runIndexAuditBatch') {
       ScriptApp.deleteTrigger(triggers[i]);
       removedAudit++;
     }
   }
-  if (!removedDaily && !removedAudit && !removedContinue) {
+  if (!removedDaily && !removedAudit && !removedContinue && !removedWatchdog) {
     SpreadsheetApp.getUi().alert('没有找到相关自动任务。');
     return;
   }
@@ -1593,6 +1643,8 @@ function removeDailyTrigger() {
       removedDaily +
       '，续跑×' +
       removedContinue +
+      '，watchdog×' +
+      removedWatchdog +
       '，runIndexAuditBatch×' +
       removedAudit
   );
