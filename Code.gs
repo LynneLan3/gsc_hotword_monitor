@@ -1297,7 +1297,41 @@ function createDailyTrigger() {
     );
   }
 
-  SpreadsheetApp.getUi().alert(messages.join('\n') + '\n时区 Asia/Shanghai');
+  var summary = messages.join('\n') + '\n时区 Asia/Shanghai';
+  try {
+    SpreadsheetApp.getUi().alert(summary);
+  } catch (e) {
+    Logger.log(summary);
+  }
+  return summarizeDailyCollectorTriggers_();
+}
+
+/**
+ * Headless-safe daily trigger inventory for clasp / Execution API verification.
+ */
+function summarizeDailyCollectorTriggers_() {
+  var leanHandler = typeof HOTFIX_DAILY_HANDLER === 'string' ? HOTFIX_DAILY_HANDLER : 'runDailyLean';
+  var leanContinueHandler =
+    typeof HOTFIX_CONTINUE_HANDLER === 'string' ? HOTFIX_CONTINUE_HANDLER : 'runDailyLeanContinuation_';
+  var counts = {
+    runDailyLean: 0,
+    runDaily: 0,
+    leanContinue: 0,
+    legacyContinue: 0,
+    runIndexAuditBatch: 0,
+    other: []
+  };
+  var triggers = ScriptApp.getProjectTriggers();
+  for (var i = 0; i < triggers.length; i++) {
+    var fn = triggers[i].getHandlerFunction();
+    if (fn === leanHandler) counts.runDailyLean++;
+    else if (fn === 'runDaily') counts.runDaily++;
+    else if (fn === leanContinueHandler) counts.leanContinue++;
+    else if (fn === DAILY_CONTINUE_HANDLER) counts.legacyContinue++;
+    else if (fn === 'runIndexAuditBatch') counts.runIndexAuditBatch++;
+    else counts.other.push(fn);
+  }
+  return counts;
 }
 
 /** 删除 runDailyLean、legacy runDaily、续跑与 runIndexAuditBatch 的全部 trigger */
