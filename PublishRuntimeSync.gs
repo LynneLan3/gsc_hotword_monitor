@@ -48,8 +48,25 @@ function recordPublishedBatchWithRuntimeSync(payload) {
     }
   }
 
-  ledgerResult.indexingSync = syncPublishedIndexingFollowUp_(receipt);
+  // Client may defer indexing to chunked syncPublishedIndexingFollowUp calls
+  // to stay under Execution API gateway timeouts for multi-URL batches.
+  if (receipt.skipIndexingSync === true) {
+    var deferred = emptyPublishIndexingSync_(String((receipt.common || {}).deployedAt || '').trim());
+    deferred.ok = true;
+    deferred.deferred = true;
+    deferred.inspectedUrls = extractPublishIndexingUrls_(receipt);
+    ledgerResult.indexingSync = deferred;
+  } else {
+    ledgerResult.indexingSync = syncPublishedIndexingFollowUp_(receipt, {});
+  }
   return ledgerResult;
+}
+
+/** Public Execution API for chunked / deferred production indexing follow-up. */
+function syncPublishedIndexingFollowUp(payload) {
+  var receipt = parsePublishRuntimeReceipt_(payload);
+  var options = receipt.indexingOptions && typeof receipt.indexingOptions === 'object' ? receipt.indexingOptions : {};
+  return syncPublishedIndexingFollowUp_(receipt, options);
 }
 
 function parsePublishRuntimeReceipt_(payload) {
@@ -259,14 +276,22 @@ function writePublishRuntimeRow_(sheet, rowNumber, values) {
  * Production indexing follow-up for any publish receipt.
  * Order: sitemap submit → inspect changed canonical URLs → compare lastCrawlTime vs deployedAt.
  * dryRun never performs real GSC write/inspect calls.
+ *
+ * options:
+ *   urls: string[] override inspected URL list (chunked client calls)
+ *   skipSitemap: boolean skip sitemap submit (after first chunk already submitted)
  */
-function syncPublishedIndexingFollowUp_(receipt) {
+function syncPublishedIndexingFollowUp_(receipt, options) {
+  options = options || {};
   var common = receipt.common || {};
   var deployedAt = String(common.deployedAt || '').trim();
   var siteId = String(common.siteId || '').trim();
   var empty = emptyPublishIndexingSync_(deployedAt);
 
-  var inspectedUrls = extractPublishIndexingUrls_(receipt);
+  var inspectedUrls =
+    Object.prototype.hasOwnProperty.call(options, 'urls') && Array.isArray(options.urls)
+      ? options.urls.slice()
+      : extractPublishIndexingUrls_(receipt);
   empty.inspectedUrls = inspectedUrls.slice();
 
   if (receipt.dryRun === true) {
@@ -286,7 +311,12 @@ function syncPublishedIndexingFollowUp_(receipt) {
     return empty;
   }
 
-  var sitemapStatus = submitSitemap(siteConfig.propertyUrl, siteConfig.sitemapUrl);
+  var sitemapStatus;
+  if (options.skipSitemap === true) {
+    sitemapStatus = { ok: true, skipped: true, siteUrl: siteConfig.propertyUrl, sitemapUrl: siteConfig.sitemapUrl };
+  } else {
+    sitemapStatus = submitSitemap(siteConfig.propertyUrl, siteConfig.sitemapUrl);
+  }
   empty.sitemapStatus = sitemapStatus;
   if (!sitemapStatus || sitemapStatus.ok !== true) {
     empty.ok = false;
