@@ -67,6 +67,8 @@ function buildImplementationHandoff_(developmentTask) {
     RepoPath: '',
     GithubRepo: '',
     ResearchTaskID: String((task.source_job_id || task.ResearchTaskID) || '').trim(),
+    BatchID: String((task.research_batch_id || task.BatchID) || '').trim(),
+    SchedulerRunID: String((task.scheduler_run_id || task.SchedulerRunID) || '').trim(),
     ResearchResultPath: String((task.evidence_link || task.ResearchResultPath) || '').trim(),
     SourceReference: String((task.source_reference || task.SourceReference) || '').trim(),
     Starter: '',
@@ -105,7 +107,9 @@ function implementationHandoffTaskFromSheetRow_(row, col) {
     action_type: String(cell_(row, col, 'ActionType') || '').trim(),
     task_type: String(cell_(row, col, 'TaskType') || '').trim(),
     task_reason: String(cell_(row, col, 'TaskReason') || '').trim(),
-    source_reference: String(cell_(row, col, 'SourceReference') || '').trim()
+    source_reference: String(cell_(row, col, 'SourceReference') || '').trim(),
+    research_batch_id: String(cell_(row, col, 'ResearchBatchID') || '').trim(),
+    scheduler_run_id: String(cell_(row, col, 'SchedulerRunID') || '').trim()
   };
 }
 

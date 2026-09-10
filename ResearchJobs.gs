@@ -1091,6 +1091,10 @@ function writeResearchJobResult_(body) {
   setCellIf_(sheet, found.sheetRow, col, '结果路径', resultPath);
   setCellIf_(sheet, found.sheetRow, col, '完成时间', completedAt);
   setCellIf_(sheet, found.sheetRow, col, '错误信息', errorMsg);
+  var researchBatchId = String((body && body.batch_id) || '').trim();
+  var schedulerRunId = String((body && body.scheduler_run_id) || '').trim();
+  if (researchBatchId) setCellIf_(sheet, found.sheetRow, col, 'ResearchBatchID', researchBatchId);
+  if (schedulerRunId) setCellIf_(sheet, found.sheetRow, col, 'SchedulerRunID', schedulerRunId);
   if (statusEnum === RESEARCH_JOB_STATUS.REVIEW) {
     if (body && body.review_summary != null) {
       setCellIf_(sheet, found.sheetRow, col, '审核摘要', reviewSummary);
@@ -1113,6 +1117,8 @@ function writeResearchJobResult_(body) {
     recommendation: recEnum || null,
     evidence_count: evidenceCount === '' ? null : evidenceCount,
     result_path: resultPath || null,
+    batch_id: researchBatchId || null,
+    scheduler_run_id: schedulerRunId || null,
     review_summary: reviewSummary || null,
     evidence_rows: wroteEvidence ? evidenceRowsWritten : null,
     review_link: wroteEvidence ? reviewLink || null : null,
@@ -1393,7 +1399,9 @@ function researchJobRowToApi_(row, col) {
     recommended_action: enumFromLabel_(OPPORTUNITY_ACTION_LABELS, String(cell_(row, col, '建议动作') || '').trim()),
     source_query: String(cell_(row, col, 'source_query') || '').trim(),
     related_queries: related,
-    created_at: createdAt
+    created_at: createdAt,
+    batch_id: String(cell_(row, col, 'ResearchBatchID') || '').trim(),
+    scheduler_run_id: String(cell_(row, col, 'SchedulerRunID') || '').trim()
     // 有意不输出 research_type：当前 fetch_pending_jobs / runner 不消费该字段。
     // Sheet 仍保存「研究类型」；B2-B2 若需区分 ASSET_RESEARCH 再做 passthrough。
   };

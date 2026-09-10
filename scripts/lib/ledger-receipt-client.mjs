@@ -542,6 +542,27 @@ export function parseLedgerSummary(output) {
 	};
 }
 
+export function buildBatchIndexingPatch({ publishResult = {}, ledgerResult = {}, changedUrls = [] } = {}) {
+	const indexNow = asString(publishResult.indexNow?.result || publishResult.indexNow || '') ||
+		(Number(publishResult.indexNowUrls || 0) > 0 ? 'PASS' : 'NOT_RUN');
+	const sitemap = asString(publishResult.sitemapUrl) ? 'PASS' : 'NOT_RUN';
+	const urlInspection = asString(
+		publishResult.urlInspection || publishResult.url_inspection || ledgerResult.response?.urlInspection,
+	) || 'NOT_RUN';
+	const manual = Array.isArray(publishResult.manualRequestIndexingUrls)
+		? publishResult.manualRequestIndexingUrls
+		: (urlInspection === 'PASS' ? [] : changedUrls);
+	return {
+		status: 'INDEXING_CHECKED',
+		indexing: {
+			sitemap,
+			IndexNow: indexNow,
+			'URL Inspection': urlInspection,
+			manual_request_indexing_urls: [...new Set(manual)],
+		},
+	};
+}
+
 function buildLedgerResultFromValue(value, receipt) {
 	const interventionIds = (value.interventions || []).map((item) => item.interventionId).filter(Boolean);
 	const baselineDataDates = (value.interventions || []).map((item) => item.baselineDataDate).filter(Boolean);

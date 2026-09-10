@@ -1179,7 +1179,9 @@ var RESEARCH_JOB_HEADERS = [
   'SourceAction', 'ActionContext', 'DecisionID', 'PrimaryDecision',
   'SecondaryActions', 'DecisionReason', 'EvidenceSummary', 'TargetQueries',
   'RecommendedSections', 'RecommendedTitleChange', 'RecommendedInternalLinks',
-  'Confidence', 'DecisionCreatedAt'
+  'Confidence', 'DecisionCreatedAt',
+  // Cross-repo trace metadata; append-only and populated by hotword-engine callback.
+  'ResearchBatchID', 'SchedulerRunID'
 ];
 
 /** 研究任务来源类型（单元格写英文；旧行空值视为 CONTENT_RESEARCH） */
@@ -1326,7 +1328,8 @@ var DEVELOPMENT_TASK_HEADERS = [
   '开发目标', 'Evidence链接', '优先级', '任务状态', '完成时间', '备注',
   // Phase 7E：只追加跨系统绑定与实施语义；不移动旧列、不回填历史任务。
   'OpportunityID', 'DecisionID', 'SiteID', 'ActionType', 'TaskType',
-  'TaskReason', 'SourceReference', 'HandoffStatus', 'HandoffReference'
+  'TaskReason', 'SourceReference', 'HandoffStatus', 'HandoffReference',
+  'ResearchBatchID', 'SchedulerRunID'
 ];
 
 var DEVELOPMENT_TASK_STATUS = {
