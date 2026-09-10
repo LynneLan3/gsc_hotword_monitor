@@ -72,6 +72,11 @@ function runDailyLean() {
   return runDailyLeanWithLock_(false);
 }
 
+/** Public clasp / Execution API entry for lean continuation (underscore handlers are not callable). */
+function runDailyLeanContinuation() {
+  return runDailyLeanContinuation_();
+}
+
 function runDailyLeanContinuation_() {
   // Independent recovery must exist BEFORE clearing the firing continuation.
   // Otherwise a mid-slice Apps Script kill leaves cursor incomplete with no next trigger.
@@ -585,6 +590,11 @@ function runDailyLeanRecoveryWatchdog_() {
     'runDailyLean watchdog recover finalizer cursor=' + cursor + '/' + siteCount
   );
   return 'recover-finalizer';
+}
+
+/** Public clasp / Execution API entry for the lean recovery watchdog. */
+function runDailyLeanRecoveryWatchdog() {
+  return runDailyLeanRecoveryWatchdog_();
 }
 
 /**
