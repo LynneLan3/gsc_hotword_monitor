@@ -21,6 +21,9 @@ function doGet(e) {
   if (action === 'pendingResearchJobs') {
     return jsonOutput_({ jobs: loadPendingResearchJobs_() });
   }
+  if (action === 'pendingActionResearchJobs') {
+    return jsonOutput_({ jobs: loadPendingActionResearchJobs_() });
+  }
   if (action === 'pendingDemandDiscoveryJobs') {
     return jsonOutput_({ jobs: loadDemandDiscoveryReadyJobs_() });
   }
@@ -1359,6 +1362,30 @@ function loadPendingResearchJobs_() {
   return jobs;
 }
 
+/** M1 Action research queue; kept separate from the legacy content queue. */
+function loadPendingActionResearchJobs_() {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  if (!ss) return [];
+  var sheet = ss.getSheetByName(SHEET_NAMES.RESEARCH_JOBS);
+  if (!sheet || sheet.getLastRow() < 2) return [];
+  var lastCol = Math.max(sheet.getLastColumn(), RESEARCH_JOB_HEADERS.length);
+  var header = sheet.getRange(1, 1, 1, lastCol).getValues()[0];
+  var col = headerIndexMap_(header);
+  var rows = sheet.getRange(2, 1, sheet.getLastRow() - 1, lastCol).getValues();
+  var jobs = [];
+  for (var i = 0; i < rows.length; i++) {
+    var researchType = String(cell_(rows[i], col, '研究类型') || '').trim();
+    if (!ACTION_RESEARCH_TYPES[researchType]) continue;
+    if (!isResearchJobPending_(String(cell_(rows[i], col, '任务状态') || '').trim())) continue;
+    var job = researchJobActionRowToApi_(rows[i], col);
+    if (job && job.job_id) jobs.push(job);
+  }
+  jobs.sort(function (a, b) {
+    return String(b.created_at || '').localeCompare(String(a.created_at || ''));
+  });
+  return jobs;
+}
+
 function isResearchJobPending_(status) {
   var s = String(status || '').trim();
   if (!s) return false;
@@ -1397,6 +1424,14 @@ function researchJobRowToApi_(row, col) {
     // 有意不输出 research_type：当前 fetch_pending_jobs / runner 不消费该字段。
     // Sheet 仍保存「研究类型」；B2-B2 若需区分 ASSET_RESEARCH 再做 passthrough。
   };
+}
+
+function researchJobActionRowToApi_(row, col) {
+  var job = researchJobRowToApi_(row, col);
+  job.research_type = String(cell_(row, col, '研究类型') || RESEARCH_TYPE.CONTENT_RESEARCH).trim();
+  job.source_action = String(cell_(row, col, 'SourceAction') || '').trim();
+  job.action_context = safeJsonParse_(cell_(row, col, 'ActionContext'), {});
+  return job;
 }
 
 function safeJsonParse_(text, fallback) {
