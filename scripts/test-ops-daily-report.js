@@ -102,6 +102,8 @@ vm.runInContext(
     extractFn(opsSrc, 'formatOpsTrend7d_') +
     extractFn(opsSrc, 'isOpsIndexAuditKnown_') +
     extractFn(opsSrc, 'isOpsRealtimeIncomplete_') +
+    extractFn(opsSrc, 'buildOpsDataMismatchReason_') +
+    extractFn(opsSrc, 'sumOpsDailyClicks_') +
     extractFn(opsSrc, 'classifyOpsStatus_') +
     extractFn(opsSrc, 'buildOpsMainChange_') +
     extractFn(opsSrc, 'blankableNumber_') +
@@ -232,6 +234,8 @@ assert(record.opsStatus === '衰退', 'MS2 record ignores stale 144x Growth3D');
 assert(record.trend7d.indexOf('下降') === 0, 'MS2 trend7d is direction %');
 assert(record.trend7d.indexOf('x') < 0, 'no x multiplier');
 assert(record.gameStage === 'PUBLISHED', 'game stage preserved');
+assert(record.dataMismatch, 'fresh GSC rows vs missing status date are flagged');
+assert(record.reason.indexOf('DATA_MISMATCH') >= 0, 'record reason exposes data mismatch');
 
 var store = [];
 function fakeUpsert(row) {

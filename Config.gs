@@ -245,6 +245,8 @@ var OPS_TREND_MIN_WINDOW_IMPRESSIONS = 50;
 var OPS_TREND_MIN_7D_IMPRESSIONS = 80;
 /** G028 P2 — max actionable recommendations on the daily report view */
 var OPS_DAILY_ACTION_LIMIT = 3;
+/** Readable focus area: surface the highest-value 3–5 sites separately from actions. */
+var OPS_DAILY_FOCUS_LIMIT = 5;
 /** Min impressions for a Query/Page evidence row to support 更新/新增页面 */
 var OPS_ACTION_MIN_QUERY_IMPRESSIONS = 10;
 /** Rank band treated as “接近可提升” for update-page evidence */
@@ -2208,14 +2210,14 @@ function getMetricGuideRows_() {
       'DecisionDataDate',
       '站点状态',
       '系统计算',
-      'Decision Engine：Daily 与 Query 两侧 latest 的较早者',
-      'resolveDecisionDataDate_：两侧都有数据时取 min(最新日数据日, 最新 Query 日)；任一侧缺失则为空，且不对齐混算',
-      '统一 Decision 指标截止日，避免不同时间截面混用',
-      '是（所有对齐窗口指标）',
-      '两侧缺一则 Decision 指标窗口为空/归零',
-      '热词站项目对齐规则',
+      'Decision Engine：Performance 与 Query 各自最新可用日期',
+      'Performance 指标按最新 GSC 日数据日；Query/intent/Top20 按最新 Query 日；不同步写 DATA_MISMATCH / QUERY_DATA_LAG',
+      '保留最新真实流量，同时显式暴露数据不同步',
+      '是（各自来源窗口指标）',
+      '单侧缺失时仅对应来源指标为空/归零，不清零另一侧',
+      '热词站项目数据新鲜度规则',
       '较稳定',
-      'DecisionDataDate 是项目对齐日，不是 Google 单独返回的字段。'
+      'DecisionDataDate 保留为兼容字段；PerformanceDataDate 与 QueryDataDate 分别来自对应 GSC 数据源。'
     ],
     [
       'SitemapURLCount',
@@ -2456,7 +2458,7 @@ function getMetricGuideRows_() {
       '今日行动 / 站点状态',
       '实验规则',
       'Decision Engine',
-      'CHECK_INDEX：Day≥7 且 IndexedURLCount 与 sitemap 分母已知、能计算 IndexRate、且 IndexRate 低于警告；或索引审计完全缺失且 formal+realtime 搜索可见性均为 0。null/无历史不得当作 IndexRate < 50%。未达 ARCHIVE。ARCHIVE：Day≥14 且 7d曝光≤10 且 Guide=0。WAIT：证据不足时的默认动作（通常不进今日行动）',
+      'CHECK_INDEX：仅在 Day≥7、索引证据满足条件且没有真实搜索价值时作为主动作；有真实曝光/点击/Query 时保留为风险而不抢占经营动作。null/无历史不得当作 IndexRate < 50%。ARCHIVE：Day≥14 且 7d曝光≤10 且 Guide=0。WAIT：证据不足时的默认动作（通常不进今日行动）',
       '索引排查 / 归档候选 / 继续观察',
       '是',
       '见 INDEX_* / ARCHIVE_* 规则配置',

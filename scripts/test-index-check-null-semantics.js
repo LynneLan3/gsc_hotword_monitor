@@ -125,9 +125,9 @@ const agefield = decide(base({
   top20QueryCount: 3,
   top50QueryCount: 3
 }));
-assert.equal(agefield.decision.action, 'CHECK_INDEX', 'Agefield true low-index action');
-assert.equal(agefield.decision.stage, 'INDEX_CHECK', 'Agefield true low-index stage');
-assert.ok(agefield.reason.includes('低于'), 'Agefield rate reason');
+assert.equal(agefield.decision.action, 'CONTENT_OPTIMIZE', 'Agefield real traffic action');
+assert.equal(agefield.decision.stage, 'TRACTION', 'Agefield real traffic stage');
+assert.ok(agefield.reason.includes('CHECK_INDEX risk deferred'), 'Agefield index risk remains visible');
 console.log('PASS case 3 Agefield true low index', agefield.decision.action, agefield.reason);
 
 const noVis = decide(base({

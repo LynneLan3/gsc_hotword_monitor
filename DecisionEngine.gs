@@ -49,7 +49,8 @@ function runDecisionEngine() {
     var decision = decideRecommendedAction_(metrics, scores, rules);
     var reason = appendDataThrough_(
       buildDecisionReason_(metrics, scores, decision, rules),
-      metrics.decisionDataDate
+      metrics.performanceDataDate || metrics.decisionDataDate,
+      metrics.queryDataDate
     );
     var cooldown = findActionCooldown_(
       actionHistory,
@@ -365,18 +366,27 @@ function loadLatestSnapshotBySite_() {
   return out;
 }
 
-/**
- * 统一截止日期：两边都有记录时取较早的 latest。
- * 任一数据源完全缺失时返回空，避免混用不同时间截面。
- */
-function resolveDecisionDataDate_(dailyRows, queryRows) {
+/** Keep performance and query freshness independent for Decision Engine callers. */
+function resolveDecisionDataDates_(dailyRows, queryRows) {
   var latestDaily = latestDateInRows_(dailyRows, 0);
   var latestQuery = latestDateInRows_(queryRows, 0);
-  if (!latestDaily || !latestQuery) return '';
-  return latestDaily < latestQuery ? latestDaily : latestQuery;
+  return {
+    performanceDataDate: latestDaily,
+    queryDataDate: latestQuery,
+    decisionDataDate: latestDaily > latestQuery ? latestDaily : (latestQuery || '')
+  };
 }
 
-function computeAlignedMetrics_(dailyRows, queryRows, queryPageRows, site, decisionDataDate) {
+function resolveDecisionDataDate_(dailyRows, queryRows) {
+  var dates = resolveDecisionDataDates_(dailyRows, queryRows);
+  if (!dates.performanceDataDate || !dates.queryDataDate) return '';
+  return dates.performanceDataDate < dates.queryDataDate
+    ? dates.performanceDataDate
+    : dates.queryDataDate;
+}
+
+function computeAlignedMetrics_(dailyRows, queryRows, queryPageRows, site, performanceDataDate, queryDataDate) {
+  if (queryDataDate === undefined) queryDataDate = performanceDataDate;
   var empty = {
     impressions24h: 0,
     impressions7d: 0,
@@ -392,14 +402,17 @@ function computeAlignedMetrics_(dailyRows, queryRows, queryPageRows, site, decis
     top20QueryCount: 0,
     intentCategoryCount: 0,
     canExpandContent: false,
-    dailyDateCount7d: 0
+    dailyDateCount7d: 0,
+    performanceDataDate: performanceDataDate || '',
+    queryDataDate: queryDataDate || ''
   };
-  if (!decisionDataDate) return empty;
+  var performanceWindowStart = performanceDataDate ? addDaysStr_(performanceDataDate, -6) : '';
+  var latest3Start = performanceDataDate ? addDaysStr_(performanceDataDate, -2) : '';
+  var previous3End = performanceDataDate ? addDaysStr_(performanceDataDate, -3) : '';
+  var previous3Start = performanceDataDate ? addDaysStr_(performanceDataDate, -5) : '';
+  var queryWindowStart = queryDataDate ? addDaysStr_(queryDataDate, -6) : '';
 
-  var windowStart = addDaysStr_(decisionDataDate, -6);
-  var latest3Start = addDaysStr_(decisionDataDate, -2);
-  var previous3End = addDaysStr_(decisionDataDate, -3);
-  var previous3Start = addDaysStr_(decisionDataDate, -5);
+  if (!performanceDataDate && !queryDataDate) return empty;
 
   var impressions24h = 0;
   var impressions7d = 0;
@@ -416,24 +429,24 @@ function computeAlignedMetrics_(dailyRows, queryRows, queryPageRows, site, decis
     if (isNaN(impressions)) impressions = 0;
     if (isNaN(clicks)) clicks = 0;
 
-    if (dataDate === decisionDataDate) impressions24h += impressions;
-    if (dataDate >= windowStart && dataDate <= decisionDataDate) {
+    if (dataDate === performanceDataDate) impressions24h += impressions;
+    if (performanceWindowStart && dataDate >= performanceWindowStart && dataDate <= performanceDataDate) {
       impressions7d += impressions;
       clicks7d += clicks;
       dailyDates7d[dataDate] = true;
     }
-    if (dataDate >= latest3Start && dataDate <= decisionDataDate) latest3d += impressions;
+    if (latest3Start && dataDate >= latest3Start && dataDate <= performanceDataDate) latest3d += impressions;
     if (previous3Start && previous3End && dataDate >= previous3Start && dataDate <= previous3End) {
       previous3d += impressions;
     }
   }
 
   var growth = safeGrowth_(latest3d, previous3d);
-  var queryAgg = aggregateQueryMetrics_(queryRows, windowStart, decisionDataDate, site);
+  var queryAgg = aggregateQueryMetrics_(queryRows, queryWindowStart, queryDataDate, site);
   var expand = evaluateContentExpand_(
     queryPageRows,
-    windowStart,
-    decisionDataDate,
+    queryWindowStart,
+    queryDataDate,
     site,
     queryAgg.intentCategoryCount,
     queryAgg.guideQueryCount
@@ -454,21 +467,25 @@ function computeAlignedMetrics_(dailyRows, queryRows, queryPageRows, site, decis
     top20QueryCount: queryAgg.top20,
     intentCategoryCount: queryAgg.intentCategoryCount,
     canExpandContent: expand,
-    dailyDateCount7d: Object.keys(dailyDates7d).length
+    dailyDateCount7d: Object.keys(dailyDates7d).length,
+    performanceDataDate: performanceDataDate || '',
+    queryDataDate: queryDataDate || ''
   };
 }
 
 function buildSiteMetrics_(site, runDate, rules, dailyRows, queryRows, queryPageRows, snapshotRow) {
-  var decisionDataDate = resolveDecisionDataDate_(dailyRows, queryRows);
+  var dates = resolveDecisionDataDates_(dailyRows, queryRows);
   var aligned = computeAlignedMetrics_(
     dailyRows,
     queryRows,
     queryPageRows,
     site,
-    decisionDataDate
+    dates.performanceDataDate,
+    dates.queryDataDate
   );
 
-  var dayNum = calcDayNumber_(site.day0, decisionDataDate || runDate);
+  var decisionDataDate = dates.decisionDataDate;
+  var dayNum = calcDayNumber_(site.day0, dates.performanceDataDate || dates.queryDataDate || runDate);
   if (snapshotRow && snapshotRow[4] !== '' && snapshotRow[4] !== null && snapshotRow[4] !== undefined) {
     var snapDay = Number(snapshotRow[4]);
     if (!isNaN(snapDay)) dayNum = snapDay;
@@ -500,6 +517,16 @@ function buildSiteMetrics_(site, runDate, rules, dailyRows, queryRows, queryPage
 
   return {
     decisionDataDate: decisionDataDate,
+    performanceDataDate: dates.performanceDataDate,
+    queryDataDate: dates.queryDataDate,
+    dataMismatch: !!(
+      (dates.performanceDataDate || dates.queryDataDate) &&
+      dates.performanceDataDate !== dates.queryDataDate
+    ),
+    queryDataLag: !!(
+      dates.performanceDataDate &&
+      (!dates.queryDataDate || dates.performanceDataDate > dates.queryDataDate)
+    ),
     day: dayNum,
     sitemapCount: sitemapCount,
     indexedCount: indexedCount,
@@ -682,15 +709,12 @@ function scoreRisk_(metrics, rules) {
 }
 
 /**
- * 决策顺序（先到先得）：
- * 1. CHECK_INDEX（未达到 ARCHIVE 条件时）
- * 2. Fast Track → DOMAIN_UPGRADE
- * 3. DOMAIN_UPGRADE
- * 4. DOMAIN_PREPARE
- * 5. ARCHIVE
- * 6. CONTENT_EXPAND（仅在页面覆盖可可靠判断时）
- * 7. CONTENT_OPTIMIZE（Content Action Gate）
- * 8. WAIT
+ * 决策顺序（经营价值优先，索引风险为次要问题）：
+ * 1. Fast Track / DOMAIN_UPGRADE / DOMAIN_PREPARE
+ * 2. ARCHIVE
+ * 3. CONTENT_EXPAND / CONTENT_OPTIMIZE
+ * 4. CHECK_INDEX（无真实搜索价值时）
+ * 5. WAIT
  * 永不输出 PROMOTED（当前无正式域名识别）。
  */
 function decideRecommendedAction_(metrics, scores, rules) {
@@ -700,10 +724,6 @@ function decideRecommendedAction_(metrics, scores, rules) {
   if (dayNum !== null && isNaN(dayNum)) dayNum = null;
 
   var archiveReady = isArchiveCandidate_(dayNum, metrics, rules);
-  if (shouldCheckIndex_(dayNum, metrics, rules) && !archiveReady) {
-    return { action: 'CHECK_INDEX', stage: 'INDEX_CHECK', priority: 'P0', fastTrack: false };
-  }
-
   if (
     metrics.impressions24h >= rules.FAST_TRACK_24H_IMPRESSIONS &&
     metrics.guideQueryCount7d >= rules.FAST_TRACK_GUIDE_QUERIES
@@ -737,6 +757,10 @@ function decideRecommendedAction_(metrics, scores, rules) {
 
   if (passesContentOptimizeGate_(metrics, rules)) {
     return { action: 'CONTENT_OPTIMIZE', stage: 'TRACTION', priority: 'P2', fastTrack: false };
+  }
+
+  if (shouldCheckIndex_(dayNum, metrics, rules)) {
+    return { action: 'CHECK_INDEX', stage: 'INDEX_CHECK', priority: 'P0', fastTrack: false };
   }
 
   var noSignal = metrics.impressions7d === 0 && metrics.queryCount7d === 0;
@@ -795,6 +819,16 @@ function hasFormalSearchVisibility_(metrics) {
     || numericMetric_(metrics.top20QueryCount) > 0;
 }
 
+function hasMeaningfulSearchOpportunity_(metrics, rules) {
+  rules = rules || {};
+  var minImpressions = rules.CONTENT_OPTIMIZE_MIN_7D_IMPRESSIONS;
+  if (minImpressions === undefined) minImpressions = 30;
+  return numericMetric_(metrics && metrics.clicks7d) > 0
+    || numericMetric_(metrics && metrics.queryCount7d) > 0
+    || numericMetric_(metrics && metrics.top50QueryCount) > 0
+    || numericMetric_(metrics && metrics.impressions7d) >= minImpressions;
+}
+
 function hasRealtimeSearchVisibility_(metrics) {
   return numericMetric_(metrics.realtimeImpressions24h) > 0
     || numericMetric_(metrics.realtimeClicks24h) > 0
@@ -813,6 +847,7 @@ function hasRealtimeSearchVisibility_(metrics) {
  */
 function shouldCheckIndex_(dayNum, metrics, rules) {
   if (dayNum === null || dayNum < rules.INDEX_CHECK_DAY) return false;
+  if (hasMeaningfulSearchOpportunity_(metrics, rules)) return false;
   if (isIndexRateComputable_(metrics) && metrics.indexRate < rules.INDEX_RATE_WARNING) {
     return true;
   }
@@ -898,11 +933,30 @@ function buildDecisionReason_(metrics, scores, decision, rules) {
   if (!isIndexAuditKnown_(metrics) && decision.action !== 'CHECK_INDEX') {
     reason += '；Index audit unavailable';
   }
+  if (metrics.dataMismatch) {
+    reason +=
+      '；' +
+      (metrics.queryDataLag ? 'DATA_MISMATCH / QUERY_DATA_LAG' : 'DATA_MISMATCH') +
+      '：Performance through ' +
+      (metrics.performanceDataDate || 'n/a') +
+      '；Query through ' +
+      (metrics.queryDataDate || 'n/a');
+  }
+  if (
+    decision.action !== 'CHECK_INDEX' &&
+    isIndexRateComputable_(metrics) &&
+    metrics.indexRate < rules.INDEX_RATE_WARNING
+  ) {
+    reason += '；CHECK_INDEX risk deferred: IndexRate ' + Math.round(metrics.indexRate * 100) + '%';
+  }
   return reason;
 }
 
-function appendDataThrough_(reason, decisionDataDate) {
+function appendDataThrough_(reason, decisionDataDate, queryDataDate) {
   var tag = decisionDataDate ? ('Data through ' + decisionDataDate) : 'Data through n/a';
+  if (queryDataDate && queryDataDate !== decisionDataDate) {
+    tag += '；Query data through ' + queryDataDate;
+  }
   if (!reason) return tag;
   return reason + '；' + tag;
 }
@@ -1759,13 +1813,21 @@ function debugDecisionEngineSelfCheck() {
     ['2026-08-12', 'Grain Rot', 'grain rot walkthrough', 0, 8, 0, 9],
     ['2026-08-13', 'Grain Rot', 'grain rot boss', 0, 6, 0, 7]
   ];
-  var caseADate = resolveDecisionDataDate_(caseADaily, caseAQueries);
-  var caseA = computeAlignedMetrics_(caseADaily, caseAQueries, [], grainSite, caseADate);
-  assert(caseADate === '2026-08-11', 'Case A DecisionDataDate 应为 2026-08-11');
-  assert(caseA.queryCount7d === 1, 'Case A 不得计入 8/12、8/13 Query');
-  assert(caseA.top20QueryCount === 1, 'Case A Top20 只含截止日及之前');
-  assert(caseA.impressions24h === 12 && caseA.impressions7d === 12, 'Case A Impression 截止 8/11');
-  assert(appendDataThrough_('x', caseADate).indexOf('Data through 2026-08-11') >= 0, 'Case A Reason 应含 Data through 2026-08-11');
+  var caseADates = resolveDecisionDataDates_(caseADaily, caseAQueries);
+  var caseA = computeAlignedMetrics_(
+    caseADaily,
+    caseAQueries,
+    [],
+    grainSite,
+    caseADates.performanceDataDate,
+    caseADates.queryDataDate
+  );
+  assert(caseADates.performanceDataDate === '2026-08-11', 'Case A PerformanceDataDate 应为 2026-08-11');
+  assert(caseADates.queryDataDate === '2026-08-13', 'Case A QueryDataDate 应为 2026-08-13');
+  assert(caseA.queryCount7d === 3, 'Case A Query 应使用自己的最新日期');
+  assert(caseA.top20QueryCount === 3, 'Case A Top20 应使用 Query 最新日期');
+  assert(caseA.impressions24h === 12 && caseA.impressions7d === 12, 'Case A Performance 截止 8/11');
+  assert(appendDataThrough_('x', caseADates.performanceDataDate, caseADates.queryDataDate).indexOf('Query data through 2026-08-13') >= 0, 'Case A Reason 应含 Query 最新日期');
 
   var caseBDaily = [
     ['2026-08-11', 'Grain Rot', 0, 12, 0, 10, 2, '', ''],
@@ -1775,9 +1837,16 @@ function debugDecisionEngineSelfCheck() {
     ['2026-08-11', 'Grain Rot', 'grain rot wiki', 0, 4, 0, 12],
     ['2026-08-13', 'Grain Rot', 'grain rot walkthrough', 0, 8, 0, 9]
   ];
-  var caseBDate = resolveDecisionDataDate_(caseBDaily, caseBQueries);
-  var caseB = computeAlignedMetrics_(caseBDaily, caseBQueries, [], grainSite, caseBDate);
-  assert(caseBDate === '2026-08-13', 'Case B DecisionDataDate 应为 2026-08-13');
+  var caseBDates = resolveDecisionDataDates_(caseBDaily, caseBQueries);
+  var caseB = computeAlignedMetrics_(
+    caseBDaily,
+    caseBQueries,
+    [],
+    grainSite,
+    caseBDates.performanceDataDate,
+    caseBDates.queryDataDate
+  );
+  assert(caseBDates.performanceDataDate === '2026-08-13', 'Case B PerformanceDataDate 应为 2026-08-13');
   assert(caseB.queryCount7d === 2, 'Case B Query 统计至 8/13');
   assert(caseB.impressions24h === 20 && caseB.impressions7d === 32, 'Case B Impression 统计至 8/13');
   assert(caseB.top20QueryCount === 2, 'Case B 两边 Query 都计入 Top20');
@@ -1786,10 +1855,17 @@ function debugDecisionEngineSelfCheck() {
     ['2026-08-11', 'New Site', 0, 5, 0, 20, 0, '', '']
   ];
   var caseCSite = { name: 'New Site', propertyUrl: 'https://example.vercel.app/' };
-  var caseCDate = resolveDecisionDataDate_(caseCDaily, []);
-  var caseC = computeAlignedMetrics_(caseCDaily, [], [], caseCSite, caseCDate);
-  assert(caseCDate === '', 'Case C 缺 Query 数据时 DecisionDataDate 为空');
-  assert(caseC.impressions7d === 0 && caseC.queryCount7d === 0, 'Case C 不得混用单边数据源');
+  var caseCDates = resolveDecisionDataDates_(caseCDaily, []);
+  var caseC = computeAlignedMetrics_(
+    caseCDaily,
+    [],
+    [],
+    caseCSite,
+    caseCDates.performanceDataDate,
+    caseCDates.queryDataDate
+  );
+  assert(caseCDates.performanceDataDate === '2026-08-11', 'Case C 保留 PerformanceDataDate');
+  assert(caseC.impressions7d === 5 && caseC.queryCount7d === 0, 'Case C 缺 Query 时不得清零 Performance');
   var caseCDecision = decideRecommendedAction_(
     {
       day: 2,
@@ -1826,8 +1902,8 @@ function debugDecisionEngineSelfCheck() {
   );
   assert(caseCDecision.action !== 'CONTENT_OPTIMIZE', 'Case C 不得虚假 CONTENT_OPTIMIZE');
   assert(caseCDecision.action === 'WAIT', 'Case C 新站缺 Query 应为 WAIT');
-  var caseCReason = appendDataThrough_('7d impressions 0', caseCDate);
-  assert(caseCReason.indexOf('Data through n/a') >= 0, 'Case C Reason 应标明 Data through n/a');
+  var caseCReason = appendDataThrough_('7d impressions 5', caseCDates.performanceDataDate, caseCDates.queryDataDate);
+  assert(caseCReason.indexOf('Data through 2026-08-11') >= 0, 'Case C Reason 应标明 Performance 日期');
 
   var waitMetrics = {
     day: 2,
@@ -1870,7 +1946,7 @@ function debugDecisionEngineSelfCheck() {
     intentCategoryCount: 1
   };
   var indexDecision = decideRecommendedAction_(indexMetrics, computeDomainScores_(indexMetrics, rules), rules);
-  assert(indexDecision.action === 'CHECK_INDEX', 'Day8 低索引率应为 CHECK_INDEX');
+  assert(indexDecision.action !== 'CHECK_INDEX', '已有 Query/Top50 价值时低索引不得抢占主动作');
 
   function indexCheckMetrics_(over) {
     var m = {
@@ -1956,10 +2032,9 @@ function debugDecisionEngineSelfCheck() {
   var agefieldScores = computeDomainScores_(agefieldMetrics, rules);
   var agefieldDecision = decideRecommendedAction_(agefieldMetrics, agefieldScores, rules);
   var agefieldReason = buildDecisionReason_(agefieldMetrics, agefieldScores, agefieldDecision, rules);
-  assert(agefieldDecision.action === 'CHECK_INDEX', '真实低 IndexRate 仍应为 CHECK_INDEX');
-  assert(agefieldDecision.stage === 'INDEX_CHECK', '真实低 IndexRate 应为 INDEX_CHECK');
-  assert(agefieldDecision.priority === 'P0', '真实低 IndexRate 应为 P0');
-  assert(agefieldReason.indexOf('低于') >= 0, '真实低 IndexRate Reason 应含低于阈值');
+  assert(agefieldDecision.action === 'CONTENT_OPTIMIZE', '有真实流量的低 IndexRate 应优先内容动作');
+  assert(agefieldDecision.stage === 'TRACTION', '有真实流量时不得进入 INDEX_CHECK');
+  assert(agefieldReason.indexOf('CHECK_INDEX risk deferred') >= 0, '低 IndexRate 风险应保留在 Reason');
   assert(agefieldReason.indexOf('Index audit unavailable') < 0, '已知 IndexRate 不得写 Index audit unavailable');
 
   var noVisMetrics = indexCheckMetrics_({

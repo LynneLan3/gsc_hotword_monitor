@@ -50,6 +50,14 @@ function runOpsDailyReport_(options) {
   var opportunityRows = options.opportunityRows || loadOpsOpportunityRows_();
   var indexBySite = options.indexBySite || loadOpsIndexEvidenceBySite_();
   var rules = options.rules || getDecisionRules_();
+  var dailyBySite = options.dailyBySite ||
+    (typeof loadDailyRowsBySite_ === 'function' ? loadDailyRowsBySite_() : {});
+
+  var focusSites = selectOpsFocusSites_(historyRows, {
+    dailyBySite: dailyBySite,
+    queryBySite: queryBySite,
+    opportunityRows: opportunityRows
+  });
 
   var selected = selectOpsDailyActions_(historyRows, {
     queryBySite: queryBySite,
@@ -57,7 +65,8 @@ function runOpsDailyReport_(options) {
     opportunityRows: opportunityRows,
     indexBySite: indexBySite,
     rules: rules,
-    asOfDate: reportDate
+    asOfDate: reportDate,
+    dailyBySite: dailyBySite
   });
   var selectedSites = {};
   for (var i = 0; i < selected.length; i++) {
@@ -72,8 +81,16 @@ function runOpsDailyReport_(options) {
     var row = historyRows[h];
     if (counts[row.opsStatus] !== undefined) counts[row.opsStatus] += 1;
     var cutoff = extractOpsGscCutoff_(row.mainChange) || extractOpsGscCutoff_(row.reason);
+    var latestDailyDate = latestDateInRows_(dailyBySite[row.site] || [], 0);
+    if (latestDailyDate && latestDailyDate > cutoff) cutoff = latestDailyDate;
     if (cutoff && cutoff > gscCutoff) gscCutoff = cutoff;
-    var judgment = decideOpsTodayJudgment_(row, !!selectedSites[row.site]);
+    var viewMismatch = buildOpsViewDataMismatch_(row, dailyBySite[row.site] || []);
+    var mismatch = !!row.dataMismatch || !!viewMismatch || /DATA_MISMATCH|QUERY_DATA_LAG/.test(row.mainChange + ' ' + row.reason);
+    var mainChange = row.mainChange;
+    if (viewMismatch) mainChange += (mainChange ? '；' : '') + viewMismatch;
+    var judgment = mismatch
+      ? 'DATA MISMATCH'
+      : decideOpsTodayJudgment_(row, !!selectedSites[row.site]);
     if (row.siteId === 'mortal-shell-ii' || row.site === 'Mortal Shell II') {
       ms2Judgment = judgment;
     }
@@ -85,7 +102,8 @@ function runOpsDailyReport_(options) {
       clicks: row.clicks,
       impressions: row.impressions,
       avgPosition: row.avgPosition,
-      mainChange: row.mainChange,
+      mainChange: mainChange,
+      dataMismatch: mismatch,
       judgment: judgment
     });
   }
@@ -94,6 +112,7 @@ function runOpsDailyReport_(options) {
     reportDate: reportDate,
     gscCutoff: gscCutoff,
     counts: counts,
+    focusSites: focusSites,
     actions: selected,
     siteRows: siteRows
   };
@@ -116,6 +135,7 @@ function runOpsDailyReport_(options) {
       actionCount: selected.length,
       gscCutoff: gscCutoff
     },
+    focusSites: focusSites,
     actions: selected,
     ms2Judgment: ms2Judgment
   };
@@ -222,6 +242,97 @@ function mapOpsExecuteAction_(suggestedAction, opsStatus) {
 function isOpsActionPriorityEligible_(priority) {
   var p = String(priority || '').trim().toUpperCase();
   return p === 'P0' || p === 'P1' || p === 'P2';
+}
+
+function getOpsViewLatestDailyTotals_(dailyRows) {
+  var latest = latestDateInRows_(dailyRows || [], 0);
+  var totals = { date: latest, clicks: 0, impressions: 0 };
+  if (!latest) return totals;
+  for (var i = 0; i < (dailyRows || []).length; i++) {
+    if (normalizeKeyDate_(dailyRows[i][0]) !== latest) continue;
+    var clicks = Number(dailyRows[i][2] || 0);
+    var impressions = Number(dailyRows[i][3] || 0);
+    if (!isNaN(clicks)) totals.clicks += clicks;
+    if (!isNaN(impressions)) totals.impressions += impressions;
+  }
+  return totals;
+}
+
+function buildOpsViewDataMismatch_(row, dailyRows) {
+  var totals = getOpsViewLatestDailyTotals_(dailyRows);
+  if (!totals.date) return '';
+  var cutoff = extractOpsGscCutoff_(row && row.mainChange) || extractOpsGscCutoff_(row && row.reason);
+  if (cutoff && totals.date > cutoff) {
+    return 'DATA_MISMATCH：GSC data through ' + totals.date + '；日报状态 through ' + cutoff;
+  }
+  var rowClicks = Number(row && row.clicks);
+  var rowImpressions = Number(row && row.impressions);
+  if (
+    totals.impressions > 0 &&
+    (isNaN(rowImpressions) || rowImpressions === 0 ||
+      (totals.clicks > 0 && (isNaN(rowClicks) || rowClicks === 0)))
+  ) {
+    return 'DATA_MISMATCH：最新 GSC 日数据仍有点击/曝光（' + totals.clicks + '/' + totals.impressions + '），日报仍为 0/n/a';
+  }
+  return '';
+}
+
+/** Rank 3–5 readable focus sites by current value, not backlog labels. */
+function selectOpsFocusSites_(historyRows, ctx) {
+  ctx = ctx || {};
+  var dailyBySite = ctx.dailyBySite || {};
+  var queryBySite = ctx.queryBySite || {};
+  var opportunityRows = ctx.opportunityRows || [];
+  var candidates = [];
+  for (var i = 0; i < (historyRows || []).length; i++) {
+    var row = historyRows[i];
+    var dailyRows = dailyBySite[row.site] || [];
+    var trend = typeof computeOpsSiteTrendFromDaily_ === 'function'
+      ? computeOpsSiteTrendFromDaily_(dailyRows)
+      : { impressions7d: Number(row.impressions) || 0, ok: false, pctChange: 0 };
+    var queryHit = findBestOpsQueryEvidence_(queryBySite[row.site] || []);
+    var opportunity = findBestOpsOpportunityForSite_(row.site, opportunityRows);
+    var action = String(row.suggestedAction || '').trim();
+    var latestDaily = getOpsViewLatestDailyTotals_(dailyRows);
+    var latestClicks = latestDaily.date ? latestDaily.clicks : (Number(row.clicks) || 0);
+    var latestImpressions = latestDaily.date ? latestDaily.impressions : (Number(row.impressions) || 0);
+    var impressions7d = Number(trend.impressions7d) || latestImpressions;
+    var dataMismatch = !!row.dataMismatch || !!buildOpsViewDataMismatch_(row, dailyRows) || /DATA_MISMATCH|QUERY_DATA_LAG/.test(row.mainChange + ' ' + row.reason);
+    var hasValue = latestClicks > 0 || impressions7d >= 50 ||
+      (trend.ok && Number(trend.pctChange) > 0) || !!queryHit || !!opportunity ||
+      action === 'DOMAIN_UPGRADE' || action === 'DOMAIN_PREPARE';
+    if (!hasValue && !dataMismatch) continue;
+
+    var score = latestClicks * 1000 + latestImpressions * 3 + impressions7d;
+    if (queryHit) score += queryHit.impressions * 4;
+    if (opportunity) score += opportunity.impressions * 4;
+    if (action === 'DOMAIN_UPGRADE' || action === 'DOMAIN_PREPARE') score += 5000;
+    if (trend.ok && Number(trend.pctChange) > 0) score += Number(trend.pctChange) * 10;
+    if (row.opsStatus === OPS_STATUS.DECLINE) score -= 1000;
+    if (action === 'CONTENT_OPTIMIZE' && latestClicks === 0 && impressions7d < 100) score -= 1500;
+    if (dataMismatch) score += 2500;
+
+    candidates.push({
+      site: row.site,
+      gameStage: row.gameStage,
+      opsStatus: row.opsStatus,
+      suggestedAction: action,
+      priority: row.priority,
+      trend7d: row.trend7d,
+      clicks: latestClicks,
+      impressions: latestImpressions,
+      impressions7d: impressions7d,
+      dataMismatch: dataMismatch,
+      score: score,
+      reason: dataMismatch ? 'DATA_MISMATCH' : (queryHit || opportunity ? '实时搜索机会' : '真实流量')
+    });
+  }
+  candidates.sort(function (a, b) {
+    if (b.score !== a.score) return b.score - a.score;
+    return String(a.site || '').localeCompare(String(b.site || ''));
+  });
+  var limit = typeof OPS_DAILY_FOCUS_LIMIT === 'number' ? OPS_DAILY_FOCUS_LIMIT : 5;
+  return candidates.slice(0, limit);
 }
 
 /**
@@ -751,6 +862,7 @@ function buildOpsActionEvidenceText_(row, evidence) {
 }
 
 function decideOpsTodayJudgment_(row, isSelected) {
+  if (row && row.dataMismatch) return 'DATA MISMATCH';
   if (isSelected) return OPS_JUDGMENT.EXECUTE;
   if (row.opsStatus === OPS_STATUS.PAUSE) return OPS_JUDGMENT.PAUSE;
   if (row.opsStatus === OPS_STATUS.DECLINE) return OPS_JUDGMENT.NONE;
@@ -759,7 +871,7 @@ function decideOpsTodayJudgment_(row, isSelected) {
   return OPS_JUDGMENT.WATCH;
 }
 
-/** Overwrite 站点经营日报 with the three readable sections. */
+/** Overwrite 站点经营日报 with readable focus, action, and overview sections. */
 function writeOpsDailyReportSheet_(view) {
   view = view || {};
   var sheet = ensureSheet_(SHEET_NAMES.OPS_DAILY_REPORT, ['站点经营日报']);
@@ -781,6 +893,26 @@ function writeOpsDailyReportSheet_(view) {
   values.push(['暂停投入数量', counts[OPS_STATUS.PAUSE] || 0]);
   values.push(['今日建议执行数量', actions.length]);
   values.push(['GSC 数据截止日期', view.gscCutoff || '']);
+  values.push([]);
+  values.push(['【今日重点站】']);
+  values.push(['站点', '经营状态', '建议操作', '最新点击', '最新曝光', '7日曝光', '7日趋势', '重点依据']);
+  var focusSites = view.focusSites || [];
+  if (!focusSites.length) {
+    values.push(['—', '—', '—', '—', '—', '—', '—', '暂无实时经营价值证据']);
+  } else {
+    for (var f = 0; f < focusSites.length; f++) {
+      values.push([
+        focusSites[f].site,
+        focusSites[f].opsStatus,
+        focusSites[f].suggestedAction,
+        focusSites[f].clicks,
+        focusSites[f].impressions,
+        focusSites[f].impressions7d,
+        focusSites[f].trend7d,
+        focusSites[f].reason
+      ]);
+    }
+  }
   values.push([]);
   values.push(['【今日建议执行】']);
   values.push(OPS_DAILY_ACTION_HEADERS.slice());

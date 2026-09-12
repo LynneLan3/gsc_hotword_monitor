@@ -325,6 +325,12 @@ function buildOpsDailyRecord_(ctx) {
   var indexedCount = status.indexedCount;
   var indexKnown = isOpsIndexAuditKnown_(indexedCount);
   var realtimeIncomplete = isOpsRealtimeIncomplete_(fresh);
+  var dataMismatch = buildOpsDataMismatchReason_({
+    snapshot: snap,
+    status: status,
+    dailyRows: ctx.dailyRows || [],
+    trend: trend
+  });
 
   var classification = classifyOpsStatus_({
     investmentTier: portfolio.investmentTier,
@@ -348,6 +354,7 @@ function buildOpsDailyRecord_(ctx) {
     indexKnown: indexKnown,
     realtimeIncomplete: realtimeIncomplete
   });
+  if (dataMismatch) mainChange += '；' + dataMismatch;
 
   return {
     date: normalizeKeyDate_(ctx.reportDate) || '',
@@ -364,9 +371,60 @@ function buildOpsDailyRecord_(ctx) {
     mainChange: mainChange,
     suggestedAction: recommendedAction || classification.suggestedAction || '',
     priority: priority || classification.priority || '',
-    reason: classification.reason,
+    reason: dataMismatch ? classification.reason + '；' + dataMismatch : classification.reason,
+    dataMismatch: !!dataMismatch,
     lastModified: lastModified
   };
+}
+
+function buildOpsDataMismatchReason_(ctx) {
+  ctx = ctx || {};
+  var snap = ctx.snapshot || null;
+  var status = ctx.status || {};
+  var trend = ctx.trend || {};
+  var statusReason = String(status.reason || '');
+  var statusMismatch = statusReason.match(/DATA_MISMATCH(?:\s*\/\s*QUERY_DATA_LAG)?/);
+  if (statusMismatch) return statusMismatch[0] + '：' + statusReason;
+  var dailyDate = latestDateInRows_(ctx.dailyRows || [], 0);
+  var snapshotDate = snap ? normalizeKeyDate_(snap[1]) : '';
+  var statusDate = normalizeKeyDate_(status.decisionDataDate);
+  var freshest = dailyDate > snapshotDate ? dailyDate : snapshotDate;
+  if (freshest && (!statusDate || freshest > statusDate)) {
+    return (
+      'DATA_MISMATCH：GSC data through ' + freshest +
+      '；站点状态 through ' + (statusDate || 'n/a')
+    );
+  }
+
+  var statusImpressions = Number(status.impressions7d);
+  var statusClicks = Number(status.clicks7d);
+  var dailyImpressions = Number(trend.impressions7d || 0);
+  var dailyClicks = sumOpsDailyClicks_(ctx.dailyRows || [], trend.endDate);
+  if (
+    dailyImpressions > 0 &&
+    (!statusDate || isNaN(statusImpressions) || statusImpressions === 0 ||
+      (!isNaN(dailyClicks) && dailyClicks > 0 && (isNaN(statusClicks) || statusClicks === 0)))
+  ) {
+    return (
+      'DATA_MISMATCH：GSC日数据已有曝光/点击（7d ' +
+      dailyImpressions + '/' + dailyClicks + '），站点状态仍为 0/n/a'
+    );
+  }
+  return '';
+}
+
+function sumOpsDailyClicks_(dailyRows, endDate) {
+  var end = normalizeKeyDate_(endDate);
+  if (!end) return 0;
+  var start = addDaysStr_(end, -6);
+  var total = 0;
+  for (var i = 0; i < (dailyRows || []).length; i++) {
+    var date = normalizeKeyDate_(dailyRows[i][0]);
+    if (!date || date < start || date > end) continue;
+    var clicks = Number(dailyRows[i][2] || 0);
+    if (!isNaN(clicks)) total += clicks;
+  }
+  return total;
 }
 
 /**
@@ -653,7 +711,11 @@ function loadOpsSiteStatusBySite_() {
         values[i][col.IndexedURLCount] === null ||
         values[i][col.IndexedURLCount] === undefined
           ? null
-          : values[i][col.IndexedURLCount]
+          : values[i][col.IndexedURLCount],
+      decisionDataDate: values[i][col.DecisionDataDate],
+      impressions7d: values[i][col.Impressions7D],
+      clicks7d: values[i][col.Clicks7D],
+      reason: values[i][col.Reason]
     };
   }
   return out;

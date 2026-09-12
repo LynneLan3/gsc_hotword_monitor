@@ -117,7 +117,12 @@ vm.runInContext(
     extractFn(viewSrc, 'buildOpsActionWhyNow_') +
     extractFn(viewSrc, 'buildOpsActionEvidenceText_') +
     extractFn(viewSrc, 'decideOpsTodayJudgment_') +
+    extractFn(viewSrc, 'getOpsViewLatestDailyTotals_') +
+    extractFn(viewSrc, 'buildOpsViewDataMismatch_') +
+    extractFn(viewSrc, 'selectOpsFocusSites_') +
     extractFn(viewSrc, 'selectOpsDailyActions_') +
+    extractFn(opsSrc, 'computeOpsSiteTrendFromDaily_') +
+    extractFn(opsSrc, 'formatOpsTrend7d_') +
     extractFn(viewSrc, 'runOpsDailyReport_'),
   sandbox
 );
@@ -127,6 +132,38 @@ assert(sandbox.mapOpsExecuteAction_('CONTENT_EXPAND', '衰退') === '', 'decline
 assert(sandbox.mapOpsExecuteAction_('CONTENT_OPTIMIZE', '衰退') === '', 'decline no update');
 assert(sandbox.mapOpsExecuteAction_('DOMAIN_UPGRADE', '增长') === '', 'domain not in allowed');
 assert(sandbox.mapOpsExecuteAction_('WAIT', '稳定') === '', 'wait excluded');
+
+var focusHistory = [
+  { site: 'Halloween', opsStatus: '增长', suggestedAction: 'CONTENT_EXPAND', priority: 'P1', clicks: 60, impressions: 1000, trend7d: '上升 80%', mainChange: '', reason: '' },
+  { site: 'Project P.I.T.T.', opsStatus: '增长', suggestedAction: 'DOMAIN_PREPARE', priority: 'P1', clicks: 13, impressions: 181, trend7d: '上升 128%', mainChange: '', reason: '' },
+  { site: 'BRIGANDINE ABYSS', opsStatus: '稳定', suggestedAction: 'CONTENT_OPTIMIZE', priority: 'P2', clicks: 48, impressions: 231, trend7d: '稳定', mainChange: '', reason: '' },
+  { site: 'Withering Realms', opsStatus: '增长', suggestedAction: 'CONTENT_OPTIMIZE', priority: 'P2', clicks: 2, impressions: 40, trend7d: '上升 200%', mainChange: '', reason: '' },
+  { site: 'Approximately Up', opsStatus: '稳定', suggestedAction: 'CONTENT_OPTIMIZE', priority: 'P2', clicks: 0, impressions: 19, trend7d: '下降 25%', mainChange: '', reason: '' }
+];
+var focus = sandbox.selectOpsFocusSites_(focusHistory, {
+  queryBySite: {
+    Halloween: [['2026-09-04', 'Halloween', 'halloween map', 2, 200, 0.01, 8]],
+    'BRIGANDINE ABYSS': [['2026-09-04', 'BRIGANDINE ABYSS', 'brigandine guide', 4, 120, 0.03, 10]]
+  },
+  dailyBySite: {
+    Halloween: [['2026-09-09', 'Halloween', 64, 2934]]
+  },
+  opportunityRows: []
+});
+assert(focus.length === 4, 'focus keeps 3-5 real-value sites and drops low backlog');
+assert(focus[0].site === 'Halloween', 'highest current exposure/click site first');
+assert(focus[0].clicks === 64 && focus[0].impressions === 2934, 'focus uses latest daily traffic over stale snapshot');
+assert(focus.some(function (r) { return r.site === 'Project P.I.T.T.'; }), 'domain-ready site is focused');
+assert(focus.some(function (r) { return r.site === 'BRIGANDINE ABYSS'; }), 'stable click/query site is focused');
+assert(focus.some(function (r) { return r.site === 'Withering Realms'; }), 'new rising site is focused');
+assert(!focus.some(function (r) { return r.site === 'Approximately Up'; }), 'ordinary low backlog is not focused');
+assert(
+  /DATA_MISMATCH/.test(sandbox.buildOpsViewDataMismatch_(
+    { clicks: 0, impressions: 0, mainChange: '数据截止 2026-09-08', reason: '' },
+    [['2026-09-09', 'Halloween', 64, 2934]]
+  )),
+  'view flags newer GSC data against stale report row'
+);
 
 assert(sandbox.decideOpsTodayJudgment_({ opsStatus: '衰退' }, false) === '无需操作', 'decline none');
 assert(sandbox.decideOpsTodayJudgment_({ opsStatus: '暂停投入' }, false) === '暂停投入', 'pause');
@@ -366,10 +403,13 @@ var result = sandbox.runOpsDailyReport_({
   opportunityRows: [],
   indexBySite: indexBySite,
   rules: rules,
+  dailyBySite: {
+    'Approximately Up': [['2026-09-02', 'Approximately Up', 1, 19]]
+  },
   writeSheet: true
 });
 assert(result.overview.activeSites === 6, 'overview active');
-assert(result.overview.gscCutoff === '2026-09-01', 'gsc cutoff parsed');
+assert(result.overview.gscCutoff === '2026-09-02', 'gsc cutoff includes fresher daily data');
 assert(result.actionCount === 1, 'one verified tech action');
 assert(result.ms2Judgment === '无需操作', 'MS2 judgment 无需操作');
 assert(written.actions.length === 1, 'sheet actions');
@@ -377,6 +417,9 @@ assert(written.actions[0].site.indexOf('Agefield') === 0, 'sheet agefield only')
 
 var brigRow = written.siteRows.find(function (r) { return r.site === 'BRIGANDINE ABYSS'; });
 assert(brigRow.judgment === '继续观察', 'Brigandine becomes 继续观察 when not selected');
+var approxRow = written.siteRows.find(function (r) { return r.site === 'Approximately Up'; });
+assert(approxRow.dataMismatch && approxRow.mainChange.indexOf('DATA_MISMATCH') >= 0,
+  'stale report row exposes newer daily data');
 
 console.log('PASS scripts/test-ops-daily-report-view.js');
 console.log('actions', result.actions.map(function (a) {
