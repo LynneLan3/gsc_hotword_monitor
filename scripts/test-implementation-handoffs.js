@@ -5,6 +5,7 @@ var fs = require('fs');
 var path = require('path');
 var vm = require('vm');
 var root = path.join(__dirname, '..');
+var developmentTasksSrc = fs.readFileSync(path.join(root, 'DevelopmentTasks.gs'), 'utf8');
 var handoffSrc = fs.readFileSync(path.join(root, 'ImplementationHandoffs.gs'), 'utf8');
 var researchSrc = fs.readFileSync(path.join(root, 'ResearchJobs.gs'), 'utf8');
 var codeSrc = fs.readFileSync(path.join(root, 'Code.gs'), 'utf8');
@@ -29,6 +30,9 @@ var context = {
     READY_FOR_IMPLEMENTATION: 'READY_FOR_IMPLEMENTATION',
     WAITING_SITE_CREATION: 'WAITING_SITE_CREATION'
   },
+  developmentTaskIdFromIdentity_: function (opportunityId, decisionId, actionType, pagePath) {
+    return [opportunityId, decisionId, actionType, pagePath].join('|');
+  },
   SHEET_NAMES: {DEVELOPMENT_TASKS: '开发任务'},
   DEVELOPMENT_TASK_HEADERS: headers,
   IMPLEMENTATION_HANDOFF_STATUS: {},
@@ -51,6 +55,8 @@ var context = {
   console: console
 };
 vm.createContext(context);
+vm.runInContext(developmentTasksSrc, context);
+context.ensureDevelopmentTaskSheets_ = function () {};
 vm.runInContext(handoffSrc, context);
 
 var existing = context.buildImplementationHandoff_({
@@ -75,6 +81,13 @@ assert(build.HandoffStatus === 'SITE_CREATION_REQUIRED', 'site build remains gat
 assert(build.Starter === 'game-wiki-starter', 'site build starter preserved');
 assert(build.RepoPath === '' && build.GithubRepo === '', 'site build does not guess repo');
 assert(build.ResearchResultPath === 'jobs/example-game/research.json', 'BUILD ResearchResultPath preserved');
+
+var steamTask = context.buildDevelopmentTaskFromSteamRow_({
+  opportunityId: 'opp-steam-build-001', game: 'Example Game', decision: 'BUILD',
+  autoResearchResultPath: 'jobs/steam-build/research.json'
+});
+var chainedBuild = context.buildImplementationHandoff_(steamTask);
+assert(chainedBuild.ResearchResultPath === 'jobs/steam-build/research.json', 'candidate transport reaches handoff');
 
 var unresolved = context.buildImplementationHandoff_({
   development_task_id: 'dev-unresolved-001', status: 'READY_FOR_IMPLEMENTATION',
