@@ -466,6 +466,9 @@ function createDevelopmentTaskFromContentDecision_(jobRow, jobCol, decision, cre
   task.status = siteRefs[site]
     ? DEVELOPMENT_TASK_STATUS_LABELS.READY_FOR_IMPLEMENTATION
     : DEVELOPMENT_TASK_STATUS_LABELS.WAITING_SITE_CREATION;
+  task.evidence_link = String(
+    cell_(jobRow, jobCol, '结果路径') || cell_(jobRow, jobCol, '审核链接') || ''
+  ).trim();
   task.task_type = 'CONTENT_IMPLEMENTATION';
   task.task_reason = 'ContentDecision' + (decision.decisionId ? ' ' + decision.decisionId : '') + '：' +
     (decision.decisionReason || decision.primaryDecision);
@@ -481,6 +484,7 @@ function createDevelopmentTaskFromContentDecision_(jobRow, jobCol, decision, cre
 
 function isContentDecisionImplementationEligible_(decision) {
   if (!decision || String(decision.confidence || '').toUpperCase() !== 'HIGH') return false;
+  if (String(decision.publishState || decision.publish_state || '').toUpperCase() !== 'READY_FOR_WRITER') return false;
   var primary = String(decision.primaryDecision || '').toUpperCase();
   return primary === CONTENT_DECISION_PRIMARY_ACTIONS.CREATE_NEW_PAGE ||
     primary === CONTENT_DECISION_PRIMARY_ACTIONS.EXPAND_EXISTING ||

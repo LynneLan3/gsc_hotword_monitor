@@ -1110,9 +1110,10 @@ function writeResearchJobResult_(body) {
   var contentDecision = normalizeContentDecision_(body && body.content_decision);
   var developmentTask = null;
   if (contentDecision) {
+    contentDecision.publishState = contentDecisionPublishState_(contentDecision, body, evidenceRowsWritten);
     writeContentDecisionToResearchJob_(sheet, found.sheetRow, col, contentDecision, completedAt);
     if (statusEnum === RESEARCH_JOB_STATUS.REVIEW &&
-        isContentDecisionReadyForWriter_(contentDecision, body, wroteEvidence)) {
+        isContentDecisionReadyForWriter_(contentDecision, evidenceRowsWritten)) {
       var decisionRow = sheet.getRange(found.sheetRow, 1, 1, lastCol).getValues()[0];
       developmentTask = createDevelopmentTaskFromContentDecision_(
         decisionRow, col, contentDecision, completedAt
@@ -1189,14 +1190,24 @@ function writeContentDecisionToResearchJob_(sheet, sheetRow, col, decision, crea
   setCellIf_(sheet, sheetRow, col, 'DecisionCreatedAt', createdAt || new Date());
 }
 
-function isContentDecisionReadyForWriter_(decision, body, wroteEvidence) {
-  if (!isContentDecisionImplementationEligible_(decision) || !wroteEvidence) return false;
-  if (decision.publishState) return decision.publishState === 'READY_FOR_WRITER';
-  // Current action-research callbacks predate publish_state; their REVIEW evidence
-  // is the existing Evidence Gate, and only these two fast-lane types may use it.
+function contentDecisionPublishState_(decision, body, evidenceRowsWritten) {
+  if (decision.publishState) return decision.publishState;
   var researchType = String((body && body.research_type) || '').trim().toUpperCase();
-  return researchType === RESEARCH_TYPE.NEW_INTENT_RESEARCH ||
+  var evidenceCount = Number(body && body.evidence_count || 0);
+  var hasActionResearchType = researchType === RESEARCH_TYPE.NEW_INTENT_RESEARCH ||
     researchType === RESEARCH_TYPE.PAGE_OPTIMIZATION_RESEARCH;
+  // Current action-research callbacks predate publish_state. Their existing
+  // evidence gate is the compatibility source for the canonical routing state.
+  if (hasActionResearchType && decision.confidence === 'HIGH' &&
+      evidenceCount >= 5 && Number(evidenceRowsWritten || 0) >= 5) {
+    return 'READY_FOR_WRITER';
+  }
+  return 'RESEARCH_REQUIRED';
+}
+
+function isContentDecisionReadyForWriter_(decision, evidenceRowsWritten) {
+  return isContentDecisionImplementationEligible_(decision) &&
+    Number(evidenceRowsWritten || 0) >= 5;
 }
 
 /**

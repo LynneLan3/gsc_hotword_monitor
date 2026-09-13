@@ -115,6 +115,7 @@ var context = {
     TODO: '待开发', READY_FOR_IMPLEMENTATION: 'READY_FOR_IMPLEMENTATION',
     WAITING_SITE_CREATION: 'WAITING_SITE_CREATION'
   },
+  DEVELOPMENT_TASK_STATUS: { READY_FOR_IMPLEMENTATION: 'READY_FOR_IMPLEMENTATION' },
   DEVELOPMENT_GOAL_LABELS: { NEW_PAGE: '新建页面', EXPAND_EXISTING: '扩充现有页面' },
   OPPORTUNITY_LEVEL_LABELS: { HIGH: '高', MEDIUM: '中', LOW: '低' },
   OPPORTUNITY_LEVELS: { HIGH: 'HIGH', MEDIUM: 'MEDIUM' },
@@ -153,6 +154,7 @@ vm.createContext(context);
 var root = path.join(__dirname, '..');
 vm.runInContext(fs.readFileSync(path.join(root, 'DevelopmentTasks.gs'), 'utf8'), context);
 vm.runInContext(fs.readFileSync(path.join(root, 'ResearchJobs.gs'), 'utf8'), context);
+vm.runInContext(fs.readFileSync(path.join(root, 'ImplementationHandoffs.gs'), 'utf8'), context);
 
 context.ensureDevelopmentTaskSheets_ = function () {};
 context.ensureResearchJobResultColumns_ = function () {};
@@ -161,6 +163,9 @@ context.writeResearchReviewEvidence_ = function () {
 };
 context.loadDevelopmentSiteReferences_ = function () {
   return { 'Mortal Shell II': 'site-ms2' };
+};
+context.getSiteRepositoryReferenceBySiteId_ = function () {
+  return { repoPath: '/Users/lanling/Code/hot_words_websites/example', githubRepo: 'LynneLan3/example' };
 };
 
 var result = context.writeResearchJobResult_({
@@ -171,7 +176,9 @@ var result = context.writeResearchJobResult_({
   evidence_count: 5,
   result_path: 'research/g037-page-opt-001.json',
   review_summary: 'verified coverage gaps',
-  evidence: [{ source: 'reddit', evidence: 'gap 1' }],
+  evidence: [1, 2, 3, 4, 5].map(function (index) {
+    return { source: 'reddit', evidence: 'gap ' + index };
+  }),
   content_decision: {
     source_action: 'OPTIMIZE_EXISTING',
     primary_decision: 'EXPAND_EXISTING',
@@ -194,8 +201,20 @@ assert(task[developmentSheet.headers.indexOf('来源任务ID')] === 'g037-page-o
 assert(task[developmentSheet.headers.indexOf('任务状态')] === 'READY_FOR_IMPLEMENTATION', 'task ready');
 assert(task[developmentSheet.headers.indexOf('ActionType')] === 'UPDATE_PAGE', 'update action bound');
 assert(task[developmentSheet.headers.indexOf('SiteID')] === 'site-ms2', 'site bound');
+assert(task[developmentSheet.headers.indexOf('Evidence链接')] === 'research/g037-page-opt-001.json', 'research result path bound');
+var handoff = context.buildImplementationHandoff_({
+  development_task_id: task[developmentSheet.headers.indexOf('开发任务ID')],
+  status: task[developmentSheet.headers.indexOf('任务状态')],
+  task_type: task[developmentSheet.headers.indexOf('TaskType')],
+  site_id: task[developmentSheet.headers.indexOf('SiteID')],
+  evidence_link: task[developmentSheet.headers.indexOf('Evidence链接')],
+  source_reference: task[developmentSheet.headers.indexOf('SourceReference')]
+});
+assert(handoff.HandoffStatus === 'READY', 'implementation handoff ready');
+assert(handoff.ResearchResultPath === 'research/g037-page-opt-001.json', 'handoff keeps research result path');
 assert(researchSheet.rows[0][headers.indexOf('PrimaryDecision')] === 'EXPAND_EXISTING', 'decision persisted');
 assert(researchSheet.rows[0][headers.indexOf('Confidence')] === 'HIGH', 'confidence persisted');
+assert(result.content_decision.publishState === 'READY_FOR_WRITER', 'writer readiness persisted');
 assert(context.writeResearchJobResult_({
   job_id: 'g037-page-opt-001',
   research_type: 'PAGE_OPTIMIZATION_RESEARCH',
@@ -203,5 +222,16 @@ assert(context.writeResearchJobResult_({
   recommendation: 'WATCH',
   content_decision: { primary_decision: 'WATCH', confidence: 'LOW' }
 }).development_task === null, 'WATCH does not create a task');
+assert(context.writeResearchJobResult_({
+  job_id: 'g037-page-opt-001',
+  research_type: 'PAGE_OPTIMIZATION_RESEARCH',
+  status: 'REVIEW',
+  recommendation: 'EXPAND_EXISTING',
+  evidence_count: 5,
+  evidence: [1, 2, 3, 4, 5].map(function (index) { return { evidence: 'gap ' + index }; }),
+  content_decision: {
+    primary_decision: 'EXPAND_EXISTING', confidence: 'HIGH', publish_state: 'RESEARCH_REQUIRED'
+  }
+}).development_task === null, 'research-required does not create a task');
 
 console.log('test-g037-content-decision-fast-lane: PASS');
