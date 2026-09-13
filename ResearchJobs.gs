@@ -1107,6 +1107,18 @@ function writeResearchJobResult_(body) {
     }
     setCellIf_(sheet, found.sheetRow, col, '审核链接', '');
   }
+  var contentDecision = normalizeContentDecision_(body && body.content_decision);
+  var developmentTask = null;
+  if (contentDecision) {
+    writeContentDecisionToResearchJob_(sheet, found.sheetRow, col, contentDecision, completedAt);
+    if (statusEnum === RESEARCH_JOB_STATUS.REVIEW &&
+        isContentDecisionReadyForWriter_(contentDecision, body, wroteEvidence)) {
+      var decisionRow = sheet.getRange(found.sheetRow, 1, 1, lastCol).getValues()[0];
+      developmentTask = createDevelopmentTaskFromContentDecision_(
+        decisionRow, col, contentDecision, completedAt
+      );
+    }
+  }
   SpreadsheetApp.flush();
 
   return {
@@ -1119,6 +1131,8 @@ function writeResearchJobResult_(body) {
     review_summary: reviewSummary || null,
     evidence_rows: wroteEvidence ? evidenceRowsWritten : null,
     review_link: wroteEvidence ? reviewLink || null : null,
+    content_decision: contentDecision,
+    development_task: developmentTask,
     completed_at: toIso8601_(completedAt),
     display: {
       任务状态: statusLabel,
@@ -1131,6 +1145,58 @@ function writeResearchJobResult_(body) {
       审核链接: reviewLink
     }
   };
+}
+
+function normalizeContentDecision_(raw) {
+  if (!raw || Object.prototype.toString.call(raw) !== '[object Object]') return null;
+  var routing = raw.content_routing || raw.contentRouting || {};
+  return {
+    decisionId: String(raw.decision_id || raw.decisionId || routing.decision_id || '').trim(),
+    sourceAction: String(raw.source_action || raw.sourceAction || '').trim(),
+    primaryDecision: String(raw.primary_decision || raw.primaryDecision || '').trim().toUpperCase(),
+    secondaryActions: raw.secondary_actions || raw.secondaryActions || [],
+    decisionReason: String(raw.decision_reason || raw.decisionReason || '').trim(),
+    evidenceSummary: String(raw.evidence_summary || raw.evidenceSummary || '').trim(),
+    targetQueries: raw.target_queries || raw.targetQueries || [],
+    recommendedSections: raw.recommended_sections || raw.recommendedSections || [],
+    recommendedTitleChange: String(
+      raw.recommended_title_change || raw.recommendedTitleChange || ''
+    ).trim(),
+    recommendedInternalLinks: raw.recommended_internal_links || raw.recommendedInternalLinks || [],
+    confidence: String(raw.confidence || '').trim().toUpperCase(),
+    publishState: String(raw.publish_state || raw.publishState || routing.publish_state || '').trim().toUpperCase(),
+    pagePath: String(raw.page_path || raw.pagePath || raw.target_path || raw.targetPath || '').trim()
+  };
+}
+
+function contentDecisionJson_(value) {
+  if (value === null || value === undefined || value === '') return '';
+  return typeof value === 'string' ? value : JSON.stringify(value);
+}
+
+function writeContentDecisionToResearchJob_(sheet, sheetRow, col, decision, createdAt) {
+  setCellIf_(sheet, sheetRow, col, 'SourceAction', decision.sourceAction);
+  setCellIf_(sheet, sheetRow, col, 'DecisionID', decision.decisionId);
+  setCellIf_(sheet, sheetRow, col, 'PrimaryDecision', decision.primaryDecision);
+  setCellIf_(sheet, sheetRow, col, 'SecondaryActions', contentDecisionJson_(decision.secondaryActions));
+  setCellIf_(sheet, sheetRow, col, 'DecisionReason', decision.decisionReason);
+  setCellIf_(sheet, sheetRow, col, 'EvidenceSummary', decision.evidenceSummary);
+  setCellIf_(sheet, sheetRow, col, 'TargetQueries', contentDecisionJson_(decision.targetQueries));
+  setCellIf_(sheet, sheetRow, col, 'RecommendedSections', contentDecisionJson_(decision.recommendedSections));
+  setCellIf_(sheet, sheetRow, col, 'RecommendedTitleChange', decision.recommendedTitleChange);
+  setCellIf_(sheet, sheetRow, col, 'RecommendedInternalLinks', contentDecisionJson_(decision.recommendedInternalLinks));
+  setCellIf_(sheet, sheetRow, col, 'Confidence', decision.confidence);
+  setCellIf_(sheet, sheetRow, col, 'DecisionCreatedAt', createdAt || new Date());
+}
+
+function isContentDecisionReadyForWriter_(decision, body, wroteEvidence) {
+  if (!isContentDecisionImplementationEligible_(decision) || !wroteEvidence) return false;
+  if (decision.publishState) return decision.publishState === 'READY_FOR_WRITER';
+  // Current action-research callbacks predate publish_state; their REVIEW evidence
+  // is the existing Evidence Gate, and only these two fast-lane types may use it.
+  var researchType = String((body && body.research_type) || '').trim().toUpperCase();
+  return researchType === RESEARCH_TYPE.NEW_INTENT_RESEARCH ||
+    researchType === RESEARCH_TYPE.PAGE_OPTIMIZATION_RESEARCH;
 }
 
 /**

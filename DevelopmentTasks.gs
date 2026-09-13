@@ -463,9 +463,14 @@ function createDevelopmentTaskFromContentDecision_(jobRow, jobCol, decision, cre
   task.goal = decision.primaryDecision === CONTENT_DECISION_PRIMARY_ACTIONS.CREATE_NEW_PAGE
     ? DEVELOPMENT_GOAL_LABELS.NEW_PAGE
     : DEVELOPMENT_GOAL_LABELS.EXPAND_EXISTING;
+  task.status = siteRefs[site]
+    ? DEVELOPMENT_TASK_STATUS_LABELS.READY_FOR_IMPLEMENTATION
+    : DEVELOPMENT_TASK_STATUS_LABELS.WAITING_SITE_CREATION;
   task.task_type = 'CONTENT_IMPLEMENTATION';
-  task.task_reason = 'ContentDecision ' + decision.decisionId + '：' + (decision.decisionReason || decision.primaryDecision);
-  task.source_reference = '研究任务/' + sourceId + ' / Decision/' + decision.decisionId;
+  task.task_reason = 'ContentDecision' + (decision.decisionId ? ' ' + decision.decisionId : '') + '：' +
+    (decision.decisionReason || decision.primaryDecision);
+  task.source_reference = '研究任务/' + sourceId +
+    (decision.decisionId ? ' / Decision/' + decision.decisionId : '');
   if (developmentTaskAlreadyExists_(existing, task)) {
     return { created: 0, skipped: 1, developmentTaskId: task.development_task_id };
   }
