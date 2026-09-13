@@ -1000,3 +1000,23 @@ async function runAppsScriptFunctionViaApi_(functionName, parameters, options = 
 		};
 	}
 }
+
+export function buildBatchIndexingPatch({ publishResult = {}, ledgerResult = {}, changedUrls = [] } = {}) {
+	const sync = ledgerResult.indexingSync || publishResult.indexingSync || {};
+	const sitemap = sync.sitemapStatus?.ok === true ? 'PASS' : sync.sitemapStatus ? 'FAIL' : 'NOT_RUN';
+	const inspected = Array.isArray(sync.inspectedUrls) ? sync.inspectedUrls : [];
+	const errors = Array.isArray(sync.inspectionErrors) ? sync.inspectionErrors : [];
+	const urlInspection = inspected.length && !errors.length ? 'PASS' : inspected.length ? 'HOLD' : 'NOT_RUN';
+	const manual = Array.isArray(sync.manualRequestUrls)
+		? sync.manualRequestUrls.map((item) => typeof item === 'string' ? item : item?.url).filter(Boolean)
+		: (urlInspection === 'PASS' ? [] : changedUrls);
+	return {
+		status: 'INDEXING_CHECKED',
+		indexing: {
+			sitemap,
+			IndexNow: 'NOT_RUN',
+			'URL Inspection': urlInspection,
+			manual_request_indexing_urls: [...new Set(manual)],
+		},
+	};
+}
