@@ -67,7 +67,8 @@ function buildImplementationHandoff_(developmentTask) {
     RepoPath: '',
     GithubRepo: '',
     ResearchTaskID: String((task.source_job_id || task.ResearchTaskID) || '').trim(),
-    ResearchResultPath: String((task.evidence_link || task.ResearchResultPath) || '').trim(),
+    ResearchResultPath: String((task.evidence_link || task.ResearchResultPath ||
+      task.research_result_path || task.source_reference || task.SourceReference) || '').trim(),
     SourceReference: String((task.source_reference || task.SourceReference) || '').trim(),
     Starter: '',
     HandoffStatus: '',

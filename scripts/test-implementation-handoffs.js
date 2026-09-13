@@ -69,11 +69,12 @@ assert(existing.HandoffReference === 'handoffs/dev-content-001.json', 'stable re
 var build = context.buildImplementationHandoff_({
   development_task_id: 'dev-build-001', status: 'WAITING_SITE_CREATION',
   opportunity_id: 'opp-build', action_type: 'BUILD', task_type: 'SITE_BUILD',
-  game: 'Example Game'
+  game: 'Example Game', source_reference: 'jobs/example-game/research.json'
 });
 assert(build.HandoffStatus === 'SITE_CREATION_REQUIRED', 'site build remains gated');
 assert(build.Starter === 'game-wiki-starter', 'site build starter preserved');
 assert(build.RepoPath === '' && build.GithubRepo === '', 'site build does not guess repo');
+assert(build.ResearchResultPath === 'jobs/example-game/research.json', 'BUILD ResearchResultPath preserved');
 
 var unresolved = context.buildImplementationHandoff_({
   development_task_id: 'dev-unresolved-001', status: 'READY_FOR_IMPLEMENTATION',

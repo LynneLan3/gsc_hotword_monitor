@@ -694,6 +694,11 @@ function buildDevelopmentTaskFromResearchRow_(row, col, createdAt, refs) {
 }
 
 function buildDevelopmentTaskFromSteamRow_(item, createdAt) {
+  var researchResultPath = String(
+    item.ResearchResultPath || item.researchResultPath ||
+    item.autoResearchResultPath || item.AutoResearchResultPath ||
+    item.sourceReference || item.SourceReference || ''
+  ).trim();
   var opportunityId = String(item.opportunityId || '').trim();
   return {
     development_task_id: developmentTaskIdFromIdentity_(opportunityId, '', 'BUILD', ''),
@@ -715,7 +720,7 @@ function buildDevelopmentTaskFromSteamRow_(item, createdAt) {
     action_type: 'BUILD',
     task_type: 'SITE_BUILD',
     task_reason: 'Steam Decision=BUILD；尚无 site_id，等待站点创建',
-    source_reference: String(item.sourceReference || '').trim()
+    source_reference: researchResultPath
   };
 }
 
@@ -854,10 +859,11 @@ function debugDevelopmentTasksSelfCheck() {
   assert(developmentTaskIdentityKey_('o', 'd', 'UPDATE_PAGE', '/x') !== developmentTaskIdentityKey_('o', 'd', 'UPDATE_PAGE', '/y'), 'path in identity');
 
   var steamTask = buildDevelopmentTaskFromSteamRow_({
-    opportunityId: 'opp-steam-build-fixture', game: 'Steam Fixture', sourceReference: 'steam-row'
+    opportunityId: 'opp-steam-build-fixture', game: 'Steam Fixture', autoResearchResultPath: 'jobs/steam-build/research.json'
   }, new Date('2026-08-22T00:00:00Z'));
   assert(steamTask.action_type === 'BUILD' && steamTask.task_type === 'SITE_BUILD', 'Steam site build');
   assert(steamTask.site_id === '' && steamTask.status === 'WAITING_SITE_CREATION', 'Steam boundary');
+  assert(steamTask.source_reference === 'jobs/steam-build/research.json', 'Steam ResearchResultPath preserved');
   assert(isApprovedSteamBuild_({ opportunityId: 'o', decision: 'BUILD' }) === true, 'Steam BUILD included');
   assert(isApprovedSteamBuild_({ opportunityId: 'o', decision: 'REJECT' }) === false, 'Steam REJECT excluded');
   assert(implementationActionFromResearchRow_(row, col) === 'UPDATE_PAGE', 'research implementation included');
