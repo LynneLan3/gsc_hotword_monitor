@@ -1578,7 +1578,8 @@ var GA4_BOOTSTRAP_NO_MATCH_SITE_IDS = [
   'halloween-the-game',
   'sucker-for-love-crush-landing',
   'zad-archery',
-  'shipshaper-falconeer-chronicles'
+  'shipshaper-falconeer-chronicles',
+  'wanderburg'
 ];
 
 /** mortal-shell-ii conflict repair — update correct stream defaultUri only. */
@@ -1713,6 +1714,12 @@ var GA4_REGISTRY_IDENTITY_V1 = {
     ga4_measurement_id: 'G-E2WFNEP05F',
     ga4_property_id: '552676432',
     ga4_stream_id: '15716140798'
+  },
+  wanderburg: {
+    production_url: 'https://wanderburg-navy.vercel.app/',
+    ga4_measurement_id: 'G-CDSJMBFMX4',
+    ga4_property_id: '554184538',
+    ga4_stream_id: '15778836131'
   }
 };
 

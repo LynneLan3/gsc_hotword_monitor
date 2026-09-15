@@ -156,9 +156,17 @@ function markMissingGa4PropertyIds() {
  */
 function listGa4AccountSummariesPage_(pageToken) {
   if (typeof AnalyticsAdmin !== 'undefined' && AnalyticsAdmin.AccountSummaries) {
-    var opts = { pageSize: 200 };
-    if (pageToken) opts.pageToken = pageToken;
-    return AnalyticsAdmin.AccountSummaries.list(opts) || {};
+    try {
+      var opts = { pageSize: 200 };
+      if (pageToken) opts.pageToken = pageToken;
+      return AnalyticsAdmin.AccountSummaries.list(opts) || {};
+    } catch (err) {
+      // Execution API tokens often lack Advanced Service grants; UrlFetch uses ScriptApp OAuth.
+      Logger.log(
+        'GA4_ADMIN_FALLBACK_URLFETCH accountSummaries | ' +
+          String((err && err.message) || err).substring(0, 300)
+      );
+    }
   }
   var url =
     'https://analyticsadmin.googleapis.com/v1beta/accountSummaries?pageSize=200';
@@ -182,9 +190,16 @@ function listGa4DataStreamsPage_(propertyResourceName, pageToken) {
     AnalyticsAdmin.Properties &&
     AnalyticsAdmin.Properties.DataStreams
   ) {
-    var opts = { pageSize: 200 };
-    if (pageToken) opts.pageToken = pageToken;
-    return AnalyticsAdmin.Properties.DataStreams.list(parent, opts) || {};
+    try {
+      var opts = { pageSize: 200 };
+      if (pageToken) opts.pageToken = pageToken;
+      return AnalyticsAdmin.Properties.DataStreams.list(parent, opts) || {};
+    } catch (err) {
+      Logger.log(
+        'GA4_ADMIN_FALLBACK_URLFETCH dataStreams | ' +
+          String((err && err.message) || err).substring(0, 300)
+      );
+    }
   }
   var url =
     'https://analyticsadmin.googleapis.com/v1beta/' +
@@ -720,6 +735,67 @@ function authorizeGa4AdminWrite() {
  * Re-discovers before each create; skips if URL already uniquely matches.
  * @return {Object} summary
  */
+/**
+ * Headless-safe: schedule discovery + bootstrap under trigger identity
+ * (full Apps Script oauthScopes), then return schedule receipt.
+ * Use when Execution API caller lacks analytics Advanced Service grants.
+ * @return {{ok:boolean, scheduled:boolean, afterMs:number}}
+ */
+function scheduleGa4DiscoveryAndBootstrap() {
+  var afterMs = 20000;
+  var handler = 'runScheduledGa4DiscoveryAndBootstrap_';
+  var triggers = ScriptApp.getProjectTriggers();
+  for (var i = 0; i < triggers.length; i++) {
+    if (triggers[i].getHandlerFunction() === handler) {
+      ScriptApp.deleteTrigger(triggers[i]);
+    }
+  }
+  ScriptApp.newTrigger(handler).timeBased().after(afterMs).create();
+  var receipt = { ok: true, scheduled: true, afterMs: afterMs, handler: handler };
+  Logger.log('GA4_SCHEDULED ' + JSON.stringify(receipt));
+  writeLog_('INFO', '', 'GA4_SCHEDULED discovery+bootstrap afterMs=' + afterMs);
+  return receipt;
+}
+
+/** @return {Object} discovery + bootstrap summary */
+function runScheduledGa4DiscoveryAndBootstrap_() {
+  var discovery = discoverGa4SiteBindings();
+  var bootstrap = bootstrapMissingGa4Sites();
+  var summary = {
+    ok: true,
+    discovery_counts: (discovery && discovery.counts) || {},
+    bootstrap: {
+      created_properties: (bootstrap && bootstrap.created_properties) || 0,
+      created_streams: (bootstrap && bootstrap.created_streams) || 0,
+      skipped_already_matched: (bootstrap && bootstrap.skipped_already_matched) || 0,
+      failed: (bootstrap && bootstrap.failed) || 0,
+      details: (bootstrap && bootstrap.details) || []
+    }
+  };
+  Logger.log('GA4_SCHEDULED_DONE ' + JSON.stringify(summary));
+  writeLog_(
+    'INFO',
+    '',
+    'GA4_SCHEDULED_DONE ' +
+      JSON.stringify({
+        discovery_counts: summary.discovery_counts,
+        bootstrap: {
+          created_properties: summary.bootstrap.created_properties,
+          created_streams: summary.bootstrap.created_streams,
+          skipped_already_matched: summary.bootstrap.skipped_already_matched,
+          failed: summary.bootstrap.failed
+        }
+      })
+  );
+  var triggers = ScriptApp.getProjectTriggers();
+  for (var i = 0; i < triggers.length; i++) {
+    if (triggers[i].getHandlerFunction() === 'runScheduledGa4DiscoveryAndBootstrap_') {
+      ScriptApp.deleteTrigger(triggers[i]);
+    }
+  }
+  return summary;
+}
+
 function bootstrapMissingGa4Sites() {
   ensureGa4Sheets_();
   ensureSheetHeaders_(

@@ -235,10 +235,10 @@ assert(midCount === 3, 'fixture mid count');
 
 // Config snapshot includes the 8 known production MIDs
 var cfgMids = (configSrc.match(/ga4_measurement_id:\s*'G-[A-Z0-9]+'/g) || []).length;
-assert(cfgMids === 19, 'registry snapshot has 19 measurement IDs, got ' + cfgMids);
+assert(cfgMids === 20, 'registry snapshot has 20 measurement IDs, got ' + cfgMids);
 assert(
-  (configSrc.match(/ga4_property_id:\s*'\d+'/g) || []).length === 19,
-  'registry snapshot has 19 numeric property ids'
+  (configSrc.match(/ga4_property_id:\s*'\d+'/g) || []).length === 20,
+  'registry snapshot has 20 numeric property ids'
 );
 assert(configSrc.indexOf('analytics.edit') < 0, 'edit scope lives in appsscript not Config');
 assert(

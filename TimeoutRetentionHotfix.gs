@@ -598,6 +598,38 @@ function runDailyLeanRecoveryWatchdog() {
 }
 
 /**
+ * One-site GSC monitoring writeback using the existing lean collector.
+ * @param {string} siteId
+ * @return {Object}
+ */
+function runMonitoringWritebackForSiteId(siteId) {
+  siteId = String(siteId || '').trim();
+  if (!siteId) throw new Error('runMonitoringWritebackForSiteId: siteId required');
+  var sites = getEnabledSites();
+  var site = null;
+  for (var i = 0; i < sites.length; i++) {
+    if (String(sites[i].siteId || '').trim() === siteId) {
+      site = sites[i];
+      break;
+    }
+  }
+  if (!site) {
+    throw new Error('runMonitoringWritebackForSiteId: site_id not enabled in 站点配置: ' + siteId);
+  }
+  var runDate = todayStr_();
+  var result = processSiteDailyLean_(site, runDate);
+  writeLog_('INFO', site.name || siteId, 'MONITORING_WRITEBACK_DONE site_id=' + siteId);
+  return {
+    ok: true,
+    siteId: siteId,
+    siteName: site.name || '',
+    propertyUrl: site.propertyUrl || '',
+    runDate: runDate,
+    result: result || null
+  };
+}
+
+/**
  * Headless read-only status for clasp / Execution API production recovery.
  * Does not mutate cursor, heartbeat, completed date, or triggers.
  */
