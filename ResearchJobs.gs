@@ -54,15 +54,17 @@ function doGet(e) {
 }
 
 /**
- * Web App POST：hotword-engine 回写研究结果。
- * 需携带 token（JSON body.token 或 query ?token=）；按 job_id 更新「研究任务」单行。
- * 不修改「内容机会」、不新建任务、不执行 Research。
+ * Web App POST：Deployment Receipt V1 或 hotword-engine 研究结果回写。
+ * Deployment Receipt 先于 research callback 识别；两套 token 互不通用。
  */
 function doPost(e) {
   try {
     var body = parsePostJson_(e);
     if (!body) {
       return jsonOutput_({ ok: false, error: 'invalid_json' });
+    }
+    if (typeof isDeploymentReceipt_ === 'function' && isDeploymentReceipt_(body)) {
+      return jsonOutput_(handleDeploymentReceiptHttpPost_(e, body));
     }
     if (!checkResearchWriteToken_(e, body)) {
       return jsonOutput_({ ok: false, error: 'unauthorized' });

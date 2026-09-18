@@ -148,7 +148,16 @@ function makeContext(today = '2026-08-24', existing = false) {
     loadDecisionIdSetFromHistory_: () => ({}),
     writeLog_: () => {},
     LockService: { getScriptLock: () => ({ tryLock: () => true, releaseLock: () => {} }) },
-    PropertiesService: { getScriptProperties: () => ({ getProperty: () => 'secret', setProperty: () => {} }) },
+    PropertiesService: {
+      getScriptProperties: () => ({
+        getProperty: (key) => {
+          if (key === 'DEPLOYMENT_RECEIPT_TOKEN_V1') return 'deploy-token';
+          if (key === 'RESEARCH_JOB_WRITE_TOKEN') return 'research-token';
+          return '';
+        },
+        setProperty: () => {},
+      }),
+    },
     Utilities: { formatDate: () => '2026-08-24' },
     Session: { getScriptTimeZone: () => 'Asia/Shanghai' }
   };
@@ -821,6 +830,85 @@ assert(/function repairHalloweenCtrIntentOwnershipBaseline/.test(ledger), 'Hallo
     }],
   }).result, 'ACCEPTED');
   assert.equal(untouched.ss.getSheetByName('开发任务').rows[1][h['任务状态']], 'READY_FOR_IMPLEMENTATION');
+}
+
+// Web App doPost: Deployment Receipt routing + dual-token isolation.
+{
+  const researchSrc = fs.readFileSync(path.join(root, 'ResearchJobs.gs'), 'utf8');
+  const doPostStart = researchSrc.indexOf('function doPost(e)');
+  const researchTokenCheck = researchSrc.indexOf('checkResearchWriteToken_', doPostStart);
+  const deploymentGate = researchSrc.indexOf('isDeploymentReceipt_', doPostStart);
+  assert(doPostStart >= 0 && deploymentGate > doPostStart && researchTokenCheck > deploymentGate,
+    'doPost must recognize Deployment Receipt before research token check');
+  assert(/handleDeploymentReceiptHttpPost_/.test(researchSrc), 'doPost must dispatch to receipt HTTP handler');
+  assert(/handleDeploymentReceiptHttpPost_/.test(ledger), 'ledger owns receipt HTTP handler');
+
+  function simulateDoPost(ctx, body) {
+    const e = { postData: { contents: JSON.stringify(body) }, parameter: {} };
+    if (ctx.isDeploymentReceipt_(body)) return ctx.handleDeploymentReceiptHttpPost_(e, body);
+    const expected = ctx.PropertiesService.getScriptProperties().getProperty('RESEARCH_JOB_WRITE_TOKEN');
+    const provided = String((body && body.token) || '').trim();
+    if (!expected || !provided || provided !== expected) return { ok: false, error: 'unauthorized' };
+    return { ok: true, path: 'research' };
+  }
+
+  const http = makeContext();
+  const taskHeaders = developmentTaskHeaders;
+  const h = Object.fromEntries(taskHeaders.map((x, i) => [x, i]));
+  const readyRow = Array(taskHeaders.length).fill('');
+  readyRow[h['开发任务ID']] = 'DEV-HTTP-1';
+  readyRow[h['任务状态']] = 'READY_FOR_IMPLEMENTATION';
+  readyRow[h.SiteID] = 'project-p-i-t-t';
+  readyRow[h.ActionType] = 'CREATE_PAGE';
+  readyRow[h.HandoffStatus] = 'READY';
+  readyRow[h.HandoffReference] = 'handoffs/DEV-HTTP-1.json';
+  http.ss.getSheetByName('开发任务').appendRow(readyRow);
+
+  const httpReceipt = {
+    schemaVersion: 'deployment-receipt-v1',
+    receiptKey: 'HTTP-ROUTE-1',
+    developmentTaskId: 'DEV-HTTP-1',
+    siteName: 'Project P.I.T.T.',
+    batchId: 'HTTP-20260824',
+    productionDeployedAt: '2026-08-24T13:00:00+08:00',
+    commitSHA: 'e'.repeat(40),
+    deploymentURL: 'https://pitt-preview.vercel.app',
+    productionURL: 'https://pitt.example/',
+    releaseDate: '2026-08-24',
+    affectedPages: [{
+      path: '/http-route/',
+      primaryURL: 'https://pitt.example/http-route/',
+      reason: 'web app route',
+    }],
+  };
+
+  const unauthorized = simulateDoPost(http.context, { ...httpReceipt, token: 'research-token' });
+  assert.equal(unauthorized.error, 'unauthorized');
+  assert.equal(http.ss.getSheetByName('内容更新记录').getLastRow(), 1, 'wrong token must not write ledger');
+  assert.equal(http.ss.getSheetByName('开发任务').rows[1][h['任务状态']], 'READY_FOR_IMPLEMENTATION');
+
+  const wrongDeploy = simulateDoPost(http.context, { ...httpReceipt, authToken: 'not-deploy-token' });
+  assert.equal(wrongDeploy.error, 'unauthorized');
+
+  const acceptedHttp = simulateDoPost(http.context, { ...httpReceipt, authToken: 'deploy-token' });
+  assert.equal(acceptedHttp.result, 'ACCEPTED');
+  assert.equal(acceptedHttp.ok, true);
+  assert.equal(acceptedHttp.completionStatus, 'PASS');
+  assert.equal(http.ss.getSheetByName('开发任务').rows[1][h['任务状态']], '已完成');
+  assert.equal(http.ss.getSheetByName('开发任务').rows[1][h.HandoffStatus], '');
+
+  const replayHttp = simulateDoPost(http.context, { ...httpReceipt, token: 'deploy-token' });
+  assert.equal(replayHttp.result, 'ALREADY_RECORDED');
+  assert.equal(replayHttp.completionStatus, 'PASS');
+
+  // Research callback path remains available with research token; deployment token must not authorize it.
+  const researchBody = { research_type: 'DEMAND_DISCOVERY', job_id: 'job-1', token: 'research-token' };
+  assert.equal(http.context.isDeploymentReceipt_(researchBody), false);
+  assert.equal(simulateDoPost(http.context, researchBody).path, 'research');
+  assert.equal(
+    simulateDoPost(http.context, { research_type: 'DEMAND_DISCOVERY', job_id: 'job-1', token: 'deploy-token' }).error,
+    'unauthorized',
+  );
 }
 
 console.log('PASS scripts/test-deployment-receipt-v1.js');

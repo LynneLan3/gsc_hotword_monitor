@@ -1122,6 +1122,30 @@ function checkDeploymentReceiptToken_(e, body) {
   return String(provided || '').trim() !== '' && String(provided).trim() === expected;
 }
 
+/**
+ * Web App doPost branch for Deployment Receipt V1.
+ * Auth uses DEPLOYMENT_RECEIPT_TOKEN_V1 only; token is never persisted.
+ */
+function handleDeploymentReceiptHttpPost_(e, body) {
+  if (!checkDeploymentReceiptToken_(e, body)) {
+    return { ok: false, error: 'unauthorized' };
+  }
+  var sanitized = {};
+  var key;
+  for (key in body) {
+    if (!Object.prototype.hasOwnProperty.call(body, key)) continue;
+    if (key === 'token' || key === 'authToken' || key === 'auth_token') continue;
+    sanitized[key] = body[key];
+  }
+  var result = ingestDeploymentReceipt(sanitized);
+  var out = {};
+  for (key in result) {
+    if (Object.prototype.hasOwnProperty.call(result, key)) out[key] = result[key];
+  }
+  out.completionStatus = productionReceiptCompletionStatus_(true, result);
+  return out;
+}
+
 /** Rotate only through an authenticated Apps Script execution path. */
 function rotateDeploymentReceiptToken(token) {
   token = String(token || '').trim();

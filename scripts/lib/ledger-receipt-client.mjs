@@ -271,6 +271,117 @@ export async function invokeIngestDeploymentReceipt(receipt, options = {}) {
 	return cliResult;
 }
 
+/**
+ * Canonical Cloud / HTTP transport: POST deployment-receipt-v1 to the Apps Script Web App.
+ * Token is sent as authToken and never logged or returned.
+ */
+export function resolveDeploymentReceiptWebAppConfig(options = {}) {
+	return {
+		url: asString(options.url || process.env.HOTWORD_DEPLOYMENT_RECEIPT_URL),
+		token: asString(options.token || process.env.HOTWORD_DEPLOYMENT_RECEIPT_TOKEN),
+	};
+}
+
+export async function submitDeploymentReceiptViaWebApp(receipt, options = {}) {
+	validateDeploymentReceiptMinimum(receipt);
+	const { url, token } = resolveDeploymentReceiptWebAppConfig(options);
+	const summary = { batchId: receipt.batchId, receiptKey: receipt.receiptKey };
+	if (!url) {
+		return {
+			status: DEPLOYED_LEDGER_STATUS.FAILED,
+			ok: false,
+			output: 'HOTWORD_DEPLOYMENT_RECEIPT_URL_REQUIRED',
+			error: 'HOTWORD_DEPLOYMENT_RECEIPT_URL_REQUIRED',
+			summary,
+			transport: 'deployment-receipt-webapp',
+		};
+	}
+	if (!token) {
+		return {
+			status: DEPLOYED_LEDGER_STATUS.FAILED,
+			ok: false,
+			output: 'HOTWORD_DEPLOYMENT_RECEIPT_TOKEN_REQUIRED',
+			error: 'HOTWORD_DEPLOYMENT_RECEIPT_TOKEN_REQUIRED',
+			summary,
+			transport: 'deployment-receipt-webapp',
+		};
+	}
+	try {
+		const fetchImpl = options.fetch || globalThis.fetch;
+		if (typeof fetchImpl !== 'function') {
+			return {
+				status: DEPLOYED_LEDGER_STATUS.PENDING,
+				ok: false,
+				output: 'FETCH_UNAVAILABLE',
+				error: 'FETCH_UNAVAILABLE',
+				summary,
+				transport: 'deployment-receipt-webapp',
+			};
+		}
+		const response = await fetchImpl(url, {
+			method: 'POST',
+			headers: {
+				'Content-Type': 'application/json',
+				'User-Agent': 'hotword-deployment-receipt/1',
+			},
+			body: JSON.stringify({ ...receipt, authToken: token }),
+		});
+		const text = String(await response.text());
+		let value = null;
+		try {
+			value = JSON.parse(text);
+		} catch {
+			value = null;
+		}
+		if (response.status === 401 || value?.error === 'unauthorized') {
+			return {
+				status: DEPLOYED_LEDGER_STATUS.FAILED,
+				ok: false,
+				output: 'unauthorized',
+				error: 'unauthorized',
+				summary,
+				response: value,
+				transport: 'deployment-receipt-webapp',
+			};
+		}
+		if (!response.ok) {
+			const recoverable = response.status >= 500 || isRecoverableLedgerError(text);
+			return {
+				status: recoverable ? DEPLOYED_LEDGER_STATUS.PENDING : DEPLOYED_LEDGER_STATUS.FAILED,
+				ok: false,
+				output: `HTTP_${response.status}`,
+				error: `HTTP_${response.status}`,
+				summary,
+				response: value,
+				transport: 'deployment-receipt-webapp',
+			};
+		}
+		if (!value || value.ok !== true || !['ACCEPTED', 'DUPLICATE_ACCEPTED', 'ALREADY_RECORDED'].includes(value.result)) {
+			const errorText = value?.error || 'DEPLOYMENT_RECEIPT_REJECTED';
+			return {
+				status: isRecoverableLedgerError(errorText) ? DEPLOYED_LEDGER_STATUS.PENDING : DEPLOYED_LEDGER_STATUS.FAILED,
+				ok: false,
+				output: errorText,
+				error: errorText,
+				summary,
+				response: value,
+				transport: 'deployment-receipt-webapp',
+			};
+		}
+		return { ...buildDeploymentLedgerResult(value, receipt), transport: 'deployment-receipt-webapp' };
+	} catch (error) {
+		const message = String(error?.message || error);
+		return {
+			status: DEPLOYED_LEDGER_STATUS.PENDING,
+			ok: false,
+			output: message,
+			error: message,
+			summary,
+			transport: 'deployment-receipt-webapp',
+		};
+	}
+}
+
 export function resolvePublishCompletionStatus({ productionPassed, receiptResult }) {
 	if (!productionPassed) return PUBLISH_COMPLETION_STATUS.PRODUCTION_FAILED;
 	if (receiptResult?.ok && ['ACCEPTED', 'DUPLICATE_ACCEPTED', 'ALREADY_RECORDED'].includes(receiptResult.result || receiptResult.response?.result)) {
