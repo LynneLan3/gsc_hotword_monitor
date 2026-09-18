@@ -1107,6 +1107,8 @@ function writeResearchJobResult_(body) {
     }
     setCellIf_(sheet, found.sheetRow, col, '审核链接', '');
   }
+  // G039: persist engine batch provenance before any development-task read.
+  persistResearchBatchProvenanceFromCallback_(sheet, found.sheetRow, col, body);
   var contentDecision = normalizeContentDecision_(body && body.content_decision);
   var developmentTask = null;
   if (contentDecision) {
@@ -1188,6 +1190,19 @@ function writeContentDecisionToResearchJob_(sheet, sheetRow, col, decision, crea
   setCellIf_(sheet, sheetRow, col, 'RecommendedInternalLinks', contentDecisionJson_(decision.recommendedInternalLinks));
   setCellIf_(sheet, sheetRow, col, 'Confidence', decision.confidence);
   setCellIf_(sheet, sheetRow, col, 'DecisionCreatedAt', createdAt || new Date());
+}
+
+/**
+ * G039 batch receipt: persist hotword-engine callback provenance only when present.
+ * Never invent BatchID from TaskID, dates, or other fields.
+ */
+function persistResearchBatchProvenanceFromCallback_(sheet, sheetRow, col, body) {
+  var batchId = String((body && body.batch_id) || '').trim();
+  var runId = String((body && body.scheduler_run_id) || '').trim();
+  var runUrl = String((body && body.scheduler_run_url) || '').trim();
+  if (batchId) setCellIf_(sheet, sheetRow, col, 'ResearchBatchID', batchId);
+  if (runId) setCellIf_(sheet, sheetRow, col, 'SchedulerRunID', runId);
+  if (runUrl) setCellIf_(sheet, sheetRow, col, 'SchedulerRunURL', runUrl);
 }
 
 function contentDecisionPublishState_(decision, body, evidenceRowsWritten) {

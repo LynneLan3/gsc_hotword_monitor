@@ -19,7 +19,7 @@ var headers = [
   'Social结果路径', 'SourceAction', 'ActionContext', 'DecisionID', 'PrimaryDecision',
   'SecondaryActions', 'DecisionReason', 'EvidenceSummary', 'TargetQueries',
   'RecommendedSections', 'RecommendedTitleChange', 'RecommendedInternalLinks',
-  'Confidence', 'DecisionCreatedAt'
+  'Confidence', 'DecisionCreatedAt', 'ResearchBatchID', 'SchedulerRunID', 'SchedulerRunURL'
 ];
 
 function row(overrides) {
@@ -76,7 +76,7 @@ var developmentSheet = new FakeSheet([
   '开发任务ID', '创建时间', '来源任务ID', '站点', '游戏', '页面路径', '开发目标',
   'Evidence链接', '优先级', '任务状态', '完成时间', '备注', 'OpportunityID', 'DecisionID',
   'SiteID', 'ActionType', 'TaskType', 'TaskReason', 'SourceReference', 'HandoffStatus',
-  'HandoffReference'
+  'HandoffReference', 'ResearchBatchID', 'SchedulerRunID', 'SchedulerRunURL'
 ], []);
 var spreadsheet = {
   getSheetByName: function (name) {
@@ -176,6 +176,9 @@ var result = context.writeResearchJobResult_({
   evidence_count: 5,
   result_path: 'research/g037-page-opt-001.json',
   review_summary: 'verified coverage gaps',
+  batch_id: 'batch-g037-001',
+  scheduler_run_id: 'run-g037-001',
+  scheduler_run_url: 'https://engine.example/runs/run-g037-001',
   evidence: [1, 2, 3, 4, 5].map(function (index) {
     return { source: 'reddit', evidence: 'gap ' + index };
   }),
@@ -202,18 +205,25 @@ assert(task[developmentSheet.headers.indexOf('任务状态')] === 'READY_FOR_IMP
 assert(task[developmentSheet.headers.indexOf('ActionType')] === 'UPDATE_PAGE', 'update action bound');
 assert(task[developmentSheet.headers.indexOf('SiteID')] === 'site-ms2', 'site bound');
 assert(task[developmentSheet.headers.indexOf('Evidence链接')] === 'research/g037-page-opt-001.json', 'research result path bound');
-var handoff = context.buildImplementationHandoff_({
-  development_task_id: task[developmentSheet.headers.indexOf('开发任务ID')],
-  status: task[developmentSheet.headers.indexOf('任务状态')],
-  task_type: task[developmentSheet.headers.indexOf('TaskType')],
-  site_id: task[developmentSheet.headers.indexOf('SiteID')],
-  evidence_link: task[developmentSheet.headers.indexOf('Evidence链接')],
-  source_reference: task[developmentSheet.headers.indexOf('SourceReference')]
-});
+var handoff = context.buildImplementationHandoff_(
+  context.implementationHandoffTaskFromSheetRow_(
+    task,
+    context.headerIndexMap_(developmentSheet.headers)
+  )
+);
 assert(handoff.HandoffStatus === 'READY', 'implementation handoff ready');
 assert(handoff.ResearchResultPath === 'research/g037-page-opt-001.json', 'handoff keeps research result path');
+assert(handoff.BatchID === 'batch-g037-001', 'handoff BatchID from callback');
+assert(handoff.SchedulerRunID === 'run-g037-001', 'handoff SchedulerRunID from callback');
+assert(handoff.SchedulerRunURL === 'https://engine.example/runs/run-g037-001', 'handoff SchedulerRunURL from callback');
 assert(researchSheet.rows[0][headers.indexOf('PrimaryDecision')] === 'EXPAND_EXISTING', 'decision persisted');
 assert(researchSheet.rows[0][headers.indexOf('Confidence')] === 'HIGH', 'confidence persisted');
+assert(researchSheet.rows[0][headers.indexOf('ResearchBatchID')] === 'batch-g037-001', 'ResearchBatchID persisted in research row');
+assert(researchSheet.rows[0][headers.indexOf('SchedulerRunID')] === 'run-g037-001', 'SchedulerRunID persisted in research row');
+assert(researchSheet.rows[0][headers.indexOf('SchedulerRunURL')] === 'https://engine.example/runs/run-g037-001', 'SchedulerRunURL persisted in research row');
+assert(task[developmentSheet.headers.indexOf('ResearchBatchID')] === 'batch-g037-001', 'ResearchBatchID in dev task');
+assert(task[developmentSheet.headers.indexOf('SchedulerRunID')] === 'run-g037-001', 'SchedulerRunID in dev task');
+assert(task[developmentSheet.headers.indexOf('SchedulerRunURL')] === 'https://engine.example/runs/run-g037-001', 'SchedulerRunURL in dev task');
 assert(result.content_decision.publishState === 'READY_FOR_WRITER', 'writer readiness persisted');
 assert(context.writeResearchJobResult_({
   job_id: 'g037-page-opt-001',
@@ -233,5 +243,58 @@ assert(context.writeResearchJobResult_({
     primary_decision: 'EXPAND_EXISTING', confidence: 'HIGH', publish_state: 'RESEARCH_REQUIRED'
   }
 }).development_task === null, 'research-required does not create a task');
+
+// Callback without batch provenance must not invent BatchID
+researchSheet.rows.push(row({
+  '任务ID': 'g037-no-batch-001',
+  '创建时间': '2026-09-18T00:00:00+08:00',
+  '站点': 'Mortal Shell II',
+  '游戏': 'Mortal Shell II',
+  '搜索词 / topic': 'no batch topic',
+  '页面路径': '/mortal-shell-ii/no-batch/',
+  '机会等级': '高',
+  '研究类型': 'PAGE_OPTIMIZATION_RESEARCH',
+  '任务状态': '待处理',
+  'SourceAction': 'OPTIMIZE_EXISTING',
+  'ActionContext': JSON.stringify({ pagePath: '/mortal-shell-ii/no-batch/' })
+}));
+var noBatchResult = context.writeResearchJobResult_({
+  job_id: 'g037-no-batch-001',
+  research_type: 'PAGE_OPTIMIZATION_RESEARCH',
+  status: 'REVIEW',
+  recommendation: 'EXPAND_EXISTING',
+  evidence_count: 5,
+  result_path: 'research/g037-no-batch-001.json',
+  evidence: [1, 2, 3, 4, 5].map(function (index) {
+    return { source: 'reddit', evidence: 'gap ' + index };
+  }),
+  content_decision: {
+    source_action: 'OPTIMIZE_EXISTING',
+    primary_decision: 'EXPAND_EXISTING',
+    secondary_actions: [],
+    decision_reason: 'verified',
+    evidence_summary: 'five sources',
+    target_queries: ['no batch'],
+    recommended_sections: [],
+    recommended_title_change: '',
+    recommended_internal_links: [],
+    confidence: 'HIGH'
+  }
+});
+assert(noBatchResult.ok === true && noBatchResult.development_task.created === 1, 'no-batch callback creates task');
+var noBatchResearch = researchSheet.rows[1];
+assert(noBatchResearch[headers.indexOf('ResearchBatchID')] === '', 'no-batch research keeps empty ResearchBatchID');
+assert(noBatchResearch[headers.indexOf('SchedulerRunID')] === '', 'no-batch research keeps empty SchedulerRunID');
+var noBatchTask = developmentSheet.rows[1];
+assert(noBatchTask[developmentSheet.headers.indexOf('ResearchBatchID')] === '', 'no-batch dev task has empty ResearchBatchID');
+var noBatchHandoff = context.buildImplementationHandoff_(
+  context.implementationHandoffTaskFromSheetRow_(
+    noBatchTask,
+    context.headerIndexMap_(developmentSheet.headers)
+  )
+);
+assert(noBatchHandoff.HandoffStatus === 'READY', 'no-batch handoff still READY');
+assert(noBatchHandoff.BatchID === '', 'no-batch handoff does not invent BatchID');
+assert(noBatchHandoff.SchedulerRunID === '', 'no-batch handoff does not invent SchedulerRunID');
 
 console.log('test-g037-content-decision-fast-lane: PASS');

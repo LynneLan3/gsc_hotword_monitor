@@ -474,6 +474,9 @@ function createDevelopmentTaskFromContentDecision_(jobRow, jobCol, decision, cre
     (decision.decisionReason || decision.primaryDecision);
   task.source_reference = '研究任务/' + sourceId +
     (decision.decisionId ? ' / Decision/' + decision.decisionId : '');
+  task.research_batch_id = String(cell_(jobRow, jobCol, 'ResearchBatchID') || '').trim();
+  task.scheduler_run_id = String(cell_(jobRow, jobCol, 'SchedulerRunID') || '').trim();
+  task.scheduler_run_url = String(cell_(jobRow, jobCol, 'SchedulerRunURL') || '').trim();
   if (developmentTaskAlreadyExists_(existing, task)) {
     return { created: 0, skipped: 1, developmentTaskId: task.development_task_id };
   }
@@ -698,7 +701,10 @@ function buildDevelopmentTaskFromResearchRow_(row, col, createdAt, refs) {
     action_type: actionType,
     task_type: hasPhase7EBinding ? 'CONTENT_IMPLEMENTATION' : '',
     task_reason: '已批准实施：' + (actionType || 'UPDATE_PAGE'),
-    source_reference: String(cell_(row, col, '审核链接') || '').trim() || '研究任务/' + sourceId
+    source_reference: String(cell_(row, col, '审核链接') || '').trim() || '研究任务/' + sourceId,
+    research_batch_id: String(cell_(row, col, 'ResearchBatchID') || '').trim(),
+    scheduler_run_id: String(cell_(row, col, 'SchedulerRunID') || '').trim(),
+    scheduler_run_url: String(cell_(row, col, 'SchedulerRunURL') || '').trim()
   };
 }
 
@@ -824,7 +830,8 @@ function developmentTaskSheetRow_(task) {
     task.note || '', task.opportunity_id || '', task.decision_id || '',
     task.site_id || '', task.action_type || '', task.task_type || '',
     task.task_reason || '', task.source_reference || '',
-    task.handoff_status || '', task.handoff_reference || ''
+    task.handoff_status || '', task.handoff_reference || '',
+    task.research_batch_id || '', task.scheduler_run_id || '', task.scheduler_run_url || ''
   ];
 }
 
@@ -832,7 +839,7 @@ function developmentTaskSheetRow_(task) {
 function debugDevelopmentTasksSelfCheck() {
   var fails = [];
   function assert(cond, msg) { if (!cond) fails.push(msg); }
-  assert(DEVELOPMENT_TASK_HEADERS.length === 21, '开发任务 headers append-only');
+  assert(DEVELOPMENT_TASK_HEADERS.length === 24, '开发任务 headers append-only');
   assert(DEVELOPMENT_TASK_HEADERS[0] === '开发任务ID' && DEVELOPMENT_TASK_HEADERS[11] === '备注', '旧列顺序保留');
   assert(DEVELOPMENT_TASK_HEADERS.indexOf('OpportunityID') > 11, 'OpportunityID appended');
   assert(DEVELOPMENT_TASK_HEADERS.indexOf('DecisionID') > 11, 'DecisionID appended');
@@ -865,6 +872,16 @@ function debugDevelopmentTasksSelfCheck() {
   assert(task.site_id === 'mortal-shell-ii', 'SiteID preserved');
   assert(task.action_type === 'UPDATE_PAGE', 'approved update action');
   assert(task.status === 'READY_FOR_IMPLEMENTATION', 'ready status');
+  assert(!task.research_batch_id && !task.scheduler_run_id, 'legacy research row has empty batch provenance');
+  row[col['ResearchBatchID']] = 'batch-ms2-fixture';
+  row[col['SchedulerRunID']] = 'run-ms2-fixture';
+  row[col['SchedulerRunURL']] = 'https://engine.example/runs/run-ms2-fixture';
+  var taskWithBatch = buildDevelopmentTaskFromResearchRow_(row, col, new Date('2026-08-22T00:00:00Z'), {
+    decisionId: 'decision-ms2-fixture-001', siteId: 'mortal-shell-ii'
+  });
+  assert(taskWithBatch.research_batch_id === 'batch-ms2-fixture', 'ResearchBatchID transported');
+  assert(taskWithBatch.scheduler_run_id === 'run-ms2-fixture', 'SchedulerRunID transported');
+  assert(taskWithBatch.scheduler_run_url === 'https://engine.example/runs/run-ms2-fixture', 'SchedulerRunURL transported');
   assert(developmentTaskIdentityKey_('o', 'd', 'UPDATE_PAGE', '/x') !== developmentTaskIdentityKey_('o', 'd', 'UPDATE_PAGE', '/y'), 'path in identity');
 
   var steamTask = buildDevelopmentTaskFromSteamRow_({
@@ -918,6 +935,7 @@ function debugDevelopmentTasksSelfCheck() {
   assert(externalTask.decision_id === '', 'external task DecisionID blank');
   assert(externalTask.handoff_status === 'READY_FOR_IMPLEMENTATION', 'external HandoffStatus');
   assert(externalTask.handoff_reference.indexOf('handoff:dev-') === 0, 'external HandoffReference');
+  assert(!externalTask.research_batch_id && !externalTask.scheduler_run_id, 'external has no fabricated batch provenance');
   assert(externalTask.development_task_id === developmentTaskIdFromIdentity_(
     externalTask.opportunity_id, '', externalTask.action_type, externalTask.page_path
   ), 'external DevelopmentTaskID from blank-decision identity');

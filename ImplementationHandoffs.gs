@@ -44,8 +44,6 @@ function resolveImplementationSiteReference_(task) {
 
 function implementationHandoffStatusForExistingSite_(site) {
   if (!site.siteId) return IMPLEMENTATION_HANDOFF_STATUS.SITE_ID_UNRESOLVED;
-  if (!site.githubRepo) return IMPLEMENTATION_HANDOFF_STATUS.REPO_REFERENCE_UNRESOLVED;
-  if (!site.repoPath) return IMPLEMENTATION_HANDOFF_STATUS.REPO_PATH_UNRESOLVED;
   return IMPLEMENTATION_HANDOFF_STATUS.READY;
 }
 
@@ -72,7 +70,10 @@ function buildImplementationHandoff_(developmentTask) {
     SourceReference: String((task.source_reference || task.SourceReference) || '').trim(),
     Starter: '',
     HandoffStatus: '',
-    HandoffReference: implementationHandoffReference_(taskId)
+    HandoffReference: implementationHandoffReference_(taskId),
+    BatchID: String((task.research_batch_id || task.ResearchBatchID) || '').trim(),
+    SchedulerRunID: String((task.scheduler_run_id || task.SchedulerRunID) || '').trim(),
+    SchedulerRunURL: String((task.scheduler_run_url || task.SchedulerRunURL) || '').trim()
   };
 
   if (taskType === 'SITE_BUILD' && status === DEVELOPMENT_TASK_STATUS.WAITING_SITE_CREATION) {
@@ -106,7 +107,10 @@ function implementationHandoffTaskFromSheetRow_(row, col) {
     action_type: String(cell_(row, col, 'ActionType') || '').trim(),
     task_type: String(cell_(row, col, 'TaskType') || '').trim(),
     task_reason: String(cell_(row, col, 'TaskReason') || '').trim(),
-    source_reference: String(cell_(row, col, 'SourceReference') || '').trim()
+    source_reference: String(cell_(row, col, 'SourceReference') || '').trim(),
+    research_batch_id: String(cell_(row, col, 'ResearchBatchID') || '').trim(),
+    scheduler_run_id: String(cell_(row, col, 'SchedulerRunID') || '').trim(),
+    scheduler_run_url: String(cell_(row, col, 'SchedulerRunURL') || '').trim()
   };
 }
 
