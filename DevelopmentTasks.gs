@@ -835,6 +835,72 @@ function developmentTaskSheetRow_(task) {
   ];
 }
 
+function isDevelopmentTaskDoneStatus_(status) {
+  var raw = String(status || '').trim();
+  return raw === DEVELOPMENT_TASK_STATUS.DONE ||
+    raw === DEVELOPMENT_TASK_STATUS_LABELS.DONE ||
+    raw === '已完成';
+}
+
+/**
+ * Authoritative Development Task closeout after Deployment Receipt acceptance.
+ * Clears handoff snapshot fields; leaves ResearchBatchID / SchedulerRunID / provenance intact.
+ */
+function closeDevelopmentTaskFromAcceptedDeploymentReceipt_(receipt, ingestResult) {
+  receipt = receipt || {};
+  ingestResult = ingestResult || {};
+  var taskId = String(receipt.developmentTaskId || '').trim();
+  if (!taskId) return { closed: false, reason: 'NO_DEVELOPMENT_TASK_ID' };
+  if (!ingestResult.ok) return { closed: false, reason: 'RECEIPT_NOT_OK' };
+  var result = String(ingestResult.result || '').trim();
+  if (result !== 'ACCEPTED' && result !== 'DUPLICATE_ACCEPTED' && result !== 'ALREADY_RECORDED') {
+    return { closed: false, reason: 'RECEIPT_NOT_ACCEPTED' };
+  }
+  return markDevelopmentTaskDoneFromDeploymentReceipt_(taskId, receipt.productionDeployedAt);
+}
+
+function markDevelopmentTaskDoneFromDeploymentReceipt_(taskId, productionDeployedAt) {
+  taskId = String(taskId || '').trim();
+  if (!taskId) return { closed: false, reason: 'NO_DEVELOPMENT_TASK_ID' };
+  ensureDevelopmentTaskSheets_();
+  var sheet = getSpreadsheet_().getSheetByName(SHEET_NAMES.DEVELOPMENT_TASKS);
+  if (!sheet || sheet.getLastRow() < 2) return { closed: false, reason: 'TASK_NOT_FOUND', taskId: taskId };
+
+  var lastCol = Math.max(sheet.getLastColumn(), DEVELOPMENT_TASK_HEADERS.length);
+  var header = sheet.getRange(1, 1, 1, lastCol).getValues()[0];
+  var col = headerIndexMap_(header);
+  var idCol = col['开发任务ID'];
+  var statusCol = col['任务状态'];
+  var completedCol = col['完成时间'];
+  var handoffStatusCol = col.HandoffStatus;
+  var handoffRefCol = col.HandoffReference;
+  if (idCol === undefined || statusCol === undefined) {
+    throw new Error('closeDevelopmentTask: 开发任务 missing 开发任务ID/任务状态');
+  }
+
+  var values = sheet.getRange(2, 1, sheet.getLastRow() - 1, lastCol).getValues();
+  for (var i = 0; i < values.length; i++) {
+    if (String(values[i][idCol] || '').trim() !== taskId) continue;
+    var current = String(values[i][statusCol] || '').trim();
+    if (isDevelopmentTaskDoneStatus_(current)) {
+      return { closed: false, reason: 'ALREADY_DONE', taskId: taskId };
+    }
+    var sheetRow = i + 2;
+    sheet.getRange(sheetRow, statusCol + 1).setValue(DEVELOPMENT_TASK_STATUS_LABELS.DONE);
+    if (completedCol !== undefined) {
+      sheet.getRange(sheetRow, completedCol + 1).setValue(String(productionDeployedAt || '').trim());
+    }
+    if (handoffStatusCol !== undefined) {
+      sheet.getRange(sheetRow, handoffStatusCol + 1).setValue('');
+    }
+    if (handoffRefCol !== undefined) {
+      sheet.getRange(sheetRow, handoffRefCol + 1).setValue('');
+    }
+    return { closed: true, reason: 'CLOSED', taskId: taskId };
+  }
+  return { closed: false, reason: 'TASK_NOT_FOUND', taskId: taskId };
+}
+
 /** 纯逻辑自测入口；不写 Sheet、不碰生产 Research/Steam。 */
 function debugDevelopmentTasksSelfCheck() {
   var fails = [];
@@ -963,6 +1029,10 @@ function debugDevelopmentTasksSelfCheck() {
   assert(externalResult.DecisionID === '', 'external result DecisionID blank');
   assert(typeof createDevelopmentTasks === 'function', 'menu createDevelopmentTasks preserved');
   assert(typeof registerExternalDevelopmentTask === 'function', 'external registration entry present');
+  assert(typeof closeDevelopmentTaskFromAcceptedDeploymentReceipt_ === 'function', 'receipt closeout helper present');
+  assert(typeof markDevelopmentTaskDoneFromDeploymentReceipt_ === 'function', 'task done helper present');
+  assert(isDevelopmentTaskDoneStatus_('已完成') === true, 'done label recognized');
+  assert(isDevelopmentTaskDoneStatus_('READY_FOR_IMPLEMENTATION') === false, 'ready not done');
 
   if (fails.length) throw new Error('DevelopmentTasks self-check failed: ' + fails.join('; '));
   return 'PASS DevelopmentTasks self-check';

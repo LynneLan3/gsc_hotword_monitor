@@ -13,6 +13,8 @@ const readOptional = (name) => {
 };
 const config = fs.readFileSync(path.join(root, 'Config.gs'), 'utf8');
 const ledger = fs.readFileSync(path.join(root, 'ExperimentLedger.gs'), 'utf8');
+const developmentTasksSrc = fs.readFileSync(path.join(root, 'DevelopmentTasks.gs'), 'utf8');
+const handoffSrc = fs.readFileSync(path.join(root, 'ImplementationHandoffs.gs'), 'utf8');
 const intent = readOptional('IntentOpportunityEngine.gs');
 const early = readOptional('EarlyFollowupEngine.gs');
 const developmentTaskHeaders = eval(`[${config.match(/var DEVELOPMENT_TASK_HEADERS\s*=\s*\[([\s\S]*?)\];/)[1]}]`);
@@ -114,10 +116,35 @@ function makeContext(today = '2026-08-24', existing = false) {
     daysBetweenStr_: (a, b) => Math.round((new Date(`${b}T00:00:00Z`) - new Date(`${a}T00:00:00Z`)) / 86400000),
     nowRecordedAt_: () => '2026-08-24T12:00:00+08:00',
     headerIndexMap_: (hs) => Object.fromEntries(hs.map((h, i) => [h, i])),
+    cell_: (row, col, name) => (col[name] === undefined ? '' : row[col[name]]),
     getSpreadsheet_: () => ss,
     ensureSheetGrid_: () => {},
     ensureSheet_: () => {},
     ensureContentUpdateHeader_: () => {},
+    ensureDevelopmentTaskSheets_: () => {},
+    ensureDevelopmentTaskHeader_: () => {},
+    DEVELOPMENT_TASK_HEADERS: developmentTaskHeaders,
+    DEVELOPMENT_TASK_STATUS: {
+      TODO: 'TODO',
+      READY_FOR_IMPLEMENTATION: 'READY_FOR_IMPLEMENTATION',
+      WAITING_SITE_CREATION: 'WAITING_SITE_CREATION',
+      IN_PROGRESS: 'IN_PROGRESS',
+      DONE: 'DONE',
+      SKIPPED: 'SKIPPED',
+    },
+    DEVELOPMENT_TASK_STATUS_LABELS: {
+      TODO: '待开发',
+      READY_FOR_IMPLEMENTATION: 'READY_FOR_IMPLEMENTATION',
+      WAITING_SITE_CREATION: 'WAITING_SITE_CREATION',
+      IN_PROGRESS: 'IN_PROGRESS',
+      DONE: '已完成',
+      SKIPPED: '已跳过',
+    },
+    getSiteRepositoryReferenceBySiteId_: (siteId) => (
+      siteId === 'project-p-i-t-t'
+        ? { repoPath: '/repo/pitt', githubRepo: 'LynneLan3/project-p-i-t-t' }
+        : { repoPath: '', githubRepo: '' }
+    ),
     loadDecisionIdSetFromHistory_: () => ({}),
     writeLog_: () => {},
     LockService: { getScriptLock: () => ({ tryLock: () => true, releaseLock: () => {} }) },
@@ -126,6 +153,8 @@ function makeContext(today = '2026-08-24', existing = false) {
     Session: { getScriptTimeZone: () => 'Asia/Shanghai' }
   };
   vm.createContext(context);
+  vm.runInContext(developmentTasksSrc, context);
+  vm.runInContext(handoffSrc, context);
   vm.runInContext(ledger, context);
   return { context, ss, headers };
 }
@@ -627,5 +656,171 @@ assert(/function deploymentDetailSourceReady_/.test(ledger), 'coverage guard hel
 assert(/BASELINE_DETAIL_SOURCE_STALE/.test(ledger), 'stale log marker present');
 assert(/function repairContaminatedDeploymentBaselinesSince20260831/.test(ledger), 'contaminated repair entry exists');
 assert(/function repairHalloweenCtrIntentOwnershipBaseline/.test(ledger), 'Halloween repair entry exists');
+
+// Authoritative Development Task closeout after accepted Deployment Receipt.
+{
+  const closeout = makeContext();
+  const taskHeaders = developmentTaskHeaders;
+  const h = Object.fromEntries(taskHeaders.map((x, i) => [x, i]));
+  const readyRow = Array(taskHeaders.length).fill('');
+  readyRow[h['开发任务ID']] = 'DEV-CLOSE-1';
+  readyRow[h['任务状态']] = 'READY_FOR_IMPLEMENTATION';
+  readyRow[h.SiteID] = 'project-p-i-t-t';
+  readyRow[h.ActionType] = 'CREATE_PAGE';
+  readyRow[h.TaskType] = 'CONTENT_IMPLEMENTATION';
+  readyRow[h.HandoffStatus] = 'READY';
+  readyRow[h.HandoffReference] = 'handoffs/DEV-CLOSE-1.json';
+  readyRow[h.ResearchBatchID] = 'batch-close-1';
+  readyRow[h.SchedulerRunID] = 'sched-close-1';
+  closeout.ss.getSheetByName('开发任务').appendRow(readyRow);
+
+  const closeReceipt = {
+    schemaVersion: 'deployment-receipt-v1',
+    receiptKey: 'CLOSEOUT-ACCEPTED-1',
+    developmentTaskId: 'DEV-CLOSE-1',
+    siteName: 'Project P.I.T.T.',
+    batchId: 'CLOSE-20260824',
+    productionDeployedAt: '2026-08-24T11:30:00+08:00',
+    commitSHA: 'b'.repeat(40),
+    deploymentURL: 'https://pitt-preview.vercel.app',
+    productionURL: 'https://pitt.example/',
+    releaseDate: '2026-08-24',
+    affectedPages: [{
+      path: '/closeout/',
+      primaryURL: 'https://pitt.example/closeout/',
+      reason: 'closeout fixture',
+    }],
+  };
+  assert.equal(closeout.context.ingestDeploymentReceipt(closeReceipt).result, 'ACCEPTED');
+  const closedTask = closeout.ss.getSheetByName('开发任务').rows[1];
+  assert.equal(closedTask[h['任务状态']], '已完成');
+  assert.equal(closedTask[h['完成时间']], '2026-08-24T11:30:00+08:00');
+  assert.equal(closedTask[h.HandoffStatus], '');
+  assert.equal(closedTask[h.HandoffReference], '');
+  assert.equal(closedTask[h.ResearchBatchID], 'batch-close-1');
+  assert.equal(closedTask[h.SchedulerRunID], 'sched-close-1');
+  const pendingAfter = closeout.context.loadPendingImplementationHandoffs_();
+  assert.equal(pendingAfter.filter((item) => item.TaskID === 'DEV-CLOSE-1').length, 0,
+    'DONE task must leave pendingImplementationHandoffs');
+
+  // Idempotent when already DONE.
+  assert.equal(closeout.context.ingestDeploymentReceipt(closeReceipt).result, 'ALREADY_RECORDED');
+  assert.equal(closeout.ss.getSheetByName('开发任务').rows[1][h['任务状态']], '已完成');
+}
+
+{
+  // Early ALREADY_RECORDED must still repair a READY task left behind.
+  const repair = makeContext();
+  const taskHeaders = developmentTaskHeaders;
+  const h = Object.fromEntries(taskHeaders.map((x, i) => [x, i]));
+  const readyRow = Array(taskHeaders.length).fill('');
+  readyRow[h['开发任务ID']] = 'DEV-REPAIR-1';
+  readyRow[h['任务状态']] = 'READY_FOR_IMPLEMENTATION';
+  readyRow[h.SiteID] = 'project-p-i-t-t';
+  readyRow[h.ActionType] = 'CREATE_PAGE';
+  readyRow[h.HandoffStatus] = 'READY';
+  readyRow[h.HandoffReference] = 'handoffs/DEV-REPAIR-1.json';
+  repair.ss.getSheetByName('开发任务').appendRow(readyRow);
+
+  const pages = ['/repair/'];
+  const contentHeaders = Object.fromEntries(repair.context.CONTENT_UPDATE_HEADERS.map((x, i) => [x, i]));
+  for (const page of pages) {
+    const row = Array(repair.context.CONTENT_UPDATE_HEADERS.length).fill('');
+    row[contentHeaders['更新时间']] = '2026-08-24';
+    row[contentHeaders['站点']] = 'Project P.I.T.T.';
+    row[contentHeaders['页面路径']] = page;
+    row[contentHeaders.InterventionID] = 'receipt-REPAIR-ALREADY-1';
+    row[contentHeaders.SiteID] = 'project-p-i-t-t';
+    row[contentHeaders.Action] = 'CREATE_PAGE';
+    row[contentHeaders.CommitSHA] = 'c'.repeat(40);
+    row[contentHeaders.PrimaryURL] = `https://pitt.example${page}`;
+    row[contentHeaders.ProductionURL] = 'https://pitt.example/';
+    row[contentHeaders.PageReceiptKey] = `REPAIR-ALREADY-1|${page}`;
+    repair.ss.getSheetByName('内容更新记录').appendRow(row);
+  }
+  repair.ss.getSheetByName('干预时间线').appendRow(['receipt-REPAIR-ALREADY-1', '2026-08-24']);
+  const obsHeaders = Object.fromEntries(repair.context.INTERVENTION_OBSERVATION_HEADERS.map((x, i) => [x, i]));
+  for (const day of ['2026-08-25', '2026-08-27', '2026-08-31', '2026-09-07']) {
+    const obs = Array(repair.context.INTERVENTION_OBSERVATION_HEADERS.length).fill('');
+    obs[obsHeaders.InterventionID] = 'receipt-REPAIR-ALREADY-1';
+    obs[obsHeaders.ObservationID] = `receipt-REPAIR-ALREADY-1|/repair/|${day}`;
+    obs[obsHeaders.HorizonDate] = day;
+    repair.ss.getSheetByName('干预观察').appendRow(obs);
+  }
+
+  const repairReceipt = {
+    schemaVersion: 'deployment-receipt-v1',
+    receiptKey: 'REPAIR-ALREADY-1',
+    interventionId: 'receipt-REPAIR-ALREADY-1',
+    developmentTaskId: 'DEV-REPAIR-1',
+    siteName: 'Project P.I.T.T.',
+    batchId: 'REPAIR-20260824',
+    productionDeployedAt: '2026-08-24T12:00:00+08:00',
+    commitSHA: 'c'.repeat(40),
+    deploymentURL: 'https://pitt-preview.vercel.app',
+    productionURL: 'https://pitt.example/',
+    releaseDate: '2026-08-24',
+    affectedPages: [{
+      path: '/repair/',
+      primaryURL: 'https://pitt.example/repair/',
+      reason: 'already recorded repair',
+    }],
+  };
+  assert.equal(repair.context.ingestDeploymentReceipt(repairReceipt).result, 'ALREADY_RECORDED');
+  assert.equal(repair.ss.getSheetByName('开发任务').rows[1][h['任务状态']], '已完成');
+  assert.equal(repair.ss.getSheetByName('开发任务').rows[1][h['完成时间']], '2026-08-24T12:00:00+08:00');
+}
+
+{
+  // Validation / ledger failure must never mark DONE.
+  const failed = makeContext();
+  const taskHeaders = developmentTaskHeaders;
+  const h = Object.fromEntries(taskHeaders.map((x, i) => [x, i]));
+  const readyRow = Array(taskHeaders.length).fill('');
+  readyRow[h['开发任务ID']] = 'DEV-FAIL-1';
+  readyRow[h['任务状态']] = 'READY_FOR_IMPLEMENTATION';
+  readyRow[h.SiteID] = 'project-p-i-t-t';
+  readyRow[h.ActionType] = 'CREATE_PAGE';
+  readyRow[h.HandoffStatus] = 'READY';
+  failed.ss.getSheetByName('开发任务').appendRow(readyRow);
+  assert.throws(() => failed.context.ingestDeploymentReceipt({
+    schemaVersion: 'deployment-receipt-v1',
+    receiptKey: 'FAIL-1',
+    developmentTaskId: 'DEV-FAIL-1',
+    siteName: 'Project P.I.T.T.',
+    batchId: 'FAIL-20260824',
+    // missing commitSHA / deploymentURL / productionURL / productionDeployedAt / affectedPages
+  }), /missing/);
+  assert.equal(failed.ss.getSheetByName('开发任务').rows[1][h['任务状态']], 'READY_FOR_IMPLEMENTATION');
+
+  // Receipt without developmentTaskId must not touch tasks.
+  const untouched = makeContext();
+  const other = Array(taskHeaders.length).fill('');
+  other[h['开发任务ID']] = 'DEV-UNTOUCHED';
+  other[h['任务状态']] = 'READY_FOR_IMPLEMENTATION';
+  other[h.SiteID] = 'project-p-i-t-t';
+  other[h.ActionType] = 'CREATE_PAGE';
+  untouched.ss.getSheetByName('开发任务').appendRow(other);
+  assert.equal(untouched.context.ingestDeploymentReceipt({
+    schemaVersion: 'deployment-receipt-v1',
+    receiptKey: 'NO-TASK-1',
+    siteId: 'project-p-i-t-t',
+    siteName: 'Project P.I.T.T.',
+    batchId: 'NO-TASK-20260824',
+    productionDeployedAt: '2026-08-24T10:00:00+08:00',
+    commitSHA: 'd'.repeat(40),
+    deploymentURL: 'https://pitt-preview.vercel.app',
+    productionURL: 'https://pitt.example/',
+    releaseDate: '2026-08-24',
+    action: 'CREATE_PAGE',
+    affectedPages: [{
+      path: '/no-task/',
+      primaryURL: 'https://pitt.example/no-task/',
+      action: 'CREATE_PAGE',
+      reason: 'no task id',
+    }],
+  }).result, 'ACCEPTED');
+  assert.equal(untouched.ss.getSheetByName('开发任务').rows[1][h['任务状态']], 'READY_FOR_IMPLEMENTATION');
+}
 
 console.log('PASS scripts/test-deployment-receipt-v1.js');

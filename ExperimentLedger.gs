@@ -955,13 +955,21 @@ function ingestDeploymentReceipt(receipt) {
   resolveDeploymentReceiptAttribution_(normalized);
   validateDeploymentReceipt_(normalized);
   var early = peekDeploymentReceiptAlreadyRecorded_(normalized);
-  if (early) return early;
+  if (early) {
+    closeDevelopmentTaskFromAcceptedDeploymentReceipt_(normalized, early);
+    return early;
+  }
   var lock = LockService.getScriptLock();
   if (!lock.tryLock(30000)) throw new Error('ingestDeploymentReceipt: write lock busy');
   try {
     early = peekDeploymentReceiptAlreadyRecorded_(normalized);
-    if (early) return early;
-    return ingestDeploymentReceipt_(normalized);
+    if (early) {
+      closeDevelopmentTaskFromAcceptedDeploymentReceipt_(normalized, early);
+      return early;
+    }
+    var result = ingestDeploymentReceipt_(normalized);
+    closeDevelopmentTaskFromAcceptedDeploymentReceipt_(normalized, result);
+    return result;
   } finally {
     lock.releaseLock();
   }
